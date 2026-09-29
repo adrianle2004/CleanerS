@@ -31,10 +31,16 @@ safe to rerun.
 
 ## What is where
 
+Every subfolder of a data folder is uploaded as one tar (`packs/`): the Hub
+rate-limits per-file API calls, and 35k loose files went up at 10 a minute.
+`pull` unpacks them into place and records each one in `data/.hf_packs/`.
+
 | Local | On HF | Size |
 | --- | --- | ---: |
-| `data/**` | same path | 8.5 GB, 35k files |
-| `data/Scannet/posed_images/` | `Scannet/posed_images_shards/*.tar`, 50 scenes each | 15 GB |
+| `data/<file>`, `data/<dir>/<file>` (scripts, `preprocessed_data.tar.gz`, `utils/` sources and `.so`) | same path | 0.4 GB |
+| `data/<dir>/<subdir>/` (`NYU/depth`, `NYU/TSDF`, `utils/build`, ...) | `packs/<dir>/<subdir>.tar` | 2.3 GB |
+| `data/Scannet/<scene>/` (Occ-ScanNet GT) | `packs/Scannet/gt_NNN.tar`, 50 scenes each | 0.1 GB |
+| `data/Scannet/posed_images/<scene>/` | `packs/Scannet/posed_images_NNN.tar`, 50 scenes each | 14.6 GB |
 | symlinks under `data/` (`Scannet_subset654/`, `NYU/test/RGB/`) | `symlinks.tsv`, recreated as relative links | |
 | `captures/room0{6,7,8}/scan/scan.bag` | `repo/captures/...` | 5.1 GB |
 | `captures/*/scan/room*.ply` (room meshes) | `repo/captures/...` | 0.13 GB |
@@ -56,5 +62,12 @@ this public repo.
 ## Adding data
 
 Put it in place locally, then `python tools/hf_data.py push`. Push only uploads
-paths HF does not have yet; `--dry-run` lists them first. A file changed in place
-keeps its old version on HF until it is removed there.
+what HF does not have yet; `--dry-run` lists it first. A pack is matched by name,
+so after changing files inside an existing folder, re-upload it explicitly:
+
+```bash
+python tools/hf_data.py push --repack NYU/Custom_TSDF      # globs work: 'Scannet/gt_*'
+```
+
+On a machine that pulled it, remove `data/.hf_packs/NYU/Custom_TSDF.done` and
+`pull` again to get the new version.

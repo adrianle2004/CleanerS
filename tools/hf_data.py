@@ -7,23 +7,29 @@ The workspace this expects (see DATA.md):
 
 What lives on HF, and where:
 
-    <data file>                               -> <same relative path>
-    data/Scannet/posed_images/<scene>/...     -> Scannet/posed_images_shards/posed_images_NNN.tar
-                                                 (205k files packed 50 scenes a tar; HF wants
-                                                 repos under ~100k files)
-    CleanerS/<file matched by REPO_FILES>     -> repo/<same relative path>
-    every symlink under data/                 -> symlinks.tsv (Scannet_subset654 and
-                                                 NYU/test/RGB are link trees; pull remakes
-                                                 them as relative links)
+    data/<file> and data/<dir>/<file>     -> same path, as is
+    data/<dir>/<subdir>/...               -> packs/<dir>/<subdir>.tar
+    data/Scannet/<scene>/...              -> packs/Scannet/gt_NNN.tar            50 scenes each
+    data/Scannet/posed_images/<scene>/... -> packs/Scannet/posed_images_NNN.tar  50 scenes each
+    every symlink under data/             -> symlinks.tsv, remade as relative links
+                                             (Scannet_subset654/ and NYU/test/RGB/ are link trees)
+    CleanerS/<file matched by REPO_FILES> -> repo/<same path>
+
+Packing is not optional: the Hub rate-limits per-file API calls, and 35k small
+files uploaded one by one ran at 10 files a minute.
 
     python tools/hf_data.py push --dry-run    what would be uploaded, nothing sent
     python tools/hf_data.py push              upload whatever HF does not have yet (resumable)
-    python tools/hf_data.py pull              download into place, unpack the image shards
+    python tools/hf_data.py pull              download into place and unpack
+
+A pack is skipped when its name is already on HF, so a folder that changed after
+it was pushed needs `push --repack NYU/depth` (or a glob: 'Scannet/gt_*').
 
 Needs huggingface_hub >= 1.0 and `hf auth login` once. It runs in any python >= 3.9;
 it does not need the CleanerS env (py3.7 is too old for huggingface_hub).
 """
 import argparse
+import collections
 import fnmatch
 import glob
 import os
@@ -33,18 +39,17 @@ import tarfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(os.path.dirname(REPO), 'data')
+TMP = os.path.join(os.path.dirname(REPO), '.hf_tmp')
 DEFAULT_NAME = 'cleaners-data'
 
 # the files in this repo that .gitignore keeps out of git
 REPO_FILES = ['captures/*/scan/scan.bag', 'captures/*/scan/room*.ply', 'checkpoint/*.pth']
-DATA_IGNORE = ['*/__pycache__/*', '*.pyc', '*.log', '.cache/*', 'Scannet/posed_images/*',
-               'symlinks.tsv']
-
+DATA_IGNORE = ['*/__pycache__/*', '*.pyc', '*.log', '.cache/*', '.hf_packs/*', 'symlinks.tsv']
 LINKS = 'symlinks.tsv'
-SHARD_DIR = 'Scannet/posed_images_shards'
-SCENES_PER_SHARD = 50
-# per commit; big enough to be quick, small enough that a dropped push loses little
-MAX_FILES, MAX_BYTES = 2000, 4 << 30
+DONE = '.hf_packs'          # data/.hf_packs/<pack>.done once a pack is unpacked
+SCENES_PER_PACK = 50
+# loose files per commit
+MAX_FILES, MAX_BYTES = 500, 4 << 30
 
 
 def repo_id(api, name):
@@ -52,8 +57,8 @@ def repo_id(api, name):
 
 
 def walk_data():
-    """(files, links): real files as (local path, path in repo), and every symlink
-    as (path in repo, target). A target inside data/ is kept relative to data/,
+    """(files, links): real files as (local path, rel), and every symlink as
+    (rel, target). A target inside data/ is kept relative to data/ ('data:...'),
     so the links survive a move to another machine."""
     out, links = [], []
     real = os.path.realpath(DATA)
@@ -65,9 +70,7 @@ def walk_data():
             if any(fnmatch.fnmatch(rel, pat) for pat in DATA_IGNORE):
                 continue
             if os.path.islink(p):
-                t = os.readlink(p)
-                t = os.path.join(root, t) if not os.path.isabs(t) else t
-                t = os.path.normpath(t)
+                t = os.path.normpath(os.path.join(root, os.readlink(p)))
                 links.append((rel, 'data:' + os.path.relpath(t, real)
                               if t.startswith(real + os.sep) else t))
             elif f in files:
@@ -75,24 +78,42 @@ def walk_data():
     return out, links
 
 
-def local_files():
-    """(local path, path in the HF repo) for everything except the image shards."""
-    out = walk_data()[0]
-    for pat in REPO_FILES:
-        for p in sorted(glob.glob(os.path.join(REPO, pat))):
-            out.append((p, 'repo/' + os.path.relpath(p, REPO)))
-    return out
+def scene_index(parent):
+    """scene -> pack number, from the sorted scene folders under data/<parent>."""
+    d = os.path.join(DATA, parent)
+    scenes = sorted(s for s in os.listdir(d) if s.startswith('scene')
+                    and os.path.isdir(os.path.join(d, s)) and not os.path.islink(os.path.join(d, s)))
+    return {s: i // SCENES_PER_PACK for i, s in enumerate(scenes)}
 
 
-def shards():
-    """[(shard path in repo, [scene, ...])], a fixed split so reruns name them the same."""
-    src = os.path.join(DATA, 'Scannet', 'posed_images')
-    if not os.path.isdir(src):
-        return []
-    scenes = sorted(d for d in os.listdir(src) if os.path.isdir(os.path.join(src, d)))
-    return [('%s/posed_images_%03d.tar' % (SHARD_DIR, i // SCENES_PER_SHARD),
-             scenes[i:i + SCENES_PER_SHARD])
-            for i in range(0, len(scenes), SCENES_PER_SHARD)]
+def plan():
+    """(loose, packs, links): loose [(local path, repo path)], packs
+    {pack name: [(local path, rel)]}, links [(rel, target)]."""
+    files, links = walk_data()
+    idx = {'Scannet': {}, 'Scannet/posed_images': {}}
+    if os.path.isdir(os.path.join(DATA, 'Scannet')):
+        idx = {k: scene_index(k) if os.path.isdir(os.path.join(DATA, k)) else {} for k in idx}
+    loose, packs = [], collections.defaultdict(list)
+    for p, rel in files:
+        parts = rel.split('/')
+        if len(parts) <= 2:
+            loose.append((p, rel))
+            continue
+        if parts[0] == 'Scannet' and parts[1] == 'posed_images':
+            key = 'Scannet/posed_images_%03d' % idx['Scannet/posed_images'][parts[2]]
+        elif parts[0] == 'Scannet' and parts[1].startswith('scene'):
+            key = 'Scannet/gt_%03d' % idx['Scannet'][parts[1]]
+        else:
+            key = parts[0] + '/' + parts[1]
+        packs[key].append((p, rel))
+    for p in REPO_FILES:
+        for f in sorted(glob.glob(os.path.join(REPO, p))):
+            loose.append((f, 'repo/' + os.path.relpath(f, REPO)))
+    return loose, dict(packs), links
+
+
+def pack_path(key):
+    return 'packs/%s.tar' % key
 
 
 def batches(items):
@@ -114,52 +135,53 @@ def gb(n):
 
 def push(args):
     from huggingface_hub import HfApi, CommitOperationAdd
+    from huggingface_hub.errors import RepositoryNotFoundError
     api = HfApi()
-    rid = None if args.dry_run else repo_id(api, args.repo)
-    if rid:
+    loose, packs, links = plan()
+    rid = repo_id(api, args.repo)
+    if not args.dry_run:
         api.create_repo(rid, repo_type='dataset', private=True, exist_ok=True)
+    try:
         remote = set(api.list_repo_files(rid, repo_type='dataset'))
-    else:
+    except RepositoryNotFoundError:             # dry run before the first push
         remote = set()
 
-    todo = [(p, rel) for p, rel in local_files() if rel not in remote]
-    sh = [(rel, sc) for rel, sc in shards() if rel not in remote]
-    print('to upload: %d files, %s; %d image shards (%d scenes)'
-          % (len(todo), gb(sum(os.path.getsize(p) for p, _ in todo)),
-             len(sh), sum(len(sc) for _, sc in sh)))
+    loose = [(p, rel) for p, rel in loose if rel not in remote]
+    repack = lambda k: any(fnmatch.fnmatch(k, pat) for pat in args.repack)
+    todo = sorted(k for k in packs if pack_path(k) not in remote or repack(k))
+    size = lambda fs: sum(os.path.getsize(p) for p, _ in fs)
+    print('to upload: %d loose files (%s), %d packs (%d files, %s), %d symlinks'
+          % (len(loose), gb(size(loose)), len(todo), sum(len(packs[k]) for k in todo),
+             gb(sum(size(packs[k]) for k in todo)), len(links)))
     if args.dry_run:
-        for p, rel in todo:
-            if os.path.getsize(p) > 50e6 or rel.startswith('repo/'):
-                print('  %9s  %s' % (gb(os.path.getsize(p)), rel))
+        for p, rel in loose:
+            print('  %9s  %s' % (gb(os.path.getsize(p)), rel))
+        for k in todo:
+            print('  %9s  %s  (%d files)' % (gb(size(packs[k])), pack_path(k), len(packs[k])))
         return
 
-    links = walk_data()[1]
-    print('%d symlinks -> %s' % (len(links), LINKS))
     tsv = ''.join('%s\t%s\n' % l for l in links).encode()
     api.upload_file(path_or_fileobj=tsv, path_in_repo=LINKS, repo_id=rid,
                     repo_type='dataset', commit_message='update ' + LINKS)
-
-    for i, batch in enumerate(batches(todo)):
-        print('commit %d: %d files, %s' % (i + 1, len(batch),
-                                           gb(sum(os.path.getsize(p) for p, _ in batch))))
+    for batch in batches(loose):
+        print('loose: %d files, %s' % (len(batch), gb(size(batch))))
         api.create_commit(rid, repo_type='dataset',
                           operations=[CommitOperationAdd(rel, p) for p, rel in batch],
                           commit_message='add %d files (%s ...)' % (len(batch), batch[0][1]))
 
-    src = os.path.join(DATA, 'Scannet')
-    tmp = os.path.join(os.path.dirname(REPO), '.hf_tmp')
-    os.makedirs(tmp, exist_ok=True)
-    for rel, scenes in sh:
-        # one at a time: the disk cannot hold a second copy of 15 GB
-        tar = os.path.join(tmp, os.path.basename(rel))
+    os.makedirs(TMP, exist_ok=True)
+    for n, k in enumerate(todo):
+        # one at a time: the disk has no room for a second copy of the data
+        tar = os.path.join(TMP, 'pack.tar')
         with tarfile.open(tar, 'w') as t:
-            for s in scenes:
-                t.add(os.path.join(src, 'posed_images', s), arcname='posed_images/' + s)
-        print('%s: %d scenes, %s' % (rel, len(scenes), gb(os.path.getsize(tar))))
-        api.upload_file(path_or_fileobj=tar, path_in_repo=rel, repo_id=rid,
-                        repo_type='dataset', commit_message='add ' + rel)
+            for p, rel in packs[k]:
+                t.add(p, arcname=rel, recursive=False)
+        print('[%d/%d] %s: %d files, %s' % (n + 1, len(todo), pack_path(k), len(packs[k]),
+                                            gb(os.path.getsize(tar))))
+        api.upload_file(path_or_fileobj=tar, path_in_repo=pack_path(k), repo_id=rid,
+                        repo_type='dataset', commit_message='add ' + pack_path(k))
         os.remove(tar)
-    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(TMP, ignore_errors=True)
     print('done: https://huggingface.co/datasets/' + rid)
 
 
@@ -168,10 +190,36 @@ def pull(args):
     api = HfApi()
     rid = repo_id(api, args.repo)
     os.makedirs(DATA, exist_ok=True)
-    print('data/ ...')
+    print('loose files ...')
     snapshot_download(rid, repo_type='dataset', local_dir=DATA,
-                      ignore_patterns=['repo/*', SHARD_DIR + '/*'])
+                      ignore_patterns=['repo/*', 'packs/*'])
 
+    files = api.list_repo_files(rid, repo_type='dataset')
+    for rel in [f for f in files if f.startswith('repo/')]:
+        dst = os.path.join(REPO, rel[len('repo/'):])
+        if os.path.exists(dst):
+            continue
+        print(rel[len('repo/'):])
+        got = hf_hub_download(rid, rel, repo_type='dataset', local_dir=TMP)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.replace(got, dst)
+
+    for rel in sorted(f for f in files if f.startswith('packs/')):
+        key = rel[len('packs/'):-len('.tar')]
+        if args.skip_images and key.startswith('Scannet/posed_images_'):
+            continue
+        done = os.path.join(DATA, DONE, key + '.done')
+        if os.path.exists(done):
+            continue
+        print(rel)
+        got = hf_hub_download(rid, rel, repo_type='dataset', local_dir=TMP)
+        with tarfile.open(got) as t:
+            t.extractall(DATA)
+        os.remove(got)
+        os.makedirs(os.path.dirname(done), exist_ok=True)
+        open(done, 'w').close()
+
+    # last: link trees point into the unpacked folders
     links = os.path.join(DATA, LINKS)
     if os.path.exists(links):
         for line in open(links):
@@ -183,31 +231,7 @@ def pull(args):
                 target = os.path.relpath(os.path.join(DATA, target[5:]), os.path.dirname(p))
             os.makedirs(os.path.dirname(p), exist_ok=True)
             os.symlink(target, p)
-
-    files = api.list_repo_files(rid, repo_type='dataset')
-    tmp = os.path.join(os.path.dirname(REPO), '.hf_tmp')
-    for rel in [f for f in files if f.startswith('repo/')]:
-        dst = os.path.join(REPO, rel[len('repo/'):])
-        if os.path.exists(dst):
-            continue
-        print(rel[len('repo/'):])
-        got = hf_hub_download(rid, rel, repo_type='dataset', local_dir=tmp)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        os.replace(got, dst)
-
-    if not args.skip_images:
-        dst = os.path.join(DATA, 'Scannet')
-        for rel in sorted(f for f in files if f.startswith(SHARD_DIR + '/')):
-            done = os.path.join(dst, 'posed_images', '.%s.done' % os.path.basename(rel))
-            if os.path.exists(done):
-                continue
-            print(rel)
-            got = hf_hub_download(rid, rel, repo_type='dataset', local_dir=tmp)
-            with tarfile.open(got) as t:
-                t.extractall(dst)
-            os.remove(got)
-            open(done, 'w').close()
-    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.rmtree(TMP, ignore_errors=True)
     print('done')
 
 
@@ -218,6 +242,8 @@ def main():
                    help='HF dataset repo, "name" (under your account) or "user/name"; '
                         'default $CLEANERS_HF_REPO or %s' % DEFAULT_NAME)
     p.add_argument('--dry-run', action='store_true', help='push: list, send nothing')
+    p.add_argument('--repack', nargs='*', default=[], metavar='PACK',
+                   help='push: re-upload these packs even if HF has them (globs ok)')
     p.add_argument('--skip-images', action='store_true',
                    help='pull: leave out the 15 GB of ScanNet posed_images')
     args = p.parse_args()

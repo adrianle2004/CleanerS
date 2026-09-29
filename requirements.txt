@@ -44,5 +44,5 @@ tqdm==4.67.3
 #   scikit-learn -- metrics.py:4 imports confusion_matrix and never calls it
 #   open3d       -- inference/display.py only; a GUI viewer, 400MB, no use headless
 #   matplotlib / dash / flask / jupyter / ipython -- dev-only
-#   the DataProcess CUDA extension (data/utils) -- nothing imports it; the
-#     numpy encoder in inference/frame_loader.py replaced it entirely
+#   the DataProcess CUDA extension (data/utils) -- not a pip package; optional,
+#     FrameLoader(encoder='cuda'|'auto') uses it, numpy otherwise (SETUP.md 5)
