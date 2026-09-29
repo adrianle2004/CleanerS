@@ -107,7 +107,7 @@ def labeled_voxel2ply(vox_labeled, ply_filename, colorMap=None):  #
 
 
 def visualize_3d_predict(pred3d, label_weight, file, visualize,
-                         visual_result='../../visual_pred/CleanerS'):
+                         visual_result='../../custom_visual_pred/CleanerS'):
     if not os.path.exists(visual_result):
         os.makedirs(visual_result)
 
@@ -175,7 +175,7 @@ def format_SSC_eval(cmSC, cmSSC, description=None, print_eval=False):
     SSC_miou = format_print(SSC_ious, SSC_accs, SSC_recs, mean_index=1, print_eval=print_eval)
     return SC_miou, SSC_miou, SSC_ious
 
-
+@torch.no_grad()  # for evaluation only
 def test(cfg, visualize=True):
     model = build_model_from_cfg(cfg.model).to(cfg.rank)
     model_size = cal_model_parm_nums(model)
@@ -218,6 +218,9 @@ def test(cfg, visualize=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('semantic scene segmentation test')
     parser.add_argument('--cfg', type=str, default='../../cfgs/NYU/voxelSSC.yaml', help='config file')
+    parser.add_argument('--no_visualize', action='store_true',
+                        help='skip writing the 654 .ply files (np.savetxt over 129600 rows '
+                             'each dominates runtime); metrics are unaffected')
     args, opts = parser.parse_known_args()
     cfg = EasyConfig()
     cfg.load(args.cfg, recursive=True)
@@ -264,4 +267,4 @@ if __name__ == "__main__":
                                            distributed=False
                                            )
     cfg.classes = val_loader.dataset.classes
-    test(cfg)
+    test(cfg, visualize=not args.no_visualize)

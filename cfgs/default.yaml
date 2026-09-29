@@ -46,7 +46,7 @@ pretrained_path: null
 dataset:
   common:
     NAME: NYU
-    data_root: /path-to/1-Dataset/SSC/NYU
+    data_root: ../../../data/NYU
   train:
     split: train
   val:

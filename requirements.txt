@@ -1,0 +1,48 @@
+# CleanerS inference + evaluation runtime.
+#
+# torch / torchvision / mmcv-full are NOT here -- they need variant-specific
+# wheel indexes and must be installed separately.
+#
+# Pinned to the stack the encoder was verified against (SC 74.9529 /
+# SSC 47.7286 on the 654-frame NYU test split). numpy and scipy matter for
+# numerics in particular: scipy supplies distance_transform_edt, which the
+# TSDF encoder depends on.
+
+numpy==1.21.6
+scipy==1.6.2
+
+# --- D455 / RealSense capture ---
+# Self-contained wheel: bundles its own librealsense and uses the RSUSB
+# (libusb) backend -- no V4L2, no /dev/video*, no kernel module. Building
+# librealsense from source in this image would add ~30 min and buy nothing
+# the Python API does not already expose.
+pyrealsense2==2.55.1.6486
+
+# --- model / config plumbing ---
+mmsegmentation==0.27.0
+timm==0.6.13
+addict==2.4.0
+PyYAML==6.0.1
+easydict==1.13
+multimethod==1.9.1
+shortuuid==1.0.13
+termcolor==2.3.0
+yapf==0.40.2
+
+# --- io ---
+# headless: no libGL/X11 deps, ~90MB smaller. Nothing in the inference path
+# calls cv2.imshow.
+opencv-python-headless==4.8.1.78
+imageio==2.31.2
+Pillow==9.4.0
+
+# --- eval reporting ---
+terminaltables==3.1.10
+tqdm==4.67.3
+
+# Deliberately absent:
+#   scikit-learn -- metrics.py:4 imports confusion_matrix and never calls it
+#   open3d       -- inference/display.py only; a GUI viewer, 400MB, no use headless
+#   matplotlib / dash / flask / jupyter / ipython -- dev-only
+#   the DataProcess CUDA extension (data/utils) -- nothing imports it; the
+#     numpy encoder in inference/frame_loader.py replaced it entirely

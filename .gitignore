@@ -143,3 +143,13 @@ dmypy.json
 wayne*
 semantic_kitti/shapenet/
 >>>>>>> 3121fefbc3691185d8132fd86100353f2aa32a71
+
+# --- large files: kept in the private Hugging Face dataset repo, not in git ---
+# (see DATA.md; `python tools/hf_data.py pull` puts them back in place)
+captures/*/scan/scan.bag
+captures/*/scan/room*.ply
+checkpoint/*.pth
+# regenerable outputs
+outputs/scannet*/
+custom_visual_pred/
+visual_pred/

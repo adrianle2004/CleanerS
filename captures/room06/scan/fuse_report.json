@@ -1,0 +1,92 @@
+{
+  "bag": "scan/scan.bag",
+  "device": "CUDA:0",
+  "stream": {
+    "width": 848,
+    "height": 480,
+    "fps_nominal": 15.0,
+    "fps_measured": 15.0,
+    "depth_scale": 999.9999389648438,
+    "cam_K": [
+      [
+        423.2247009277344,
+        0.0,
+        422.8204345703125
+      ],
+      [
+        0.0,
+        422.71484375,
+        242.89407348632812
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "params": {
+    "voxel": 0.01,
+    "depth_max": 3.0,
+    "depth_diff": 0.07,
+    "trunc": 8.0,
+    "skip_s": 1.0,
+    "min_weight": 3.0
+  },
+  "frames_read": 651,
+  "frames_fused": 635,
+  "frames_dropped": 0,
+  "stop_reason": "end of bag",
+  "fitness": {
+    "min": 0.2444,
+    "median": 0.8173
+  },
+  "dropped": [],
+  "checks": {
+    "still_match": {
+      "status": "ok",
+      "still_frame": "live_000000",
+      "pixels": 49032,
+      "median_abs_diff_m": 0.029,
+      "median_diff_m": -0.009
+    },
+    "imu_tilt": {
+      "status": "warn",
+      "samples": 32,
+      "tilt_deg": 6.97,
+      "offset_at_3m_cm": 36.7,
+      "pitch_down_deg": -0.17,
+      "roll_deg": 6.97,
+      "up_in_camera": [
+        0.1214,
+        -0.9926,
+        0.003
+      ]
+    },
+    "floor": {
+      "status": "warn",
+      "lowest_up_surface_z_m": -0.0636,
+      "surface_tilt_deg": 5.23,
+      "vertices": 4867,
+      "meaning": "if this surface is the floor, camera_height or level is off; if the sweep never saw the floor, it is furniture and this check says nothing"
+    }
+  },
+  "frame": "world: live_cam_pose(camera_height=1.02, yaw=0) from meta.json",
+  "bounds_m": {
+    "min": [
+      -2.019,
+      0.32,
+      -0.211
+    ],
+    "max": [
+      4.076,
+      3.68,
+      2.66
+    ]
+  },
+  "mesh": {
+    "file": "room.ply",
+    "vertices": 442976,
+    "triangles": 856012
+  }
+}

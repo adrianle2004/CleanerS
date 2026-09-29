@@ -1,0 +1,41 @@
+{
+  "lens_height_m": 0.5692,
+  "plane_tilt_vs_gravity_deg": 1.08,
+  "inliers": 29063,
+  "peak_below_lens_m": 0.54,
+  "points_in_band": 100589,
+  "normal_camera": [
+    0.0313,
+    -0.9994,
+    -0.0174
+  ],
+  "up_camera": [
+    0.0385,
+    -0.9993,
+    0.0
+  ],
+  "camera_pitch_down_deg": -0.0,
+  "camera_roll_deg": 2.21,
+  "cam_K_depth": [
+    [
+      429.36138916015625,
+      0.0,
+      421.3275146484375
+    ],
+    [
+      0.0,
+      429.36138916015625,
+      241.0817413330078
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "frames": 20,
+  "note": "diagnostic frame, NOT an evaluation frame: the camera is deliberately tilted and the voxel grid assumes level",
+  "capture_camera_height": 1.15,
+  "difference_m": 0.5808,
+  "fused_mesh_height_m": 1.0764
+}

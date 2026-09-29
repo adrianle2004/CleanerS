@@ -1,0 +1,99 @@
+{
+  "bag": "scan/scan.bag",
+  "device": "CUDA:0",
+  "stream": {
+    "width": 848,
+    "height": 480,
+    "fps_nominal": 15.0,
+    "fps_measured": 15.0,
+    "depth_scale": 0.0010000000474974513,
+    "cam_K": [
+      [
+        429.36138916015625,
+        0.0,
+        421.3275146484375
+      ],
+      [
+        0.0,
+        429.36138916015625,
+        241.0817413330078
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "params": {
+    "voxel": 0.01,
+    "depth_max": 3.0,
+    "depth_diff": 0.07,
+    "trunc": 8.0,
+    "skip_s": 1.0,
+    "min_weight": 3.0
+  },
+  "reader": "reconstruction_GT/bag_reader.py (pyrealsense2, real_time=False): frame indices are reproducible",
+  "frames_read": 808,
+  "frames_fused": 793,
+  "frames_dropped": 0,
+  "stop_reason": "end of bag",
+  "fitness": {
+    "min": 0.6957,
+    "median": 0.8759
+  },
+  "dropped": [],
+  "checks": {
+    "still_match": {
+      "status": "ok",
+      "still_frame": "live_000000",
+      "pixels": 46448,
+      "median_abs_diff_m": 0.048,
+      "median_diff_m": -0.015
+    },
+    "imu_tilt": {
+      "status": "warn",
+      "samples": 32,
+      "tilt_deg": 2.45,
+      "offset_at_3m_cm": 12.8,
+      "pitch_down_deg": -0.19,
+      "roll_deg": 2.44,
+      "up_in_camera": [
+        0.0427,
+        -0.9991,
+        0.0034
+      ]
+    },
+    "floor": {
+      "status": "ok",
+      "lowest_up_surface_z_m": 0.0043,
+      "surface_tilt_deg": 1.88,
+      "area_m2": 5.1,
+      "vertices": 35751,
+      "normal_world": [
+        -0.000381,
+        -0.032799,
+        0.999462
+      ]
+    }
+  },
+  "frame": "world: live_cam_pose(camera_height=1.0534, yaw=0, assumed level) from meta.json",
+  "bounds_m": {
+    "min": [
+      -1.796,
+      -0.25,
+      -0.037
+    ],
+    "max": [
+      3.017,
+      3.94,
+      2.683
+    ]
+  },
+  "mesh": {
+    "file": "room.ply",
+    "cloud": "room_cloud.ply",
+    "vertices": 436859,
+    "triangles": 855870
+  }
+}

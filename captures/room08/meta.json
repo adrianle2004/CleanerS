@@ -1,0 +1,366 @@
+{
+  "source": "realsense",
+  "stream": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "depth_scale": 0.0010000000474974513,
+  "depth_units": "uint16 millimetres (plain; NOT the NYU bit-rotated encoding)",
+  "fov": "nyu",
+  "cam_K": [
+    [
+      518.85791015625,
+      0.0,
+      325.4903869628906
+    ],
+    [
+      0.0,
+      518.2328491210938,
+      253.58428955078125
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "cam_K_native": [
+    [
+      637.4425048828125,
+      0.0,
+      638.2195434570312
+    ],
+    [
+      0.0,
+      636.674560546875,
+      364.368408203125
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "camera_height": 0.6436,
+  "yaw": 0.0,
+  "depth_max": 10.0,
+  "undistorted": true,
+  "filters": {
+    "spatial_temporal": false,
+    "hole_fill": false
+  },
+  "frames": [
+    "live_000000",
+    "live_000580",
+    "live_000180",
+    "live_000235",
+    "live_000240"
+  ],
+  "up_camera": [
+    -0.052754,
+    -0.99625,
+    0.068576
+  ],
+  "up_camera_source": "floor plane, 29937 points, via scan/fuse_report.json on 2026-09-25; it was 2.47 deg off level",
+  "camera_height_tape": 0.585,
+  "camera_height_source": "floor plane fit, 30002 points, 0.00 deg, from scan/fuse_report.json on 2026-09-25; tape reading kept as camera_height_tape",
+  "frame_meta": {
+    "live_000580": {
+      "source": "sweep frame 580 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          325.1494445800781
+        ],
+        [
+          0.0,
+          518.85791015625,
+          253.33306884765625
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          429.36138916015625,
+          0.0,
+          421.3275146484375
+        ],
+        [
+          0.0,
+          429.36138916015625,
+          241.0817413330078
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "camera_height": 1.4014,
+      "camera_height_source": "tracked pose of bag frame 580",
+      "yaw": 0.0,
+      "up_camera": [
+        -0.199267,
+        -0.961327,
+        0.190116
+      ],
+      "up_camera_source": "tracked pose of bag frame 580 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.972754,
+          -0.231838,
+          0.0,
+          -0.447516
+        ],
+        [
+          0.231839,
+          0.972754,
+          -1e-06,
+          -0.429967
+        ],
+        [
+          -0.0,
+          0.0,
+          0.999999,
+          1e-06
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000180": {
+      "source": "sweep frame 180 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          325.1494445800781
+        ],
+        [
+          0.0,
+          518.85791015625,
+          253.33306884765625
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          429.36138916015625,
+          0.0,
+          421.3275146484375
+        ],
+        [
+          0.0,
+          429.36138916015625,
+          241.0817413330078
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "camera_height": 1.1675,
+      "camera_height_source": "tracked pose of bag frame 180",
+      "yaw": 0.0,
+      "up_camera": [
+        -0.062134,
+        -0.994931,
+        0.079066
+      ],
+      "up_camera_source": "tracked pose of bag frame 180 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.955257,
+          -0.295778,
+          -0.0,
+          -0.360522
+        ],
+        [
+          0.295778,
+          0.955257,
+          -0.0,
+          -0.364905
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000235": {
+      "source": "sweep frame 235 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          325.1494445800781
+        ],
+        [
+          0.0,
+          518.85791015625,
+          253.33306884765625
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          429.36138916015625,
+          0.0,
+          421.3275146484375
+        ],
+        [
+          0.0,
+          429.36138916015625,
+          241.0817413330078
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "camera_height": 1.0621,
+      "camera_height_source": "tracked pose of bag frame 235",
+      "yaw": 0.0,
+      "up_camera": [
+        -0.032111,
+        -0.870321,
+        -0.491436
+      ],
+      "up_camera_source": "tracked pose of bag frame 235 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.911855,
+          0.410513,
+          -0.0,
+          0.111374
+        ],
+        [
+          -0.410512,
+          0.911855,
+          -0.0,
+          -0.77733
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000240": {
+      "source": "sweep frame 240 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          325.1494445800781
+        ],
+        [
+          0.0,
+          518.85791015625,
+          253.33306884765625
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          429.36138916015625,
+          0.0,
+          421.3275146484375
+        ],
+        [
+          0.0,
+          429.36138916015625,
+          241.0817413330078
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "camera_height": 1.0532,
+      "camera_height_source": "tracked pose of bag frame 240",
+      "yaw": 0.0,
+      "up_camera": [
+        5.4e-05,
+        -0.884293,
+        -0.466933
+      ],
+      "up_camera_source": "tracked pose of bag frame 240 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.941159,
+          0.337963,
+          0.0,
+          0.239911
+        ],
+        [
+          -0.337963,
+          0.94116,
+          -1e-06,
+          -0.838436
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    }
+  }
+}

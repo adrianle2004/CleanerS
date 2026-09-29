@@ -1,0 +1,100 @@
+{
+  "bag": "scan/scan.bag",
+  "device": "CUDA:0",
+  "stream": {
+    "width": 848,
+    "height": 480,
+    "fps_nominal": 15.0,
+    "fps_measured": 15.0,
+    "depth_scale": 0.0010000000474974513,
+    "cam_K": [
+      [
+        429.36138916015625,
+        0.0,
+        421.3275146484375
+      ],
+      [
+        0.0,
+        429.36138916015625,
+        241.0817413330078
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  },
+  "params": {
+    "voxel": 0.01,
+    "depth_max": 3.0,
+    "depth_diff": 0.07,
+    "trunc": 8.0,
+    "skip_s": 1.0,
+    "min_weight": 3.0
+  },
+  "reader": "reconstruction_GT/bag_reader.py (pyrealsense2, real_time=False): frame indices are reproducible",
+  "frames_read": 1065,
+  "frames_fused": 1050,
+  "frames_dropped": 0,
+  "stop_reason": "end of bag",
+  "fitness": {
+    "min": 0.7292,
+    "median": 0.8671
+  },
+  "dropped": [],
+  "checks": {
+    "still_match": {
+      "status": "ok",
+      "still_frame": "live_000000",
+      "pixels": 47433,
+      "median_abs_diff_m": 0.019,
+      "median_diff_m": 0.006
+    },
+    "imu_tilt": {
+      "status": "ok",
+      "samples": 32,
+      "tilt_deg": 4.25,
+      "offset_at_3m_cm": 22.3,
+      "pitch_down_deg": -4.21,
+      "roll_deg": -0.57,
+      "up_in_camera": [
+        -0.01,
+        -0.9973,
+        0.0734
+      ],
+      "compensated": "meta.json carries up_camera, so the grid follows gravity rather than assuming level"
+    },
+    "floor": {
+      "status": "ok",
+      "lowest_up_surface_z_m": 0.0017,
+      "surface_tilt_deg": 0.15,
+      "area_m2": 4.6,
+      "vertices": 29328,
+      "normal_world": [
+        -0.001914,
+        -0.001752,
+        0.999997
+      ]
+    }
+  },
+  "frame": "world: live_cam_pose(camera_height=0.6436, yaw=0, measured tilt) from meta.json",
+  "bounds_m": {
+    "min": [
+      -2.033,
+      -2.459,
+      -0.54
+    ],
+    "max": [
+      2.119,
+      3.223,
+      2.749
+    ]
+  },
+  "mesh": {
+    "file": "room.ply",
+    "cloud": "room_cloud.ply",
+    "vertices": 461073,
+    "triangles": 905363
+  }
+}

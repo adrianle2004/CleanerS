@@ -1,5 +1,7 @@
 # CleanerS 
 
+> **Fork notes:** this fork adds live-camera inference (`inference/`), hand-made ground truth for real rooms (`reconstruction_GT/`) and an Occ-ScanNet evaluation. Datasets, recordings and checkpoints are in a private Hugging Face repo: see [DATA.md](DATA.md).
+
 This repository contains the official PyTorch implementation of the following CVPR 2023 paper:
 
 Title: **CleanerS: Semantic Scene Completion with Cleaner Self**   [PDF](https://arxiv.org/pdf/2303.09977.pdf)

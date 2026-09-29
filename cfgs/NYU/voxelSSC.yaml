@@ -2,7 +2,7 @@ model:
   NAME: VoxelSSC
   encoder_args:
     NAME: mit_b2
-    pretrained: /path-to/pretrained/mit_b2.pth
+    pretrained: ../../checkpoint/mit_b2.pth
     freeze: True
   head_args:
     NAME: SegFormerHead

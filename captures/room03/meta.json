@@ -1,0 +1,56 @@
+{
+  "source": "realsense",
+  "stream": {
+    "width": 1280,
+    "height": 720,
+    "fps": 30
+  },
+  "depth_scale": 0.0010000000474974513,
+  "depth_units": "uint16 millimetres (plain; NOT the NYU bit-rotated encoding)",
+  "fov": "nyu",
+  "cam_K": [
+    [
+      518.85791015625,
+      0.0,
+      325.6438903808594
+    ],
+    [
+      0.0,
+      518.2328491210938,
+      254.1009979248047
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "cam_K_native": [
+    [
+      638.48291015625,
+      0.0,
+      638.2195434570312
+    ],
+    [
+      0.0,
+      637.7137451171875,
+      364.368408203125
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "camera_height": 0.74,
+  "yaw": 0.0,
+  "depth_max": 10.0,
+  "undistorted": true,
+  "filters": {
+    "spatial_temporal": true,
+    "hole_fill": false
+  },
+  "frames": [
+    "live_000000"
+  ]
+}
