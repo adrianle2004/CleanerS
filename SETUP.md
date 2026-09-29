@@ -15,7 +15,7 @@ dataset repo for everything else (datasets, RealSense recordings, checkpoints).
 The code expects `data/` **next to** the repo, so make a parent folder:
 
 ```bash
-mkdir -p ~/CleanerS-ws && cd ~/CleanerS-ws
+mkdir -p ~/CleanerS && cd ~/CleanerS
 git clone git@github.com:adrianle2004/CleanerS.git
 cd CleanerS
 git remote add upstream https://github.com/fereenwong/CleanerS.git   # the original, for updates
@@ -53,7 +53,7 @@ https://huggingface.co/settings/tokens: *read* is enough to pull, *write* to pus
 conda deactivate                         # back to base python
 pip install huggingface_hub
 hf auth login
-cd ~/CleanerS-ws/CleanerS
+cd ~/CleanerS/CleanerS
 python tools/hf_data.py pull             # ~24 GB
 # python tools/hf_data.py pull --skip-images   # ~9 GB: leaves out ScanNet posed_images,
 #                                              # needed only for run_scannet.py
@@ -62,9 +62,9 @@ python tools/hf_data.py pull             # ~24 GB
 It fills in:
 
 ```
-~/CleanerS-ws/data/                      NYU, NYUCAD, Scannet, utils, symlink trees
-~/CleanerS-ws/CleanerS/checkpoint/       CleanerS_ckpt.pth, Teacher_ckpt.pth, mit_b2.pth
-~/CleanerS-ws/CleanerS/captures/room0{6,7,8}/scan/   scan.bag, room*.ply
+~/CleanerS/data/                         NYU, NYUCAD, Scannet, utils, symlink trees
+~/CleanerS/CleanerS/checkpoint/          CleanerS_ckpt.pth, Teacher_ckpt.pth, mit_b2.pth
+~/CleanerS/CleanerS/captures/room0{6,7,8}/scan/      scan.bag, room*.ply
 ```
 
 It only fetches what is missing, so rerun it if the connection drops.
@@ -73,7 +73,7 @@ It only fetches what is missing, so rerun it if the connection drops.
 
 ```bash
 conda activate CleanerS
-cd ~/CleanerS-ws/CleanerS/examples/segmentation
+cd ~/CleanerS/CleanerS/examples/segmentation
 python test_NYU.py --cfg ../../cfgs/NYU/voxelSSC.yaml \
     --pretrained_path ../../checkpoint/CleanerS_ckpt.pth --no_visualize
 ```
@@ -101,7 +101,7 @@ To rebuild (needs a system CUDA toolkit and gcc-12; `CMakeLists.txt` hardcodes
 ```bash
 sudo apt install nvidia-cuda-toolkit gcc-12 g++-12 cmake
 conda activate CleanerS
-cd ~/CleanerS-ws/data/utils
+cd ~/CleanerS/data/utils
 mkdir -p build && (cd build && cmake .. && make)      # -> build/libdatautil.so
 python setup_datautil.py build_ext --inplace          # -> DataProcess.cpython-37m-*.so
 ```
