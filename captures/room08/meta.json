@@ -72,12 +72,12 @@
         [
           518.85791015625,
           0.0,
-          325.1494445800781
+          325.77325439453125
         ],
         [
           0.0,
-          518.85791015625,
-          253.33306884765625
+          518.2328491210938,
+          253.58973693847656
         ],
         [
           0.0,
@@ -87,14 +87,14 @@
       ],
       "cam_K_native": [
         [
-          429.36138916015625,
+          422.0758361816406,
           0.0,
-          421.3275146484375
+          422.8204345703125
         ],
         [
           0.0,
-          429.36138916015625,
-          241.0817413330078
+          421.5673522949219,
+          242.89407348632812
         ],
         [
           0.0,
@@ -102,27 +102,28 @@
           1.0
         ]
       ],
-      "camera_height": 1.4014,
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 1.3896,
       "camera_height_source": "tracked pose of bag frame 580",
       "yaw": 0.0,
       "up_camera": [
-        -0.199267,
-        -0.961327,
-        0.190116
+        -0.196109,
+        -0.961047,
+        0.194757
       ],
       "up_camera_source": "tracked pose of bag frame 580 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.972754,
-          -0.231838,
+          0.973429,
+          -0.228986,
           0.0,
-          -0.447516
+          -0.506537
         ],
         [
-          0.231839,
-          0.972754,
+          0.228986,
+          0.97343,
           -1e-06,
-          -0.429967
+          -0.430501
         ],
         [
           -0.0,
@@ -146,12 +147,12 @@
         [
           518.85791015625,
           0.0,
-          325.1494445800781
+          325.77325439453125
         ],
         [
           0.0,
-          518.85791015625,
-          253.33306884765625
+          518.2328491210938,
+          253.58973693847656
         ],
         [
           0.0,
@@ -161,14 +162,14 @@
       ],
       "cam_K_native": [
         [
-          429.36138916015625,
+          422.0758361816406,
           0.0,
-          421.3275146484375
+          422.8204345703125
         ],
         [
           0.0,
-          429.36138916015625,
-          241.0817413330078
+          421.5673522949219,
+          242.89407348632812
         ],
         [
           0.0,
@@ -176,31 +177,32 @@
           1.0
         ]
       ],
-      "camera_height": 1.1675,
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 1.1639,
       "camera_height_source": "tracked pose of bag frame 180",
       "yaw": 0.0,
       "up_camera": [
-        -0.062134,
-        -0.994931,
-        0.079066
+        -0.05931,
+        -0.994756,
+        0.083327
       ],
       "up_camera_source": "tracked pose of bag frame 180 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.955257,
-          -0.295778,
+          0.956294,
+          -0.292406,
           -0.0,
-          -0.360522
+          -0.420665
         ],
         [
-          0.295778,
-          0.955257,
+          0.292406,
+          0.956294,
           -0.0,
-          -0.364905
+          -0.36346
         ],
         [
-          -0.0,
           0.0,
+          -0.0,
           1.0,
           -0.0
         ],
@@ -220,12 +222,12 @@
         [
           518.85791015625,
           0.0,
-          325.1494445800781
+          325.77325439453125
         ],
         [
           0.0,
-          518.85791015625,
-          253.33306884765625
+          518.2328491210938,
+          253.58973693847656
         ],
         [
           0.0,
@@ -235,14 +237,14 @@
       ],
       "cam_K_native": [
         [
-          429.36138916015625,
+          422.0758361816406,
           0.0,
-          421.3275146484375
+          422.8204345703125
         ],
         [
           0.0,
-          429.36138916015625,
-          241.0817413330078
+          421.5673522949219,
+          242.89407348632812
         ],
         [
           0.0,
@@ -250,33 +252,34 @@
           1.0
         ]
       ],
-      "camera_height": 1.0621,
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 1.0604,
       "camera_height_source": "tracked pose of bag frame 235",
       "yaw": 0.0,
       "up_camera": [
-        -0.032111,
-        -0.870321,
-        -0.491436
+        -0.031751,
+        -0.872386,
+        -0.487784
       ],
       "up_camera_source": "tracked pose of bag frame 235 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.911855,
-          0.410513,
+          0.910143,
+          0.414294,
           -0.0,
-          0.111374
+          0.049222
         ],
         [
-          -0.410512,
-          0.911855,
+          -0.414294,
+          0.910143,
           -0.0,
-          -0.77733
+          -0.776295
         ],
         [
           -0.0,
           0.0,
           1.0,
-          -0.0
+          -1e-06
         ],
         [
           0.0,
@@ -294,12 +297,12 @@
         [
           518.85791015625,
           0.0,
-          325.1494445800781
+          325.77325439453125
         ],
         [
           0.0,
-          518.85791015625,
-          253.33306884765625
+          518.2328491210938,
+          253.58973693847656
         ],
         [
           0.0,
@@ -309,14 +312,14 @@
       ],
       "cam_K_native": [
         [
-          429.36138916015625,
+          422.0758361816406,
           0.0,
-          421.3275146484375
+          422.8204345703125
         ],
         [
           0.0,
-          429.36138916015625,
-          241.0817413330078
+          421.5673522949219,
+          242.89407348632812
         ],
         [
           0.0,
@@ -324,27 +327,28 @@
           1.0
         ]
       ],
-      "camera_height": 1.0532,
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 1.0534,
       "camera_height_source": "tracked pose of bag frame 240",
       "yaw": 0.0,
       "up_camera": [
-        5.4e-05,
-        -0.884293,
-        -0.466933
+        0.000541,
+        -0.886177,
+        -0.463346
       ],
       "up_camera_source": "tracked pose of bag frame 240 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.941159,
-          0.337963,
+          0.939711,
+          0.34197,
           0.0,
-          0.239911
+          0.177369
         ],
         [
-          -0.337963,
-          0.94116,
+          -0.34197,
+          0.939711,
           -1e-06,
-          -0.838436
+          -0.839018
         ],
         [
           -0.0,

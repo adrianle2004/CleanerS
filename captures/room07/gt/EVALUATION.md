@@ -1,6 +1,6 @@
 # Evaluation — room07 (camera view only)
 
-Generated 2026-09-25 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
+Generated 2026-09-30 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
 
 Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/document/EVALUATION.md`: **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over the classes present; **SC** the same set restricted to `mapping == 307200` — the voxels no depth pixel reached — scored occupied-vs-empty.
 
@@ -8,22 +8,22 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 
 | class | TP | FP | FN | precision | recall | IoU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `empty` *(not in mIoU)* | 243 | 5610 | 18 | 4.2% | 93.1% | 4.1% |
+| `empty` *(not in mIoU)* | 233 | 4741 | 24 | 4.7% | 90.7% | 4.7% |
 | `ceiling` | 5 | 31 | 3 | 13.9% | 62.5% | 12.8% |
-| `floor` | 237 | 1035 | 0 | 18.6% | 100.0% | 18.6% |
-| `wall` | 3169 | 508 | 2270 | 86.2% | 58.3% | 53.3% |
-| `window` | 541 | 114 | 16 | 82.6% | 97.1% | 80.6% |
-| `chair` | 68 | 4 | 67 | 94.4% | 50.4% | 48.9% |
-| `bed` | 3107 | 828 | 6301 | 79.0% | 33.0% | 30.4% |
-| `sofa` | 0 | 1377 | 0 | 0.0% | 0.0% | 0.0% |
-| `table` | 127 | 164 | 117 | 43.6% | 52.0% | 31.1% |
-| `furn` | 0 | 472 | 0 | 0.0% | 0.0% | 0.0% |
-| `objs` | 488 | 339 | 1690 | 59.0% | 22.4% | 19.4% |
+| `floor` | 218 | 1027 | 0 | 17.5% | 100.0% | 17.5% |
+| `wall` | 3251 | 510 | 2223 | 86.4% | 59.4% | 54.3% |
+| `window` | 541 | 103 | 17 | 84.0% | 97.0% | 81.8% |
+| `chair` | 68 | 2 | 67 | 97.1% | 50.4% | 49.6% |
+| `bed` | 3476 | 788 | 5702 | 81.5% | 37.9% | 34.9% |
+| `sofa` | 0 | 1630 | 0 | 0.0% | 0.0% | 0.0% |
+| `table` | 127 | 194 | 117 | 39.6% | 52.0% | 29.0% |
+| `furn` | 0 | 497 | 0 | 0.0% | 0.0% | 0.0% |
+| `objs` | 536 | 252 | 1622 | 68.0% | 24.8% | 22.2% |
 
-**SSC mIoU (8 classes present): 36.9**
+**SSC mIoU (8 classes present): 37.8**
   Absent from this ground truth, so not averaged: `sofa`, `tvs`, `furn`.
 
-**SC IoU: 59.3**  |  precision 99.8  recall 59.3  |  14055 voxels, 98% of them occupied
+**SC IoU: 65.0**  |  precision 99.7  recall 65.1  |  13837 voxels, 98% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
@@ -34,10 +34,10 @@ The total above pools every frame. Each on its own:
 | frame | scored voxels | SC set | occupied | SC | SSC | classes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `live_000000` | 6225 | 4749 | 98% | 84.6 | 46.1 | 8 |
-| `live_000160` | 1644 | 883 | 99% | 99.7 | 54.3 | 4 |
-| `live_000170` | 1926 | 1069 | 100% | 100.0 | 51.8 | 4 |
-| `live_000320` | 4338 | 3676 | 98% | 30.5 | 14.4 | 4 |
-| `live_000330` | 4334 | 3678 | 98% | 33.0 | 11.8 | 4 |
+| `live_000160` | 1612 | 840 | 99% | 98.8 | 54.6 | 4 |
+| `live_000170` | 1820 | 1017 | 100% | 99.9 | 49.8 | 4 |
+| `live_000320` | 4271 | 3605 | 98% | 43.0 | 10.8 | 5 |
+| `live_000330` | 4302 | 3626 | 98% | 42.9 | 16.7 | 4 |
 
 > **This SC number is not usable.** 98% of the SC set is occupied, so a model predicting "occupied" everywhere scores IoU 0.981. The frame cannot separate a good model from a trivial one: the camera saw the whole room, so the only hidden volume left is the inside of the annotated solids. SSC above is still meaningful. See MAKING_GT.md.
 
@@ -47,37 +47,37 @@ The total above pools every frame. Each on its own:
 
 | | SC | SSC |
 | --- | ---: | ---: |
-| best | 100.0 | 70.9 |
-| median | 89.3 | 49.9 |
-| worst | 30.5 | 16.0 |
+| best | 100.0 | 72.3 |
+| median | 90.2 | 51.8 |
+| worst | 39.2 | 16.6 |
 
-`margin` is SC minus what "predict occupied everywhere" would score on that frame, which is its `occupied` column. **Only 1 of 159 frames beat that baseline**, and 159 have a scored set over 90% occupied — in a small room most viewpoints leave the metric nothing to find.
+`margin` is SC minus what "predict occupied everywhere" would score on that frame, which is its `occupied` column. **Only 0 of 159 frames beat that baseline**, and 159 have a scored set over 90% occupied — in a small room most viewpoints leave the metric nothing to find.
 
 ### Best 5 viewpoints (by margin)
 
 | frame | cam z | tilt | hidden | SC set | occupied | SC | margin | SSC |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `live_000160` | 1.01 m | 3.1° | 0.12 m | 883 | 99.4% | 99.7 | +0.2 | 54.2 |
-| `live_000170` | 1.01 m | 4.1° | 0.14 m | 1069 | 100.0% | 100.0 | +0.0 | 53.1 |
-| `live_000535` | 0.88 m | 10.1° | 0.21 m | 1278 | 100.0% | 100.0 | +0.0 | 52.3 |
-| `live_000150` | 1.01 m | 4.2° | 0.21 m | 1720 | 100.0% | 99.8 | -0.2 | 66.9 |
-| `live_000155` | 1.01 m | 4.1° | 0.16 m | 1218 | 100.0% | 99.8 | -0.2 | 53.5 |
+| `live_000535` | 0.88 m | 10.0° | 0.19 m | 1228 | 100.0% | 100.0 | +0.0 | 51.9 |
+| `live_000155` | 1.01 m | 3.9° | 0.15 m | 1130 | 100.0% | 99.9 | -0.1 | 57.2 |
+| `live_000170` | 1.00 m | 3.8° | 0.13 m | 1016 | 100.0% | 99.9 | -0.1 | 52.6 |
+| `live_000525` | 0.87 m | 10.8° | 0.21 m | 1016 | 100.0% | 99.9 | -0.1 | 44.2 |
+| `live_000160` | 1.01 m | 2.8° | 0.11 m | 841 | 99.0% | 98.8 | -0.2 | 54.5 |
 
 ### Worst 5 viewpoints
 
 | frame | cam z | tilt | hidden | SC set | occupied | SC | margin | SSC |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `live_000350` | 0.48 m | 12.0° | 0.58 m | 3512 | 98.8% | 54.2 | -44.6 | 27.2 |
-| `live_000315` | 0.46 m | 11.4° | 0.54 m | 3667 | 98.2% | 44.1 | -54.1 | 21.6 |
-| `live_000325` | 0.44 m | 11.4° | 0.56 m | 3644 | 97.4% | 32.6 | -64.8 | 16.0 |
-| `live_000330` | 0.44 m | 12.1° | 0.57 m | 3677 | 97.9% | 33.0 | -64.9 | 22.7 |
-| `live_000320` | 0.44 m | 11.7° | 0.56 m | 3676 | 97.6% | 30.5 | -67.1 | 26.2 |
+| `live_000360` | 0.47 m | 14.1° | 0.59 m | 3643 | 98.4% | 62.3 | -36.1 | 35.2 |
+| `live_000350` | 0.48 m | 11.8° | 0.56 m | 3461 | 98.9% | 60.1 | -38.8 | 19.8 |
+| `live_000320` | 0.44 m | 11.6° | 0.55 m | 3605 | 97.7% | 43.0 | -54.7 | 20.2 |
+| `live_000330` | 0.45 m | 11.9° | 0.55 m | 3621 | 97.9% | 42.8 | -55.1 | 25.0 |
+| `live_000325` | 0.44 m | 11.2° | 0.55 m | 3616 | 97.6% | 39.2 | -58.4 | 16.6 |
 
-> The highest **raw** SC in the sweep is 100.0, on frame live_000170 — whose scored set is 100% occupied, i.e. 1069 voxels of solid furniture with nothing empty to find. Rank by `margin`, not by SC.
+> The highest **raw** SC in the sweep is 100.0, on frame live_000535 — whose scored set is 100% occupied, i.e. 1228 voxels of solid furniture with nothing empty to find. Rank by `margin`, not by SC.
 
 ## What separates a good viewpoint from a bad one
 
-Over these 159 frames SC and SSC correlate **+0.50**, so the two are loosely related: ranking the viewpoints by one does not rank them by the other.
+Over these 159 frames SC and SSC correlate **+0.46**, so the two are loosely related: ranking the viewpoints by one does not rank them by the other.
 
 Correlation of each measured property of the shot with the two scores. These are measurements of THIS room, not general claims:
 
@@ -87,29 +87,29 @@ The **per step** columns are the same relationship in this room's own units: the
 
 | property of the viewpoint | a step of | vs SC | SC per step | vs SSC | SSC per step |
 | --- | --- | ---: | ---: | ---: | ---: |
-| camera height above the floor | +10 cm | +0.53 | +3.8 | +0.55 | +3.1 |
-| how far the camera looks down | +5 deg | -0.08 | -1.0 | -0.38 | -3.5 |
-| median distance to what it sees | +10 cm | +0.40 | +1.4 | +0.61 | +1.7 |
-| share of the frame closer than 1.5 m | +10 points | -0.49 | -3.3 | -0.70 | -3.8 |
-| room hidden behind the visible surface | +10 cm | -0.56 | -6.0 | -0.62 | -5.3 |
-| size of the SC set | +1000 voxels | -0.35 | -3.8 | -0.23 | -2.0 |
+| camera height above the floor | +10 cm | +0.44 | +2.7 | +0.51 | +2.7 |
+| how far the camera looks down | +5 deg | -0.07 | -0.6 | -0.34 | -2.9 |
+| median distance to what it sees | +10 cm | +0.31 | +0.9 | +0.59 | +1.5 |
+| share of the frame closer than 1.5 m | +10 points | -0.42 | -2.4 | -0.67 | -3.4 |
+| room hidden behind the visible surface | +10 cm | -0.57 | -5.1 | -0.53 | -4.2 |
+| size of the SC set | +1000 voxels | -0.39 | -3.6 | -0.19 | -1.5 |
 
-Left out, because this sweep barely varied them and a line through a column that does not move says nothing: **how much of the SC set is occupied** (95.6 to 100). They are still measured, and still in the CSV.
+Left out, because this sweep barely varied them and a line through a column that does not move says nothing: **how much of the SC set is occupied** (95.4 to 100). They are still measured, and still in the CSV.
 
-The shot property that moves SC most here is **room hidden behind the visible surface** (-0.56, about 31% of the spread in SC); for SSC it is **share of the frame closer than 1.5 m** (-0.70, about 49%). Geometry explains SC less than SSC (mean |correlation| 0.40 against 0.52) -- the mean of the absolute values down each column.
+The shot property that moves SC most here is **room hidden behind the visible surface** (-0.57, about 32% of the spread in SC); for SSC it is **share of the frame closer than 1.5 m** (-0.67, about 45%). Geometry explains SC less than SSC (mean |correlation| 0.37 against 0.47) -- the mean of the absolute values down each column.
 
-Even the strongest of them leaves a lot unexplained: frames scatter 10.4 SC either side of its line, against an SC range of 30 to 100 across the sweep. These are trends over 159 frames, not rules for one.
+Even the strongest of them leaves a lot unexplained: frames scatter 8.8 SC either side of its line, against an SC range of 39 to 100 across the sweep. These are trends over 159 frames, not rules for one.
 
 Those rows are not separate effects either. The properties move together, so a strong correlation in one row is often the same relationship seen from another angle:
 
 | | camera height above the floor | how far the camera looks down | median distance to what it sees | share of the frame closer than 1.5 m | room hidden behind the visible surface | size of the SC set |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| camera height above the floor | +1.00 | -0.20 | +0.66 | -0.69 | -0.52 | -0.13 |
-| how far the camera looks down | -0.20 | +1.00 | -0.81 | +0.74 | +0.27 | -0.47 |
-| median distance to what it sees | +0.66 | -0.81 | +1.00 | -0.95 | -0.43 | +0.30 |
-| share of the frame closer than 1.5 m | -0.69 | +0.74 | -0.95 | +1.00 | +0.66 | -0.04 |
-| room hidden behind the visible surface | -0.52 | +0.27 | -0.43 | +0.66 | +1.00 | +0.68 |
-| size of the SC set | -0.13 | -0.47 | +0.30 | -0.04 | +0.68 | +1.00 |
+| camera height above the floor | +1.00 | -0.18 | +0.64 | -0.66 | -0.50 | -0.14 |
+| how far the camera looks down | -0.18 | +1.00 | -0.82 | +0.76 | +0.27 | -0.45 |
+| median distance to what it sees | +0.64 | -0.82 | +1.00 | -0.95 | -0.40 | +0.31 |
+| share of the frame closer than 1.5 m | -0.66 | +0.76 | -0.95 | +1.00 | +0.64 | -0.03 |
+| room hidden behind the visible surface | -0.50 | +0.27 | -0.40 | +0.64 | +1.00 | +0.69 |
+| size of the SC set | -0.14 | -0.45 | +0.31 | -0.03 | +0.69 | +1.00 |
 
 The tightest pair here is **median distance to what it sees** and **share of the frame closer than 1.5 m** at -0.95: close enough to be largely one measurement, so the table above cannot say which of the two a score is really following.
 
@@ -117,28 +117,28 @@ The mechanism is the SC set itself: the voxels no depth pixel reached. Group the
 
 | hidden room behind the surface | frames | median | SC set | occupied | SC | SSC |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| least (bottom 25%) | 40 | 0.28 m | 1779 | 100% | 97.7 | 53.5 |
-| 25-50% | 41 | 0.40 m | 4482 | 98% | 85.6 | 51.8 |
-| 50-75% | 38 | 0.43 m | 4508 | 98% | 87.0 | 46.5 |
-| most (top 25%) | 40 | 0.53 m | 3658 | 99% | 77.0 | 44.0 |
+| least (bottom 25%) | 41 | 0.27 m | 1709 | 100% | 97.6 | 54.5 |
+| 25-50% | 41 | 0.39 m | 4465 | 98% | 87.0 | 53.0 |
+| 50-75% | 37 | 0.41 m | 4433 | 99% | 90.0 | 49.7 |
+| most (top 25%) | 40 | 0.53 m | 3619 | 99% | 82.5 | 44.4 |
 
 And the two ends of the ranking, as medians of the best and worst tenth by `margin`:
 
 | | best 10% | worst 10% |
 | --- | ---: | ---: |
-| camera height (m) | 1.01 | 0.48 |
-| tilt (deg) | 7.20 | 12.10 |
-| median depth (m) | 1.98 | 1.03 |
-| closer than 1.5 m (%) | 8.80 | 71.80 |
-| hidden room behind surface (m) | 0.16 | 0.56 |
-| SC set (voxels) | 1069.00 | 3644.00 |
+| camera height (m) | 1.00 | 0.48 |
+| tilt (deg) | 6.90 | 13.10 |
+| median depth (m) | 1.99 | 1.05 |
+| closer than 1.5 m (%) | 8.70 | 68.80 |
+| hidden room behind surface (m) | 0.15 | 0.55 |
+| SC set (voxels) | 1016.00 | 3523.00 |
 | SC set occupied (%) | 100.00 | 97.60 |
-| SC | 99.70 | 64.50 |
-| SSC | 53.50 | 28.50 |
+| SC | 99.50 | 66.60 |
+| SSC | 55.50 | 35.20 |
 
-What the two ends differ in most, largest first: **share of the frame closer than 1.5 m** (8.80 against 71.80); **room hidden behind the visible surface** (0.16 against 0.56); **camera height above the floor** (1.01 against 0.48).
+What the two ends differ in most, largest first: **share of the frame closer than 1.5 m** (8.70 against 68.80); **room hidden behind the visible surface** (0.15 against 0.55); **median distance to what it sees** (1.99 against 1.05).
 
-> **No viewpoint in this room can measure completion.** The least occupied SC set in the whole sweep is still 95.6% occupied, so "predict occupied everywhere" scores at least that on every frame, and the best margin here is +0.2. SC is not a usable number for this room at any viewpoint -- quote SSC, and capture the next room with more depth between the camera and what it looks at. See MAKING_GT.md, "What this does not measure".
+> **No viewpoint in this room can measure completion.** The least occupied SC set in the whole sweep is still 95.4% occupied, so "predict occupied everywhere" scores at least that on every frame, and the best margin here is +0.0. SC is not a usable number for this room at any viewpoint -- quote SSC, and capture the next room with more depth between the camera and what it looks at. See MAKING_GT.md, "What this does not measure".
 
 
 ### Worked example: room hidden behind the visible surface
@@ -150,29 +150,29 @@ Each dot is one sampled frame: where the camera was on that axis, and what Clean
 Every frame contributes one product to the covariance: how far it sits from the average on each axis, multiplied. Both above average, or both below, and the product is positive; one of each and it is negative. Their average is the covariance, which still carries the units of both axes, so dividing by the two standard deviations strips the units out and pins the result between -1 and +1. That is r.
 
 ```
-room hidden behind the visible surface mean    0.409   std    0.117
-SC                           mean     87.0   std     12.5
+room hidden behind the visible surface mean    0.398   std    0.118
+SC                           mean     88.1   std     10.7
 
 cov    = mean((property - its mean) x (SC - its mean))
-       = -0.8136
+       = -0.7149
 r      = cov / (std(property) x std(SC))
-       = -0.8136 / (0.1168 x 12.53)
-       = -0.5561
+       = -0.7149 / (0.1182 x 10.70)
+       = -0.5656
 slope  = r x std(SC) / std(property)
-       = -0.5561 x 12.5 / 0.117
-       = -59.6 SC per unit
-step   = +10 cm  ->  -59.6 x 0.1 = -6.0 SC per step
+       = -0.5656 x 10.7 / 0.118
+       = -51.2 SC per unit
+step   = +10 cm  ->  -51.2 x 0.1 = -5.1 SC per step
 ```
 
 The same answer without fitting anything, as a check: split the 159 frames at the median room hidden behind the visible surface and compare the halves.
 
 ```
-lower half: mean 0.326 -> mean SC 91.9
-upper half: mean 0.489 -> mean SC 82.2
--9.7 SC over +0.163  ->  -6.0 SC per step (fit said -6.0)
+lower half: mean 0.313 -> mean SC 92.3
+upper half: mean 0.479 -> mean SC 84.1
+-8.2 SC over +0.166  ->  -4.9 SC per step (fit said -5.1)
 ```
 
-That is the green dashed line on the plot. The two agree, so the number is not an artefact of the fit -- but the frames scatter 10.4 SC either side of the line, so it describes the sweep as a whole and predicts no single frame.
+That is the green dashed line on the plot. The two agree, so the number is not an artefact of the fit -- but the frames scatter 8.8 SC either side of the line, so it describes the sweep as a whole and predicts no single frame.
 
 ### How these were measured
 

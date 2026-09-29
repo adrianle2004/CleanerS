@@ -108,6 +108,9 @@ def parse_args():
                     help="override meta.json's yaw (radians)")
 
     p.add_argument('--out_dir', type=str, default='./outputs')
+    p.add_argument('--overwrite', action='store_true',
+                   help='redo frames that already have a prediction; without '
+                        'it they are skipped, so an interrupted run resumes')
     p.add_argument('--mask', type=str, default='auto',
                     choices=['auto', 'label_weight', 'occluded', 'surface', 'frustum'],
                     help="which voxels the .ply shows; see build_vis_mask. "
@@ -229,15 +232,20 @@ def resolve_frame_camera(meta, stem, args):
     height = args.camera_height if args.camera_height is not None \
         else m.get('camera_height', 1.25)
     yaw = args.yaw if args.yaw is not None else m.get('yaw', 0.0)
+    # present only on frames whose colour was left in its own camera
+    extra = {}
+    if m.get('cam_K_color') is not None and m.get('color_from_depth') is not None:
+        extra = {'cam_K_color': np.asarray(m['cam_K_color'], np.float32),
+                 'color_from_depth': np.asarray(m['color_from_depth'], np.float64)}
     # measured gravity, when the capture has it: the grid then follows a
     # camera that was not level instead of assuming it was
     up = m.get('up_camera')
-    return cam_K, float(height), float(yaw), up
+    return cam_K, float(height), float(yaw), up, extra
 
 
 def process_one_live_frame(depth_path, rgb_path, cam_K, camera_height, yaw,
                             model, device, pred_dir, ply_dir, mask_mode,
-                            up_camera=None):
+                            up_camera=None, extra=None):
     frame_name = os.path.splitext(os.path.basename(depth_path))[0]
 
     raw = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -257,7 +265,8 @@ def process_one_live_frame(depth_path, rgb_path, cam_K, camera_height, yaw,
 
     loader = FrameLoader.from_live_camera(
         depth, rgb=rgb.astype(np.float32), cam_K=cam_K,
-        camera_height=camera_height, yaw=yaw, up_camera=up_camera)
+        camera_height=camera_height, yaw=yaw, up_camera=up_camera,
+        **(extra or {}))
     sample = loader.build_tsdf_and_mapping()
 
     pred_label, _ = model_mod.predict(model, sample, device=device)
@@ -306,7 +315,12 @@ def main():
                 logging.warning('[%s] no RGB at %s, skipping (the model needs '
                                 'img -- it is not optional)', stem, rp)
                 continue
-            cam_K, camera_height, yaw, up_camera = \
+            done = os.path.join(pred_dir, stem + '.npy')
+            if os.path.exists(done) and not args.overwrite:
+                print(f'  [{stem}] already predicted, skipping '
+                      f'(--overwrite to redo)')
+                continue
+            cam_K, camera_height, yaw, up_camera, extra = \
                 resolve_frame_camera(meta, stem, args)
             print(f'  [{stem}] cam_K fx={cam_K[0,0]:.2f} fy={cam_K[1,1]:.2f} '
                   f'cx={cam_K[0,2]:.2f} cy={cam_K[1,2]:.2f}')
@@ -314,9 +328,12 @@ def main():
                   f'yaw={yaw:.3f} rad' + ('' if up_camera is None else
                   '  tilt %.1f deg' % np.degrees(np.arccos(min(1.0,
                       -up_camera[1] / np.linalg.norm(up_camera))))))
+            if extra:
+                print(f'  [{stem}] colour kept in its own camera; registered '
+                      f'per point')
             process_one_live_frame(dp, rp, cam_K, camera_height, yaw, model,
                                     device, pred_dir, ply_dir, args.mask,
-                                    up_camera)
+                                    up_camera, extra)
 
     elif args.data_dir is not None:
         # ---- Batch mode: every matched .bin/.png pair in the folder ----

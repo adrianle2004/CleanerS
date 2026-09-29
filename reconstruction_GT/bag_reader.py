@@ -39,18 +39,25 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 BagFrame = collections.namedtuple(
-    'BagFrame', 'index depth depth_raw rgb K depth_scale')
+    'BagFrame', 'index depth depth_raw rgb K depth_scale K_color color_from_depth')
+BagFrame.__new__.__defaults__ = (None, None)        # unset unless align=False
 BagFrame.__doc__ = '''One frame of a bag.
 
 index       frames delivered before it, counting from 0 -- the same counting
             fuse_scan.py writes into trajectory.txt
 depth       metres, float32            depth_raw  the sensor's own uint16
-rgb         HxWx3 uint8, registered to the depth camera
+rgb         HxWx3 uint8; registered to the depth camera unless align=False,
+            in which case it is the colour camera's own untouched frame
 K           3x3 depth intrinsics       depth_scale  metres per raw unit
+K_color, color_from_depth   set only when align=False: the colour camera's
+            intrinsics and the 4x4 that takes a point from the depth camera's
+            frame into the colour camera's. Together they let a consumer
+            register the two per point instead of resampling either image
+            (inference/frame_loader.py, _build_mapping2d).
 '''
 
 
-def _start(bag_path, want_color=True):
+def _start(bag_path, want_color=True, align='depth'):
     """-> (pipeline, profile, K, depth_scale, align). Playback, never real
     time, so every frame is delivered however slow the consumer is."""
     import pyrealsense2 as rs
@@ -65,8 +72,28 @@ def _start(bag_path, want_color=True):
                   [0.0, intr.fy, intr.ppy],
                   [0.0, 0.0, 1.0]], np.float64)
     scale = profile.get_device().first_depth_sensor().get_depth_scale()
-    return pipe, profile, K, scale, (rs.align(rs.stream.depth) if want_color
-                                     else None)
+    extras = {}
+    if want_color:
+        cs = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        ci = cs.get_intrinsics()
+        extras['K_color'] = np.array([[ci.fx, 0.0, ci.ppx],
+                                      [0.0, ci.fy, ci.ppy],
+                                      [0.0, 0.0, 1.0]], np.float64)
+        e = profile.get_stream(rs.stream.depth).get_extrinsics_to(cs)
+        T = np.eye(4)
+        T[:3, :3] = np.asarray(e.rotation, np.float64).reshape(3, 3).T
+        T[:3, 3] = np.asarray(e.translation, np.float64)
+        extras['color_from_depth'] = T
+    al = None
+    if want_color and align:
+        target = rs.stream.color if align == 'color' else rs.stream.depth
+        al = rs.align(target)
+        if align == 'color':
+            # the depth now lives in the colour camera's frame, so the colour
+            # intrinsics are the ones that unproject it -- this is NYU's
+            # arrangement, and inference/camera.py's
+            K = extras['K_color']
+    return pipe, profile, K, scale, al, extras
 
 
 def bag_metadata(bag_path):
@@ -93,9 +120,23 @@ def bag_metadata(bag_path):
         pipe.stop()
 
 
-def iter_bag(bag_path, want_color=True):
-    """Yield a BagFrame per frame, in order, every time."""
-    pipe, _, K, scale, align = _start(bag_path, want_color)
+def iter_bag(bag_path, want_color=True, align='depth'):
+    """Yield a BagFrame per frame, in order, every time.
+
+    align='depth'  warps the colour into the depth camera: a colour for every
+                   depth pixel, which is what fusion wants, at the cost of the
+                   colour image wherever the depth is missing.
+    align='color'  warps the DEPTH into the colour camera and leaves the colour
+                   untouched. This is what NYU is -- its depth was projected
+                   into the RGB frame, which is why SSCNet and CleanerS
+                   unproject it with the RGB intrinsics -- and what
+                   inference/camera.py does for the still frame. `K` comes back
+                   as the colour intrinsics, because that is the frame the
+                   depth now lives in.
+    align=False    neither is touched; K_color and color_from_depth come back
+                   so the caller can relate them per point instead.
+    """
+    pipe, _, K, scale, aligner, extras = _start(bag_path, want_color, align)
     try:
         i = -1
         while True:
@@ -103,8 +144,8 @@ def iter_bag(bag_path, want_color=True):
             if not ok:
                 break
             i += 1
-            if align is not None:
-                frames = align.process(frames)
+            if aligner is not None:
+                frames = aligner.process(frames)
             d = frames.get_depth_frame()
             c = frames.get_color_frame() if want_color else None
             if not d or (want_color and not c):
@@ -112,7 +153,8 @@ def iter_bag(bag_path, want_color=True):
             raw = np.asanyarray(d.get_data())
             yield BagFrame(i, raw.astype(np.float32) * scale, raw,
                            np.asanyarray(c.get_data()) if c else None,
-                           K, float(scale))
+                           K, float(scale), extras.get('K_color'),
+                           extras.get('color_from_depth'))
     finally:
         try:
             pipe.stop()
@@ -120,9 +162,9 @@ def iter_bag(bag_path, want_color=True):
             pass
 
 
-def read_frame(bag_path, index, want_color=True):
+def read_frame(bag_path, index, want_color=True, align='depth'):
     """-> the BagFrame at `index`."""
-    for bf in iter_bag(bag_path, want_color):
+    for bf in iter_bag(bag_path, want_color, align):
         if bf.index == index:
             return bf
     raise SystemExit('frame %d is past the end of %s' % (index, bag_path))

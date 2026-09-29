@@ -150,7 +150,8 @@ def cam_pose_from_meta(meta, stem=None):
 
 class FrameLoader:
     def __init__(self, depth, vox_origin, cam_pose, rgb=None, cam_K=None,
-                 drop_invalid_depth=False, encoder='numpy'):
+                 drop_invalid_depth=False, encoder='numpy',
+                 cam_K_color=None, color_from_depth=None):
         """drop_invalid_depth: exclude depth<=0 pixels from the surface stamp.
 
         Leave False to reproduce the NYU reference exactly. Set True for live
@@ -172,6 +173,13 @@ class FrameLoader:
         self.cam_pose = cam_pose.astype(np.float32)
         self.rgb = rgb
         self.cam_K = cam_K if cam_K is not None else CAM_K
+        # A registered pair (NYU, or anything put through rs.align) needs
+        # neither of these: image pixel p IS depth pixel p. Supply both and the
+        # two images may stay in their own cameras -- see _build_mapping2d.
+        self.cam_K_color = (np.asarray(cam_K_color, np.float32)
+                            if cam_K_color is not None else None)
+        self.color_from_depth = (np.asarray(color_from_depth, np.float64)
+                                 if color_from_depth is not None else None)
         self.drop_invalid_depth = drop_invalid_depth
         if encoder not in ('numpy', 'cuda', 'auto'):
             raise ValueError('encoder must be numpy, cuda or auto, not %r' % encoder)
@@ -201,7 +209,8 @@ class FrameLoader:
     @classmethod
     def from_live_camera(cls, depth, rgb=None, cam_pose=None, vox_origin=None,
                          cam_K=None, camera_height=1.25, yaw=0.0,
-                         drop_invalid_depth=True, up_camera=None):
+                         drop_invalid_depth=True, up_camera=None,
+                         cam_K_color=None, color_from_depth=None):
         """depth: (480,640) float32 array in METRES, already decoded (no
         bit-shift -- that trick is specific to NYU's raw Kinect PNG encoding).
 
@@ -237,6 +246,7 @@ class FrameLoader:
             # 2.88 m tall (world Z, from 5 cm below the floor -- NYU's value)
             vox_origin = np.array([-2.4, 0.0, -0.05], dtype=np.float32)
         return cls(depth, vox_origin, cam_pose, rgb=rgb, cam_K=cam_K,
+                   cam_K_color=cam_K_color, color_from_depth=color_from_depth,
                    drop_invalid_depth=drop_invalid_depth)
 
     @staticmethod
@@ -262,10 +272,7 @@ class FrameLoader:
         weight_low = (self._downsample_block_mean(weight_hi) >= 0.5).astype(np.float32)
         mapping_low = self._build_low_res_mapping()
 
-        mapping2d = (np.ones((IMG_H, IMG_W)) * -1).reshape(-1).astype(np.int64)
-        valid = mapping_low != MAPPING_SENTINEL
-        mapping2d[mapping_low[valid]] = np.nonzero(valid)[0]
-        mapping2d = mapping2d.reshape(IMG_H, IMG_W)
+        mapping2d = self._build_mapping2d(mapping_low)
 
         return {
             'tsdf': tsdf_low.reshape(1, *VOX_SIZE_LOW),      # (1,60,36,60)
@@ -274,6 +281,59 @@ class FrameLoader:
             'mapping2d': mapping2d,
             'img': self.rgb,
         }
+
+    def _build_mapping2d(self, mapping_low):
+        """Image pixel -> voxel: the table the network scatters 2D features by
+        (`unet3d.projection`: segres[mapping[mapping != -1]] = feat[...]).
+
+        DEFAULT -- a registered pair. Image pixel p is depth pixel p, so this
+        is `mapping_low` inverted. NYU is like that, and so is anything that
+        has been through rs.align.
+
+        WITH `cam_K_color` AND `color_from_depth` -- the two cameras left
+        apart. Each depth pixel already knows its 3D point, so the point is
+        projected into the COLOUR camera and the table is written in colour
+        pixels. Registration then happens per point, using that point's own
+        depth, which is exactly what aligning the images does -- except no
+        image is produced, so nothing has to be invented where the depth is
+        missing, and the colour frame reaches the 2D encoder whole.
+
+        Occlusion is the one thing alignment does that a bare projection does
+        not: a point the depth camera sees may be hidden from the colour
+        camera 59 mm to the side. Writing far points first and near ones last
+        leaves the nearest surface in each colour pixel.
+        """
+        valid = mapping_low != MAPPING_SENTINEL
+        if self.cam_K_color is None or self.color_from_depth is None:
+            mapping2d = np.full(IMG_H * IMG_W, -1, np.int64)
+            mapping2d[mapping_low[valid]] = np.nonzero(valid)[0]
+            return mapping2d.reshape(IMG_H, IMG_W)
+
+        H, W = self.depth.shape
+        K, Kc, A = self.cam_K, self.cam_K_color, self.color_from_depth
+        vs, us = np.meshgrid(np.arange(H, dtype=np.float32),
+                             np.arange(W, dtype=np.float32), indexing='ij')
+        z = self.depth.reshape(-1).astype(np.float64)
+        pt = np.stack([(us.reshape(-1) - K[0, 2]) * z / K[0, 0],
+                       (vs.reshape(-1) - K[1, 2]) * z / K[1, 1], z], axis=1)
+        pc = pt @ A[:3, :3].T + A[:3, 3]                 # into the colour camera
+
+        good = (z > 0) & (pc[:, 2] > 1e-6)
+        u = np.full(len(z), -1, np.int64)
+        v = np.full(len(z), -1, np.int64)
+        u[good] = np.round(Kc[0, 0] * pc[good, 0] / pc[good, 2] + Kc[0, 2])
+        v[good] = np.round(Kc[1, 1] * pc[good, 1] / pc[good, 2] + Kc[1, 2])
+        good &= (u >= 0) & (u < IMG_W) & (v >= 0) & (v < IMG_H)
+
+        vox_of_pixel = np.full(H * W, -1, np.int64)      # from the table we have
+        vox_of_pixel[mapping_low[valid]] = np.nonzero(valid)[0]
+        good &= vox_of_pixel >= 0
+
+        idx = np.nonzero(good)[0]
+        idx = idx[np.argsort(-pc[idx, 2])]               # far first, near last
+        mapping2d = np.full(IMG_H * IMG_W, -1, np.int64)
+        mapping2d[v[idx] * IMG_W + u[idx]] = vox_of_pixel[idx]
+        return mapping2d.reshape(IMG_H, IMG_W)
 
     def _build_high_res_tsdf(self):
         R = self.cam_pose[:3, :3]

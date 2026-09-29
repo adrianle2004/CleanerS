@@ -128,11 +128,20 @@ def frame_stats(cap, poses, every):
     return out
 
 
-def read_frame(cap, index):
-    """-> (depth metres, rgb, K) for one bag frame, at native resolution."""
+def read_frame(cap, index, align='color'):
+    """-> the BagFrame for one bag frame, at native resolution.
+
+    align='color' -- the depth is projected into the COLOUR camera and the
+    colour image is left alone, which is what NYU is and what
+    inference/camera.py does for the still frame. It is the arrangement the
+    model was trained under: complete RGB, and depth that carries the
+    reprojection's own losses as part of its noise. Matching it matters more
+    than any individual property of it; a capture that half-matches is a
+    capture whose scores cannot be compared with anything.
+    """
     from reconstruction_GT.bag_reader import read_frame as read_bag_frame
-    bf = read_bag_frame(os.path.join(cap, 'scan', 'scan.bag'), index)
-    return bf.depth, bf.rgb, bf.K
+    return read_bag_frame(os.path.join(cap, 'scan', 'scan.bag'), index,
+                          align=align)
 
 
 def main():
@@ -178,9 +187,11 @@ def main():
     for sub in ('depth', 'rgb'):
         os.makedirs(os.path.join(cap, sub), exist_ok=True)
 
-    depth, rgb, K = read_frame(cap, idx)
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    depth_c, rgb_c, K_eff = match_nyu_fov(depth, bgr, K)
+    bf = read_frame(cap, idx)
+    bgr = cv2.cvtColor(bf.rgb, cv2.COLOR_RGB2BGR)
+    # one frame, one K: after align='color' both images live in the colour
+    # camera, exactly as NYU's pair does
+    depth_c, rgb_c, K_eff = match_nyu_fov(bf.depth, bgr, bf.K)
     cv2.imwrite(os.path.join(cap, 'depth', stem + '.png'),
                 np.clip(depth_c * 1000.0, 0, 65535).astype(np.uint16))
     cv2.imwrite(os.path.join(cap, 'rgb', stem + '.png'), rgb_c)
@@ -189,14 +200,23 @@ def main():
     # still frame; everything that differs here goes under "frame_meta", and
     # `world_from_room` is how the room's solids reach this frame's world --
     # frame_loader.frame_meta, voxelize_gt.transform_solids.
-    T = poses[idx]                                   # camera -> room world
+    # trajectory.txt holds DEPTH-camera poses (fuse_scan reads the bag with
+    # align='depth'), and this frame is now expressed in the colour camera, so
+    # the pose has to move with it: p_world = T_depth . A^-1 . p_colour
+    T = poses[idx] @ np.linalg.inv(np.asarray(bf.color_from_depth, np.float64))
     height = float(T[2, 3])
     up_cam = (T[:3, :3].T @ np.array([0.0, 0.0, 1.0])).tolist()
     A = live_cam_pose(height, 0.0, up_cam).astype(np.float64) @ np.linalg.inv(T)
     entry = {
         'source': 'sweep frame %d of scan/scan.bag' % idx,
         'cam_K': np.asarray(K_eff, np.float64).tolist(),
-        'cam_K_native': K.tolist(),
+        'cam_K_native': bf.K.tolist(),
+        'registration': 'depth projected into the colour camera (rs.align to '
+                        'colour), colour left untouched, unprojected with the '
+                        'colour intrinsics -- NYU\'s arrangement, and the '
+                        'same one inference/camera.py uses for the still '
+                        'frame, so every frame of this capture matches what '
+                        'the model was trained on',
         'camera_height': round(height, 4),
         'camera_height_source': 'tracked pose of bag frame %d' % idx,
         'yaw': 0.0,
@@ -216,6 +236,9 @@ def main():
 
     out_dir = cap
     print('\nadded %s to %s' % (stem, cap))
+    print('  NYU arrangement: %.2f%% black RGB, %.0f%% of the frame has depth'
+          % (100 * float((rgb_c.sum(axis=2) == 0).mean()),
+             100 * float((depth_c > 0).mean())))
     print('  camera %.3f m up, tilt %.1f deg, %.0f%% of the frame has depth'
           % (height,
              np.degrees(np.arccos(min(1.0, -up_cam[1] / np.linalg.norm(up_cam)))),

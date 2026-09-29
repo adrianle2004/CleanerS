@@ -99,6 +99,8 @@ def parse_args():
     p.add_argument('--rank', choices=['margin', 'sc', 'ssc'], default='margin',
                    help='which column best/worst are taken from (default '
                         'margin: SC minus the trivial baseline)')
+    p.add_argument('--restart', action='store_true',
+                   help='ignore any existing CSV and score every frame again')
     p.add_argument('--keep', type=int, default=0, metavar='N',
                    help='afterwards, put the N best and N worst frames on disk '
                         'in full: frame, ground truth, prediction and plys')
@@ -242,11 +244,11 @@ def keep_frame(cap, idx, model, device, args):
     ply_dir = ensure_dir(os.path.join(out_root, 'ply'))
     meta = json.load(open(os.path.join(cap, 'meta.json')))
     flags = argparse.Namespace(camera_height=None, yaw=None)
-    cam_K, height, yaw, up = resolve_frame_camera(meta, stem, flags)
+    cam_K, height, yaw, up, extra = resolve_frame_camera(meta, stem, flags)
     process_one_live_frame(os.path.join(cap, 'depth', stem + '.png'),
                            os.path.join(cap, 'rgb', stem + '.png'),
                            cam_K, height, yaw, model, device, pred_dir, ply_dir,
-                           'surface', up)
+                           'surface', up, extra)
     return stem
 
 
@@ -273,10 +275,35 @@ def main():
     # inside this loop without changing which frame an index means --
     # MAKING_GT.md, gotcha 10.
     from reconstruction_GT.bag_reader import iter_bag
-    rows = []
-    for bf in iter_bag(os.path.join(cap, 'scan', 'scan.bag')):
+
+    # an interrupted run keeps its CSV: frames already in it are not scored
+    # again, so guard.sh can restart this without losing the GPU minutes
+    out = args.out or os.path.join('outputs', os.path.basename(cap),
+                                   'sweep_eval.csv')
+    os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+    rows, done = [], set()
+    if os.path.exists(out) and not args.restart:
+        with open(out) as f:
+            for r in csv.DictReader(f):
+                if set(COLUMNS) <= set(r):
+                    rows.append({k: r[k] for k in COLUMNS})
+                    done.add(int(float(r['frame'])))
+        if done:
+            print('resuming: %d frames already in %s' % (len(done), out),
+                  flush=True)
+    handle = open(out, 'a' if done else 'w')
+    writer = csv.DictWriter(handle, COLUMNS)
+    if not done:
+        writer.writeheader()
+        handle.flush()
+    # align='color' -- the same arrangement export_frame writes and the model
+    # was trained on: depth projected into the colour camera, colour left
+    # whole, unprojected with the colour intrinsics. Scoring the sweep in a
+    # different arrangement from the frames it recommends would rank
+    # viewpoints on data nobody will ever evaluate.
+    for bf in iter_bag(os.path.join(cap, 'scan', 'scan.bag'), align='color'):
         i = bf.index
-        if i not in poses or i % args.every:
+        if i not in poses or i % args.every or i in done:
             continue
         if 100 * float((bf.depth > 0).mean()) < args.min_valid:
             continue
@@ -286,11 +313,17 @@ def main():
         # the numbers the file pipeline produces
         depth_c = (np.clip(depth_c * 1000.0, 0, 65535).astype(np.uint16)
                    .astype(np.float32) / 1000.0)
-        T = poses[i]
+        # trajectory.txt holds DEPTH-camera poses; this frame is expressed in
+        # the colour camera, so the pose moves with it (export_frame does the
+        # same composition)
+        T = poses[i] @ np.linalg.inv(np.asarray(bf.color_from_depth, np.float64))
         row = frame_row(i, depth_c, rgb_c, K_eff, T, spec, model, device,
                         args.fov == 'frustum')
         row.update(viewpoint_stats(depth_c, K_eff, T, spec.get('room')))
         rows.append(row)
+        writer.writerow(row)                 # on disk before the next frame
+        handle.flush()
+        os.fsync(handle.fileno())
         # print, not log: loading the model installs mmcv/mmseg's own root
         # logger, and everything logged after that disappears
         print('%3d  frame %4d  floor %4.1f%%  SC %5.1f (trivial %4.1f)  '
@@ -302,15 +335,17 @@ def main():
     if not rows:
         raise SystemExit('no frames scored -- try --every 1 or a lower --min_valid')
 
-    out = args.out or os.path.join('outputs', os.path.basename(cap), 'sweep_eval.csv')
-    os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
-    with open(out, 'w') as f:
-        w = csv.DictWriter(f, COLUMNS)
-        w.writeheader()
-        for r in rows:
-            w.writerow(r)
+    handle.close()
 
     key = {'margin': 'margin', 'sc': 'sc_iou', 'ssc': 'ssc_miou'}[args.rank]
+    for r in rows:                           # resumed rows arrive as strings
+        for k in COLUMNS:
+            if r[k] == '' or r[k] is None:
+                r[k] = 0
+            elif k in ('frame', 'scored', 'sc_voxels', 'classes'):
+                r[k] = int(float(r[k]))
+            elif not isinstance(r[k], (int, float)):
+                r[k] = float(r[k])
     rows.sort(key=lambda r: -r[key])
     head = ('%5s %6s %6s %7s %7s %7s %7s %7s %7s'
             % ('frame', 'cam z', 'tilt', 'floor%', 'SC set', 'occ%', 'SC', 'margin',
