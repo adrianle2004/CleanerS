@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, NamedTuple, Tuple, Iterable
 from collections import OrderedDict, defaultdict
 import torch
 import torch.nn as nn
+from .paths import resolve
 
 
 # ================ model related ==================
@@ -135,6 +136,7 @@ def resume_checkpoint(config, model, optimizer=None, scheduler=None, pretrained_
 
 
 def load_checkpoint(model, pretrained_path, prefix=None):
+    pretrained_path = resolve(pretrained_path)
     if not os.path.exists(pretrained_path):
         raise NotImplementedError('no checkpoint file from path %s...' % pretrained_path)
     # load state dict

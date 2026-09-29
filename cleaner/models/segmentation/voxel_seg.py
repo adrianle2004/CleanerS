@@ -1,5 +1,6 @@
 import torch.nn as nn
 from ..build import MODELS, build_model_from_cfg
+from ...utils.paths import resolve
 
 
 @MODELS.register_module()
@@ -14,7 +15,8 @@ class VoxelSSC(nn.Module):
         self.encoder = build_model_from_cfg(encoder_args)
         self.head = build_model_from_cfg(head_args)
 
-        pretrained = encoder_args.pop('pretrained')
+        # cfg paths are relative to the repo, not to the caller (utils/paths.py)
+        pretrained = resolve(encoder_args.pop('pretrained'))
         freeze_encoder = encoder_args.pop('freeze')
         if pretrained:
             self.encoder.init_weights(pretrained)

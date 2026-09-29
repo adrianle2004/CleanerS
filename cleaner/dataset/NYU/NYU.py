@@ -3,12 +3,12 @@ import logging
 import numpy as np
 from torch.utils.data import Dataset
 from ..build import DATASETS
+from ...utils.paths import resolve
 import cv2
 import imageio
 
 # <workspace>/data/NYU, next to the repo
-_DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             *['..'] * 4, 'data', 'NYU')
+_DEFAULT_ROOT = '../data/NYU'
 
 
 @DATASETS.register_module()
@@ -56,6 +56,8 @@ class NYU(Dataset):
         """
 
         super().__init__()
+        # cfg paths are relative to the repo, not to the caller (utils/paths.py)
+        data_root = resolve(data_root)
         self.split, self.transform, self.data_root = \
             split, transform, data_root
         self.img_H = img_H

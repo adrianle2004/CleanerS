@@ -1,4 +1,5 @@
 from .random import set_random_seed
+from .paths import resolve, REPO_ROOT
 from .config import EasyConfig, print_args
 from .logger import setup_logger_dist, generate_exp_directory, resume_exp_directory
 from .metrics import AverageMeter, ConfusionMatrix, get_mious

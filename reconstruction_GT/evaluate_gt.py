@@ -56,7 +56,7 @@ from reconstruction_GT.voxelize_gt import (
 
 log = logging.getLogger(__name__)
 NYU_ROOT = os.path.join(os.path.dirname(_REPO_ROOT), 'data', 'NYU')
-NYU_PRED = 'custom_visual_pred/CleanerS/prediction'
+NYU_PRED = os.path.join(_REPO_ROOT, 'custom_visual_pred', 'CleanerS', 'prediction')
 
 
 def confusion(pred, target, n):
@@ -187,6 +187,9 @@ def eval_nyu(limit, split='test'):
         cmSSC += a
         cmSC += b
         n += 1
+    if n == 0:
+        raise SystemExit('scored no frames: no NYU%%s_0000.npy under %s\n'
+                         'and/or no Label/*.npz under %s' % (NYU_PRED, NYU_ROOT))
     return cmSSC, cmSC, n
 
 

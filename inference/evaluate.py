@@ -98,7 +98,8 @@ MAPPING_SENTINEL = 307200          # frame_loader.MAPPING_SENTINEL, 480 * 640
 
 DEFAULT_NYU = os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), '..', 'data', 'NYU')
-DEFAULT_PRED = 'custom_visual_pred/CleanerS/prediction'
+DEFAULT_PRED = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), 'custom_visual_pred', 'CleanerS', 'prediction')
 
 
 def confusion(pred, true, n=N_CLASSES):

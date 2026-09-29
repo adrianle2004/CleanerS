@@ -78,9 +78,11 @@ python test_NYU.py --cfg ../../cfgs/NYU/voxelSSC.yaml \
     --pretrained_path ../../checkpoint/CleanerS_ckpt.pth --no_visualize
 ```
 
-Expected: **SC 74.95, SSC mIoU 47.73** (654 frames, a few minutes). Run it from
-`examples/segmentation/`: the config's paths (`../../checkpoint`, `../../../data/NYU`)
-are relative to that folder.
+Expected: **SC 74.95, SSC mIoU 47.73** (654 frames, a few minutes). `test_NYU.py`
+is run from `examples/segmentation/` because that is what its `--cfg` default
+assumes; the inference scripts are run from the repo root instead. Paths inside
+the cfgs work either way -- they are resolved against the repo, not the working
+directory (`cleaner/utils/paths.py`).
 
 ## 5. Optional: the CUDA TSDF encoder
 
