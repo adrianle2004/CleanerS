@@ -1,0 +1,89 @@
+{
+  "room": "room07",
+  "bag": "captures/room07/scan/scan.bag",
+  "up_camera_source": null,
+  "samples": 3400,
+  "duration_s": 54.262293338775635,
+  "vs_pose_drift_deg_per_min": 0.031,
+  "vs_stored_up_first_hold": null,
+  "calibration_note": "per-axis bias and scale cannot be separated from this sweep: the camera stayed close to one orientation while still, so the rest samples do not span enough directions to fit an ellipsoid. Only the magnitude error is observable.",
+  "rate_hz": 62.7,
+  "rest_fraction": 21.4,
+  "mag_at_rest_mean": 9.0235,
+  "mag_at_rest_vs_g_pct": -7.99,
+  "calibration": null,
+  "direction_shift_if_calibrated_deg": null,
+  "mag_at_rest_std": 0.0127,
+  "mag_moving_max": 10.671,
+  "direction_noise_at_rest_deg": 0.108,
+  "direction_noise_vs_threshold": [
+    {
+      "tol_m_s2": 0.02,
+      "rest_pct": 18.2,
+      "spread_deg": 0.0533
+    },
+    {
+      "tol_m_s2": 0.04,
+      "rest_pct": 20.9,
+      "spread_deg": 0.0862
+    },
+    {
+      "tol_m_s2": 0.06,
+      "rest_pct": 21.4,
+      "spread_deg": 0.1084
+    },
+    {
+      "tol_m_s2": 0.1,
+      "rest_pct": 22.9,
+      "spread_deg": 0.1778
+    },
+    {
+      "tol_m_s2": 0.2,
+      "rest_pct": 47.0,
+      "spread_deg": 0.5149
+    }
+  ],
+  "allan_opening_hold": [
+    {
+      "tau_s": 0.0159,
+      "deg": 0.0375,
+      "white_noise_would_be": 0.0375
+    },
+    {
+      "tau_s": 0.0317,
+      "deg": 0.02233,
+      "white_noise_would_be": 0.02652
+    },
+    {
+      "tau_s": 0.0635,
+      "deg": 0.01068,
+      "white_noise_would_be": 0.01875
+    },
+    {
+      "tau_s": 0.127,
+      "deg": 0.00927,
+      "white_noise_would_be": 0.01326
+    },
+    {
+      "tau_s": 0.254,
+      "deg": 0.00791,
+      "white_noise_would_be": 0.00937
+    },
+    {
+      "tau_s": 0.5079,
+      "deg": 0.00413,
+      "white_noise_would_be": 0.00663
+    },
+    {
+      "tau_s": 1.0159,
+      "deg": 0.00082,
+      "white_noise_would_be": 0.00469
+    }
+  ],
+  "vs_pose_at_rest_median_deg": 2.608,
+  "vs_pose_moving_median_deg": 3.284,
+  "meta_up_camera": null,
+  "fuse_imu_tilt_deg": 2.45,
+  "fuse_floor_tilt_deg": 1.88,
+  "grid_follows_gravity": false
+}
