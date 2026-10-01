@@ -32,6 +32,7 @@ import argparse
 import collections
 import fnmatch
 import glob
+import hashlib
 import os
 import shutil
 import sys
@@ -116,6 +117,46 @@ def pack_path(key):
     return 'packs/%s.tar' % key
 
 
+def _digest(path, algo, header=b''):
+    h = hashlib.new(algo)
+    h.update(header)
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 22), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def differs(path, info):
+    """True when the local file is not what HF already holds.
+
+    Matching on the path alone would let an edited file sit on HF forever --
+    push would keep reporting nothing to do. HF gives a git blob SHA-1 for a
+    small file and an LFS SHA-256 for a large one; size is checked first
+    because it settles most cases without reading the file.
+    """
+    if info is None:
+        return True
+    size = getattr(info, 'size', None)
+    if size is not None and size != os.path.getsize(path):
+        return True
+    lfs = getattr(info, 'lfs', None)
+    if lfs is not None:
+        return lfs.sha256 != _digest(path, 'sha256')
+    return info.blob_id != _digest(
+        path, 'sha1', b'blob %d\0' % os.path.getsize(path))
+
+
+def stale_on_hf(api, rid, pairs):
+    """The subset of (local, rel) already on HF whose content has changed."""
+    info = {}
+    rels = [rel for _, rel in pairs]
+    for i in range(0, len(rels), 256):
+        for x in api.get_paths_info(rid, rels[i:i + 256], expand=True,
+                                    repo_type='dataset'):
+            info[x.path] = x
+    return [(p, rel) for p, rel in pairs if differs(p, info.get(rel))]
+
+
 def batches(items):
     batch, size = [], 0
     for p, rel in items:
@@ -146,7 +187,15 @@ def push(args):
     except RepositoryNotFoundError:             # dry run before the first push
         remote = set()
 
-    loose = [(p, rel) for p, rel in loose if rel not in remote]
+    fresh = [(p, rel) for p, rel in loose if rel not in remote]
+    known = [(p, rel) for p, rel in loose if rel in remote]
+    # a known path still has to be checked: its content may have changed
+    changed = stale_on_hf(api, rid, known) if known else []
+    loose = fresh + changed
+    if changed:
+        print('%d file(s) changed since they were uploaded:' % len(changed))
+        for _, rel in changed:
+            print('  ' + rel)
     repack = lambda k: any(fnmatch.fnmatch(k, pat) for pat in args.repack)
     todo = sorted(k for k in packs if pack_path(k) not in remote or repack(k))
     size = lambda fs: sum(os.path.getsize(p) for p, _ in fs)

@@ -61,9 +61,15 @@ this public repo.
 
 ## Adding data
 
-Put it in place locally, then `python tools/hf_data.py push`. Push only uploads
-what HF does not have yet; `--dry-run` lists it first. A pack is matched by name,
-so after changing files inside an existing folder, re-upload it explicitly:
+Put it in place locally, then `python tools/hf_data.py push`. Push uploads what
+HF does not have and anything whose content has changed since it was uploaded;
+`--dry-run` lists it first. Loose files are compared by hash (HF's git blob
+SHA-1, or the LFS SHA-256 for a large one), so an edit is always picked up --
+hashing the ~6 GB of loose files takes a few seconds.
+
+A **pack** is still matched by name only, because the tar is rebuilt each time
+and never hashes the same. After changing files inside an already-uploaded
+folder, re-upload that pack explicitly:
 
 ```bash
 python tools/hf_data.py push --repack NYU/Custom_TSDF      # globs work: 'Scannet/gt_*'
