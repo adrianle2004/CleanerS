@@ -111,8 +111,8 @@ is exactly the trivial baseline.** So the number worth quoting is the
 
 > **margin = SC − occupancy of the SC set**
 
-and `evaluate_gt.py` prints the occupancy with every SC number, warning above
-90%.
+and `evaluate_gt.py` prints the occupancy with every SC number, warns above
+90%, and gives the margin per frame in each room's report.
 
 ### It is a property of the annotation, not of the ground truth's quality
 
@@ -135,9 +135,9 @@ not noise:
 
 | room08 frame | SC | baseline | margin | hidden extent |
 | --- | ---: | ---: | ---: | ---: |
-| `live_000180` | 81.9 | 57% | **+24.9** | 0.29 m |
-| `live_000580` | 60.3 | 36% | **+24.3** | 0.42 m |
-| `live_000235` | 40.9 | 95% | −54 | 0.11 m |
+| `live_000180` | 81.9 | 57% | **+25.1** | 0.29 m |
+| `live_000580` | 60.3 | 36% | **+24.7** | 0.42 m |
+| `live_000235` | 40.9 | 95% | −54.4 | 0.11 m |
 
 For scale, NYU's own margins by band run **+12.6 to +23.2**, so room08's best
 viewpoints are measuring completion as informatively as NYU does. Both are

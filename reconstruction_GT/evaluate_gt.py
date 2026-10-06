@@ -159,6 +159,10 @@ def eval_capture(cap, pred_dir, use_frustum, only=None):
             'sc_voxels': int(b.sum()),
             'occ_pct': 100.0 * b[1].sum() / max(int(b.sum()), 1),
             'sc_iou': 100.0 * float(iou_b[1]),
+            # SC minus what "occupied everywhere" scores on this frame's own
+            # scored set. The occupancy IS that score, exactly: predicting
+            # occupied gives TP = P, FP = N - P, FN = 0, so IoU = P/N.
+            'margin': 100.0 * float(iou_b[1]) - 100.0 * b[1].sum() / max(int(b.sum()), 1),
             'ssc_miou': 100.0 * float(np.mean(iou_a[present])) if present else 0.0,
             'classes': len(present),
         })
@@ -705,13 +709,32 @@ def markdown(cmSSC, cmSC, title, n_frames, fov, cap, pred_dir, per_frame=None):
           'NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).']
     if per_frame and len(per_frame) > 1:
         L += ['', '## Per frame', '',
-              'The total above pools every frame. Each on its own:', '',
-              '| frame | scored voxels | SC set | occupied | SC | SSC | classes |',
-              '| --- | ---: | ---: | ---: | ---: | ---: | ---: |']
+              'The total above pools every frame, which weights every voxel '
+              'equally -- and the frames with the most occupied SC sets are '
+              'exactly the ones SC cannot measure, so they dominate it. Read '
+              'the **margin** column instead: SC minus what "predict occupied '
+              'everywhere" scores on that frame\'s own set, which is its '
+              'occupancy. Positive means the model beat the trivial answer.',
+              '',
+              '| frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |',
+              '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |']
         for r in per_frame:
-            L.append('| `%s` | %d | %d | %.0f%% | %.1f | %.1f | %d |'
+            L.append('| `%s` | %d | %d | %.0f%% | %.1f | %s | %.1f | %d |'
                      % (r['frame'], r['scored'], r['sc_voxels'], r['occ_pct'],
-                        r['sc_iou'], r['ssc_miou'], r['classes']))
+                        r['sc_iou'],
+                        '**%+.1f**' % r['margin'] if r['margin'] > 0
+                        else '%+.1f' % r['margin'],
+                        r['ssc_miou'], r['classes']))
+        good = [r for r in per_frame if r['margin'] > 0]
+        if good:
+            L += ['', 'Measuring completion here (positive margin): %s. '
+                  'Those are the only frames whose SC is worth quoting; NYU\'s '
+                  'own margins run +12.6 to +23.2 by band, for scale.'
+                  % ', '.join('`%s` (%+.1f)' % (r['frame'], r['margin'])
+                              for r in sorted(good, key=lambda x: -x['margin']))]
+        else:
+            L += ['', 'No frame here has a positive margin, so no viewpoint in '
+                  'this capture measures completion. Quote SSC.']
     if occ > 0.9 or occ < 0.05:
         L += ['', '> **This SC number is not usable.** %.0f%% of the SC set is '
               'occupied, so a model predicting "occupied" everywhere scores '

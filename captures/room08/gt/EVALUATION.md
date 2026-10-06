@@ -29,15 +29,17 @@ NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
 ## Per frame
 
-The total above pools every frame. Each on its own:
+The total above pools every frame, which weights every voxel equally -- and the frames with the most occupied SC sets are exactly the ones SC cannot measure, so they dominate it. Read the **margin** column instead: SC minus what "predict occupied everywhere" scores on that frame's own set, which is its occupancy. Positive means the model beat the trivial answer.
 
-| frame | scored voxels | SC set | occupied | SC | SSC | classes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `live_000000` | 6746 | 5707 | 82% | 58.6 | 33.3 | 6 |
-| `live_000180` | 3281 | 2171 | 57% | 81.9 | 36.1 | 6 |
-| `live_000235` | 1526 | 1188 | 95% | 40.9 | 26.3 | 6 |
-| `live_000240` | 1471 | 1152 | 98% | 53.4 | 34.1 | 6 |
-| `live_000580` | 3292 | 2409 | 36% | 60.3 | 29.1 | 6 |
+| frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `live_000000` | 6746 | 5707 | 82% | 58.6 | -23.1 | 33.3 | 6 |
+| `live_000180` | 3281 | 2171 | 57% | 81.9 | **+25.1** | 36.1 | 6 |
+| `live_000235` | 1526 | 1188 | 95% | 40.9 | -54.4 | 26.3 | 6 |
+| `live_000240` | 1471 | 1152 | 98% | 53.4 | -44.5 | 34.1 | 6 |
+| `live_000580` | 3292 | 2409 | 36% | 60.3 | **+24.7** | 29.1 | 6 |
+
+Measuring completion here (positive margin): `live_000180` (+25.1), `live_000580` (+24.7). Those are the only frames whose SC is worth quoting; NYU's own margins run +12.6 to +23.2 by band, for scale.
 
 **What the occupancy figure is, and is not.** It counts only voxels INSIDE the annotated room: everything beyond the shell is 255 and enters neither side of the fraction. So it does not say the room is full -- it says how much of the hidden volume within these walls is furniture and wall interior, which rises as the room gets smaller, because a camera standing in a small room sees nearly all of its free space. It is a measurement of the ANNOTATION, and the shell is the lever: on room07, growing the shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to 43.0%, without touching a single piece of furniture (wall thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). Growing the shell is not a legitimate fix -- those voxels are outside the room, and calling them empty would assert free space where there is a wall. The honest shell sits at the walls, and this number is its consequence.
 

@@ -29,15 +29,17 @@ NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
 ## Per frame
 
-The total above pools every frame. Each on its own:
+The total above pools every frame, which weights every voxel equally -- and the frames with the most occupied SC sets are exactly the ones SC cannot measure, so they dominate it. Read the **margin** column instead: SC minus what "predict occupied everywhere" scores on that frame's own set, which is its occupancy. Positive means the model beat the trivial answer.
 
-| frame | scored voxels | SC set | occupied | SC | SSC | classes |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `live_000000` | 5944 | 4412 | 98% | 87.1 | 50.3 | 7 |
-| `live_000320` | 4055 | 3422 | 96% | 53.2 | 15.0 | 5 |
-| `live_000325` | 4068 | 3441 | 96% | 55.4 | 17.1 | 5 |
-| `live_000530` | 1621 | 957 | 100% | 100.0 | 39.1 | 4 |
-| `live_000535` | 1742 | 1053 | 100% | 100.0 | 42.4 | 4 |
+| frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `live_000000` | 5944 | 4412 | 98% | 87.1 | -10.4 | 50.3 | 7 |
+| `live_000320` | 4055 | 3422 | 96% | 53.2 | -43.2 | 15.0 | 5 |
+| `live_000325` | 4068 | 3441 | 96% | 55.4 | -41.0 | 17.1 | 5 |
+| `live_000530` | 1621 | 957 | 100% | 100.0 | +0.0 | 39.1 | 4 |
+| `live_000535` | 1742 | 1053 | 100% | 100.0 | +0.0 | 42.4 | 4 |
+
+No frame here has a positive margin, so no viewpoint in this capture measures completion. Quote SSC.
 
 > **This SC number is not usable.** 97% of the SC set is occupied, so a model predicting "occupied" everywhere scores IoU 0.973. The frame cannot separate a good model from a trivial one: the camera saw the whole room, so the only hidden volume left is the inside of the annotated solids. SSC above is still meaningful. See reconstruction_GT/document/MAKING_GT.md.
 

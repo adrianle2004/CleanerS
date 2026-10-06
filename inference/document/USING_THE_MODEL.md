@@ -172,7 +172,7 @@ NYU is positive everywhere: the model beats the baseline whatever the shot.
 Those room08 rows are **band medians, and they hide the frames that work** —
 32 of its 210 swept frames do clear the baseline, six by more than +20, which
 is inside NYU's own range. `live_000180` scores SC 81.9 against a 57% baseline,
-a margin of +24.9. So room08 measures completion at a minority of viewpoints;
+a margin of +25.1. So room08 measures completion at a minority of viewpoints;
 read SC frame by frame against its own baseline, never pooled over a mixed
 set. room07 is the room that cannot: 0 of 159 frames clear it, best +0.0. Meanwhile the **median SSC of those same bands stays between 32.6 and 40.7**
 while SC swings 48.8 to 92.7 — the model's semantic output barely notices the
