@@ -282,6 +282,18 @@ outputs/room08/
 
 Back up `gt/solids.json`. Everything else regenerates from the bag and it.
 
+`scan/scan.bag` and `scan/room*.ply` are git-ignored and live on Hugging Face,
+so anything that re-fuses the mesh -- `5_fuse_scan.sh`, `refine_tilt.sh`,
+`refine_height.sh` -- leaves git holding the new `trajectory.txt` and
+`solids.json` while HF still has the mesh they were built against. Push after
+committing, or a fresh `pull` elsewhere pairs the annotation with the wrong
+geometry:
+
+```bash
+python3 tools/hf_data.py push --dry-run      # DATA.md: what moves with what
+python3 tools/hf_data.py push
+```
+
 ## Checks worth re-running
 
 ```bash

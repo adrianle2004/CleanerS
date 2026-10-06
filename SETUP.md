@@ -54,10 +54,14 @@ conda deactivate                         # back to base python
 pip install huggingface_hub
 hf auth login
 cd ~/CleanerS/CleanerS
-python tools/hf_data.py pull             # ~24 GB
-# python tools/hf_data.py pull --skip-images   # ~9 GB: leaves out ScanNet posed_images,
+python3 tools/hf_data.py pull            # ~24 GB
+# python3 tools/hf_data.py pull --skip-images  # ~9 GB: leaves out ScanNet posed_images,
 #                                              # needed only for run_scannet.py
 ```
+
+Say `python3`, not `python`: inside an activated `CleanerS` shell `python` is
+3.7 and fails with `ModuleNotFoundError: No module named
+'huggingface_hub.errors'`.
 
 It fills in:
 
@@ -131,12 +135,19 @@ the module reference.
 git pull                                 # your fork
 git fetch upstream                       # the original authors' repo, if it ever changes
 
-# data you added or recorded (new capture, new dataset folder)
-python tools/hf_data.py push --dry-run   # what would go up
-python tools/hf_data.py push             # only new paths are sent
+# after EVERY commit that touched a capture or a dataset folder
+python3 tools/hf_data.py push --dry-run  # anything stale?
+python3 tools/hf_data.py push            # send it
 ```
 
 `captures/*/scan/scan.bag`, `captures/*/scan/room*.ply` and `checkpoint/*.pth` are
 git-ignored; everything else under `captures/` (photos, depth, `meta.json`, `gt/`)
 is committed normally. Regenerable outputs (`outputs/scannet*`, `custom_visual_pred/`,
 `visual_pred/`) are stored nowhere; rebuild them with the scripts that made them.
+
+**The push is not optional.** A commit routinely moves the git half of a
+capture while leaving the HF half behind — re-fusing a scan rewrites both
+`trajectory.txt` (git) and `room.ply` (HF) — and the mismatch is silent: a
+fresh `pull` gives you an annotation that no longer sits on its mesh. Run the
+dry-run after committing and push whatever it lists; `DATA.md` has the pairs
+that move together.

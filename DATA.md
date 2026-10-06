@@ -22,8 +22,12 @@ Paths are resolved from that layout (`cfgs/default.yaml`, `cleaner/dataset/NYU/N
 ```bash
 pip install huggingface_hub            # any python >= 3.9, not the py3.7 CleanerS env
 hf auth login                          # once, with a token that can read the repo
-python tools/hf_data.py pull           # ~24 GB; --skip-images leaves out ScanNet's 15 GB of posed_images
+python3 tools/hf_data.py pull          # ~24 GB; --skip-images leaves out ScanNet's 15 GB of posed_images
 ```
+
+**`python3`, not `python`.** In an activated `CleanerS` shell `python` is 3.7
+and every command here dies with `ModuleNotFoundError: No module named
+'huggingface_hub.errors'`.
 
 The repo defaults to `<your HF user>/cleaners-data`; use `--repo user/name` or
 `CLEANERS_HF_REPO` for another one. `pull` only fetches what is missing, so it is
@@ -52,6 +56,33 @@ Not stored anywhere, regenerate them: `outputs/scannet*/` (`inference/run_scanne
 After `pull`, rebuild the CUDA extension if `import DataProcess` fails on the new
 machine (`data/utils/setup_datautil.py`, `data/utils/CMakeLists.txt`).
 
+## Keeping git and HF in step
+
+git and HF hold two halves of one dataset, and most work moves one half without
+the other. **A commit that changes a file on either side is not finished until
+the other side matches**, so make this the last step of any change to a capture
+or a dataset folder:
+
+```bash
+python3 tools/hf_data.py push --dry-run   # anything stale?
+python3 tools/hf_data.py push             # send it
+```
+
+These move together, and the left column is in git while the right is on HF:
+
+| in git | on HF | moved by |
+| --- | --- | --- |
+| `captures/*/scan/trajectory.txt`, `fuse_report.json` | `captures/*/scan/room*.ply` | `5_fuse_scan.sh`, `refine_tilt.sh`, `refine_height.sh` |
+| `captures/*/gt/solids.json`, `gt/Label`, `gt/TSDF`, `gt/Mapping` | `captures/*/scan/room*.ply` | the refine scripts, which re-fuse the mesh **and** move the annotation onto it |
+| `captures/*/meta.json`, `depth/`, `rgb/` | `captures/*/scan/scan.bag` | `export_frame.py` (reads the bag, writes the frames) |
+
+What happens if you skip it: re-fusing room07 to level its grid rewrote
+`trajectory.txt` and `fuse_report.json` (committed) *and* `room.ply` /
+`room_cloud.ply` (not committed). Push the commit alone and a fresh `pull`
+pairs the new level annotation with the old tilted mesh. Nothing errors —
+`refine_tilt.sh --from-floor` measures tilt *from that mesh*, so it reads the
+stale 1.88° and "corrects" a grid that is already correct.
+
 ## Why the data is private
 
 ScanNet's terms of use do not allow redistributing the data, and the Occ-ScanNet
@@ -61,7 +92,7 @@ this public repo.
 
 ## Adding data
 
-Put it in place locally, then `python tools/hf_data.py push`. Push uploads what
+Put it in place locally, then `python3 tools/hf_data.py push`. Push uploads what
 HF does not have and anything whose content has changed since it was uploaded;
 `--dry-run` lists it first. Loose files are compared by hash (HF's git blob
 SHA-1, or the LFS SHA-256 for a large one), so an edit is always picked up --
@@ -72,7 +103,7 @@ and never hashes the same. After changing files inside an already-uploaded
 folder, re-upload that pack explicitly:
 
 ```bash
-python tools/hf_data.py push --repack NYU/Custom_TSDF      # globs work: 'Scannet/gt_*'
+python3 tools/hf_data.py push --repack NYU/Custom_TSDF     # globs work: 'Scannet/gt_*'
 ```
 
 On a machine that pulled it, remove `data/.hf_packs/NYU/Custom_TSDF.done` and
