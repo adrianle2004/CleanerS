@@ -38,6 +38,9 @@ Put them in one frame by re-referencing the forward run to its last frame --
 `P_fwd(N-1)^-1 @ P_fwd(i)` is then directly comparable with `P_rev(i)` -- and
 the residual at frame 0 is the accumulated disagreement over the whole sweep.
 
+Full write-up, including the two ways this is easy to get wrong:
+document/DRIFT_AND_ALIGNMENT.md.
+
 That residual is a LOWER bound on drift, not the drift itself: a bias the
 tracker commits in both directions cancels. A small residual therefore does
 not prove the trajectory is right, but a large one proves it is not.

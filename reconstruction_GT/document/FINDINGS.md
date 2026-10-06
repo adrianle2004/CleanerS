@@ -219,79 +219,55 @@ inside the grid.
 
 ## 6. How much the trajectory drifts, and why it does not matter
 
+Full treatment, including the two ways this is easy to get wrong:
+[DRIFT_AND_ALIGNMENT.md](DRIFT_AND_ALIGNMENT.md).
+
 `fuse_scan.py` tracks frame-to-model with no loop closure, so the trajectory
 drifts. Measured by running the identical tracker over the identical frames
 forwards and then backwards — same geometry, opposite direction of
 accumulation, so the two can only disagree by drift:
 
-```bash
-python -m reconstruction_GT.drift_check captures/room08
-```
-
-| | path | residual at the far end | as % of path | at the evaluated frames |
+| | path | residual at the far end | % of path | at the scored frames |
 | --- | ---: | ---: | ---: | ---: |
 | room07 | 7.21 m | 174.9 mm / 0.28° | 2.42% | 66–80 mm |
 | room08 | 14.40 m | 155.9 mm / 1.41° | 1.08% | 94–102 mm |
 
-Both runs reproduce the committed `fuse_report.json` fitness exactly (0.876,
-0.867), so this is the real tracker. 1–2.4% of path length is ordinary for
-dense frame-to-model SLAM without loop closure — Intel's own `rs-kinfu` is
-KinectFusion and has the same limitation by construction.
+Ordinary for dense frame-to-model SLAM without loop closure; Intel's own
+`rs-kinfu` is KinectFusion and cannot do better by construction. Nothing
+integrates the IMU, so accelerometer error has no path into the trajectory at
+all.
 
-**That residual is not the error that matters, and it would be easy to
-conclude otherwise.** Perturbing a frame's annotation by its own residual and
-re-scoring moves SSC by up to 9 points and SC by up to 15, which makes the
-drift look fatal. But that perturbation assumes the pose error is independent
-of the annotation, and it is not: the annotation was drawn on the mesh fused
-from the same trajectory, so a frame's pose and the local mesh carry the same
-drift and it cancels where the scoring happens.
+**That residual is not the error the ground truth sees.** The annotation was
+drawn on the mesh fused from the same trajectory, so a frame's pose and the
+local mesh carry the same drift and it cancels where the scoring happens.
+Measured with point-to-plane ICP of each frame's own depth against the fused
+room, the real misalignment is **10–30 mm, a third of a voxel** — stable from a
+250 mm correspondence distance down to 50 mm, so converged rather than loose.
 
-Measured, rather than argued — point-to-plane ICP of each evaluated frame's
-own depth against the fused room:
-
-| | correction | rotation | inlier RMSE | fitness |
-| --- | ---: | ---: | ---: | ---: |
-| room07, 4 frames | 23.9–30.4 mm | 0.47–0.77° | 13.5–16.9 mm | 1.000 |
-| room08, 4 frames | 10.7–29.3 mm | 0.56–0.88° | 12.9–20.2 mm | 1.000 |
-
-So the real frame-to-room misalignment is **10–30 mm, a third of a voxel** —
-not the 100–175 mm of global drift. Stable from a 250 mm correspondence
-distance down to 50 mm, so it is converged rather than loose. Applying it and
-rebuilding the ground truth moves the scores almost not at all: room07 SSC
-39.4 → 39.5 and SC 72.4 → 72.4, room08 SSC 35.5 → 35.4 and SC 59.2 → 59.6.
-
-The corrections are applied and recorded, each frame carrying its own
-`pose_refined` block with the fitness, RMSE and the values it replaced:
+It is corrected per frame, which is REP-105's split rather than a better
+tracker: leave the drifting trajectory alone and give each scored frame a
+correction in `world_from_room`, the role `map → odom` plays in ROS 2.
 
 ```bash
-python -m reconstruction_GT.refine_frame_pose captures/room08          # report
-python -m reconstruction_GT.refine_frame_pose captures/room08 --write  # apply
+python -m reconstruction_GT.drift_check       captures/room08
+python -m reconstruction_GT.refine_frame_pose captures/room08 --write
 ```
 
-This is REP-105's split rather than a better tracker: the trajectory stays as
-it is, and each scored frame gets a correction in `world_from_room` — the same
-role `map -> odom` plays in ROS 2, which keeps continuous-but-drifting odometry
-and lets a localisation node publish the correction. Only a handful of frames
-per capture are ever scored, so a global fix is not needed to get them right.
+Effect on the scores, as a third of a voxel should have: room07 SSC 39.4 →
+39.5 and SC 72.4 → 72.4, room08 SSC 35.5 → 35.4 and SC 59.2 → 59.6. So pose
+error contributes about **±0.1** to the room figures.
 
-It aligns to the **fused mesh, not the annotation**, on purpose. Aligning to
-the annotation would place observed surfaces inside annotated solids, which is
-what SSC's surface voxels score, so it would improve the number whether or not
-the pose improved. `--target solids` exists for diagnosis only.
+Two traps, both documented in full in the companion doc because both pointed
+the wrong way: perturbing the annotation by the *global* residual suggests
+±4 SSC of uncertainty (wrong premise — the error is not independent of the
+annotation), and *hit rate* looks like the natural alignment objective but is
+biased, since shifting the annotation toward the camera buries observed
+surfaces inside solids and raises it for nothing.
 
-A warning about the obvious shortcut: *hit rate* — the share of
-observed-surface voxels the annotation calls solid — looks like a natural
-alignment objective and is a biased one. Shifting the annotation toward the
-camera buries observed surfaces deeper inside solids and raises it without
-improving anything. Maximising it over 100 mm shifts prefers a shifted
-annotation on 7 of 8 frames; ICP, which is unbiased, says the true offset is
-10–30 mm. Trust the RMSE, not the hit rate.
-
-What the hit rate does show, once alignment is ruled out, is annotation
-coverage: room08's `live_000235` and `live_000240` sit at 59–60%, meaning 40%
-of the surfaces their depth measured are annotated as empty space. That is
-unmarked clutter, not a pose problem, and it is the real ceiling on those two
-frames.
+Used for what it is good for, hit rate shows room08's two worst frames are
+**under-annotated** rather than misaligned: 40% of the surfaces `live_000235`
+and `live_000240` measured fall in voxels annotated as empty. That is unmarked
+clutter, and it is the real ceiling on those two frames.
 
 ## 7. What is not done
 

@@ -37,6 +37,11 @@ The mesh carries the sweep's drift too, but drift is slow: locally, around one
 frame, the mesh is self-consistent, and the annotation was drawn on that mesh.
 So frame-to-mesh alignment is as good as the annotation is, with no circularity.
 
+*** FULL WRITE-UP ***
+
+document/DRIFT_AND_ALIGNMENT.md -- the measurement, the two biased ways of
+measuring it that both pointed the wrong way, and what is left for the mesh.
+
 *** THE MATH ***
 
 export_frame.py stores, for a frame whose tracked pose is T (world_from_camera,

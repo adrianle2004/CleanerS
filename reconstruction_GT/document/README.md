@@ -5,6 +5,7 @@ Record a room, annotate it, score CleanerS on it. Every step has a command.
 - **Why any of it works this way:** [MAKING_GT.md](MAKING_GT.md)
 - **Every key in the annotation tool:** [BOX_EDITOR.md](BOX_EDITOR.md)
 - **What it all established — the write-up:** [FINDINGS.md](FINDINGS.md)
+- **How far the poses can be trusted:** [DRIFT_AND_ALIGNMENT.md](DRIFT_AND_ALIGNMENT.md)
 
 Run everything from the repo root, in the `CleanerS` conda environment (the
 shell scripts find the interpreter themselves, so `conda activate` is optional
@@ -336,7 +337,7 @@ python -m reconstruction_GT.refine_frame_pose captures/room08 --write  # apply
 It is ROS 2's `map -> odom` idea: leave the drifting trajectory alone and give
 each scored frame its own correction in `world_from_room`. Re-run `voxelize_gt`
 for each frame it touched, then `evaluate_gt --report`. Full numbers and the
-pitfalls in [FINDINGS.md](FINDINGS.md), section 6.
+pitfalls in [DRIFT_AND_ALIGNMENT.md](DRIFT_AND_ALIGNMENT.md).
 
 ## Comparing against the benchmarks
 
