@@ -153,3 +153,10 @@ checkpoint/*.pth
 outputs/scannet*/
 custom_visual_pred/
 visual_pred/
+# guard.sh per-run scratch: which pid a job got, and the pause/stop flags
+outputs/guard/*.state
+outputs/guard/*.stop
+outputs/guard/*.pause
+# refine_tilt.sh / refine_height.sh keep the annotation they are about to move;
+# the committed solids.json plus git history is the real undo path
+captures/*/gt/solids.json.pre*
