@@ -3,7 +3,7 @@ reconstruction_GT/record_scan.py
 
 Record a hand-held D455 sweep of a room to <out_dir>/scan/scan.bag, for
 fuse_scan.py to turn into a mesh to place annotation solids against
-(MAKING_GT.md, step 2). Run it straight after the still capture, into the same
+(document/MAKING_GT.md, step 2). Run it straight after the still capture, into the same
 folder, without moving the camera:
 
     python -m inference.capture --preview --out_dir captures/room02
@@ -73,7 +73,7 @@ def record(args):
     with none of the still path's crop, undistortion or filtering: fusion wants
     the full field of view, and fuse_scan clips depth itself. It writes nothing
     to meta.json. A scan is scaffolding for placing annotation solids
-    (MAKING_GT.md), not an input to the network.
+    (document/MAKING_GT.md), not an input to the network.
 
     The first --hold seconds must be taken with the camera exactly where the
     still capture left it. fuse_scan anchors the whole mesh on the first frame

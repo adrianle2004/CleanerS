@@ -39,7 +39,7 @@ The total above pools every frame. Each on its own:
 | `live_000530` | 1621 | 957 | 100% | 100.0 | 39.1 | 4 |
 | `live_000535` | 1742 | 1053 | 100% | 100.0 | 42.4 | 4 |
 
-> **This SC number is not usable.** 97% of the SC set is occupied, so a model predicting "occupied" everywhere scores IoU 0.973. The frame cannot separate a good model from a trivial one: the camera saw the whole room, so the only hidden volume left is the inside of the annotated solids. SSC above is still meaningful. See MAKING_GT.md.
+> **This SC number is not usable.** 97% of the SC set is occupied, so a model predicting "occupied" everywhere scores IoU 0.973. The frame cannot separate a good model from a trivial one: the camera saw the whole room, so the only hidden volume left is the inside of the annotated solids. SSC above is still meaningful. See reconstruction_GT/document/MAKING_GT.md.
 
 
 **What the occupancy figure is, and is not.** It counts only voxels INSIDE the annotated room: everything beyond the shell is 255 and enters neither side of the fraction. So it does not say the room is full -- it says how much of the hidden volume within these walls is furniture and wall interior, which rises as the room gets smaller, because a camera standing in a small room sees nearly all of its free space. It is a measurement of the ANNOTATION, and the shell is the lever: on room07, growing the shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to 43.0%, without touching a single piece of furniture (wall thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). Growing the shell is not a legitimate fix -- those voxels are outside the room, and calling them empty would assert free space where there is a wall. The honest shell sits at the walls, and this number is its consequence.
@@ -143,7 +143,7 @@ And the two ends of the ranking, as medians of the best and worst tenth by `marg
 
 What the two ends differ in most, largest first: **room hidden behind the visible surface** (0.19 against 0.53); **size of the SC set** (1047.00 against 3411.00); **share of the frame closer than 1.5 m** (10.30 against 40.60).
 
-> **No viewpoint in this room can measure completion.** The least occupied SC set in the whole sweep is still 94.2% occupied, so "predict occupied everywhere" scores at least that on every frame, and the best margin here is +0.0. SC is not a usable number for this room at any viewpoint -- quote SSC, and capture the next room with more depth between the camera and what it looks at. See MAKING_GT.md, "What this does not measure".
+> **No viewpoint in this room can measure completion.** The least occupied SC set in the whole sweep is still 94.2% occupied, so "predict occupied everywhere" scores at least that on every frame, and the best margin here is +0.0. SC is not a usable number for this room at any viewpoint -- quote SSC, and capture the next room with more depth between the camera and what it looks at. See reconstruction_GT/document/MAKING_GT.md, "What this does not measure".
 
 
 ### The same thing measured on the benchmarks

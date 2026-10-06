@@ -12,7 +12,7 @@ which it does not.
 *** WHY ***
 
 One frame gives one number, and that number says as much about the viewpoint as
-about the model -- MAKING_GT.md, "What this does not measure". A frame shot
+about the model -- document/MAKING_GT.md, "What this does not measure". A frame shot
 from the corner of a small room has an SC set that is 98% occupied, where
 "occupied everywhere" scores 0.98; a frame that looks down at the floor has an
 honest one. The only way to tell the two apart is to score a lot of frames and
@@ -278,7 +278,7 @@ def main():
 
     # bag_reader delivers every frame at any speed, so the network can run
     # inside this loop without changing which frame an index means --
-    # MAKING_GT.md, gotcha 10.
+    # document/MAKING_GT.md, gotcha 10.
     from reconstruction_GT.bag_reader import iter_bag
 
     # an interrupted run keeps its CSV: frames already in it are not scored

@@ -10,7 +10,7 @@ How good is the accelerometer, and does it matter for the ground truth?
 
 `meta.json`'s `up_camera` is one accelerometer reading, taken while the camera
 was held still, and the whole grid is built on it: world Z is that vector, so
-an error in it tilts every voxel of the ground truth. MAKING_GT.md, "no
+an error in it tilts every voxel of the ground truth. document/MAKING_GT.md, "no
 estimated values in the capture record" -- it is a MEASUREMENT, so it has an
 error bar, and this is the script that puts a number on it.
 

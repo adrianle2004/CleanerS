@@ -2,7 +2,7 @@
 reconstruction_GT/verify_voxelizer.py
 
 Prove voxelize_gt.py agrees with data somebody else made, before any of your
-annotation depends on it. MAKING_GT.md, "Verifying your toolchain".
+annotation depends on it. document/MAKING_GT.md, "Verifying your toolchain".
 
     python -m reconstruction_GT.verify_voxelizer            # both datasets
     python -m reconstruction_GT.verify_voxelizer --nyu-only

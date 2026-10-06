@@ -323,7 +323,7 @@ furniture. It is *already inside* the published numbers — we reproduce Table 1
 to 0.1 IoU, so nothing has regressed; we are simply looking at a failure the
 aggregate mIoU averages away. Fixing it needs multiple views, or accepting that
 occluded planar structure is unreliable and not treating it as a measurement.
-(See [MAKING_GT.md](../../reconstruction_GT/MAKING_GT.md) on why SSC output is never a reference.)
+(See [MAKING_GT.md](../../reconstruction_GT/document/MAKING_GT.md) on why SSC output is never a reference.)
 
 The second is ours and is display-only. Options, none implemented yet:
 

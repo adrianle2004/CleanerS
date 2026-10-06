@@ -5,8 +5,8 @@ D455 does not. This file is how to hand-make that ground truth for a real
 scene you captured yourself, in a format the existing evaluation code
 consumes unmodified.
 
-Companion to [README.md](../inference/document/README.md) (the plumbing) and
-[CAMERA_TUNING.md](../inference/document/CAMERA_TUNING.md) (the capture knobs). Read those first;
+Companion to [README.md](../../inference/document/README.md) (the plumbing) and
+[CAMERA_TUNING.md](../../inference/document/CAMERA_TUNING.md) (the capture knobs). Read those first;
 this one assumes the grid conventions they establish.
 
 ## Contents
@@ -1086,7 +1086,7 @@ Worth stating alongside any number you produce:
 - **Not completion, unless the SC set has empty space in it.** Check the
   occupied share the evaluator prints before quoting an SC number.
 - **Not the crop decision.** The 63-degree crop is validated separately by the
-  ablation in [CAMERA_TUNING.md](../inference/document/CAMERA_TUNING.md#frame-size-and-fov--do-not-skip-the-crop).
+  ablation in [CAMERA_TUNING.md](../../inference/document/CAMERA_TUNING.md#frame-size-and-fov--do-not-skip-the-crop).
 - **Not depth accuracy.** GT here describes the scene, not the sensor — see
   [The GT is not derived from depth](#the-gt-is-not-derived-from-depth). A
   systematic depth bias moves prediction and GT together only if you annotated

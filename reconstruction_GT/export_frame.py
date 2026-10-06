@@ -23,7 +23,7 @@ empty space, which is the only way the SC metric has anything to measure. On
 room08 the still frame sees 0% floor; frame 445 sees 14%.
 
 It also multiplies the annotation. The solids describe the ROOM, so every frame
-of that room can be scored against them -- MAKING_GT.md, "Annotate the room,
+of that room can be scored against them -- document/MAKING_GT.md, "Annotate the room,
 not the frame". One afternoon of boxes, thirty evaluation frames.
 
 *** WHAT IT WRITES ***
@@ -52,7 +52,7 @@ an extra evaluation frame; neither is as clean as the still.
 
 Frames come through reconstruction_GT/bag_reader.py, the same reader
 fuse_scan.py writes trajectory.txt with, so an index here is the index there --
-MAKING_GT.md, gotcha 10.
+document/MAKING_GT.md, gotcha 10.
 """
 
 import os

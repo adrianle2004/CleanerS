@@ -4,7 +4,7 @@ reconstruction_GT/fuse_scan.py
 Fuse a hand-held D455 sweep (record_scan.py) into one room mesh, in the
 SAME world frame as the capture's still evaluation frame, so the mesh can be
 loaded into CloudCompare or Blender and used to place the solids that become
-ground truth (MAKING_GT.md, "Build something to annotate against").
+ground truth (document/MAKING_GT.md, "Build something to annotate against").
 
     python -m reconstruction_GT.record_scan --preview --out_dir captures/room02
     python -m reconstruction_GT.fuse_scan captures/room02
@@ -19,7 +19,7 @@ Writes, all under <capture>/scan/:
 
 It is scaffolding for placing solids. It is not ground truth, and it must not
 be traced into ground truth: it is built from the same sensor as the model
-input, so GT derived from it is the NYUCAD condition MAKING_GT.md warns about.
+input, so GT derived from it is the NYUCAD condition document/MAKING_GT.md warns about.
 Nothing here writes to meta.json either -- that file records what was measured
 at capture time, and a fusion result is not a measurement of the capture.
 
@@ -330,7 +330,7 @@ def fuse(args, bag, still_meta, rec_meta, capture_dir):
     # bag_reader, not o3d's RSBagReader: that one is a playback device and
     # drops frames when the consumer is slow, which is exactly what a SLAM loop
     # is. The indices written to trajectory.txt below have to mean the same
-    # frames when something reads the bag again -- MAKING_GT.md, gotcha 10.
+    # frames when something reads the bag again -- document/MAKING_GT.md, gotcha 10.
     from reconstruction_GT.bag_reader import bag_metadata, iter_bag
     md = bag_metadata(bag)
     fps = fps_nominal = md['fps']

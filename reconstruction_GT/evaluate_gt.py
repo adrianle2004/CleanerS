@@ -115,7 +115,7 @@ def report(cmSSC, cmSC, title, n_frames):
         trivial = cmSC[1].sum() / max(scored, 1)
         print('  WARNING: %.0f%% of the SC set is occupied, so "predict occupied '
               'everywhere"\n  would score IoU %.3f. This frame cannot tell a '
-              'good model from a trivial\n  one -- see MAKING_GT.md, "What this '
+              'good model from a trivial\n  one -- see reconstruction_GT/document/MAKING_GT.md, "What this '
               'does not measure".' % (100 * occ, trivial))
     return miou, iouS[1]
 
@@ -557,7 +557,7 @@ def viewpoint_analysis(rows, num, cap):
               'on every frame, and the best margin here is %+.1f. SC is not a '
               'usable number for this room at any viewpoint -- quote SSC, and '
               'capture the next room with more depth between the camera and '
-              'what it looks at. See MAKING_GT.md, "What this does not '
+              'what it looks at. See reconstruction_GT/document/MAKING_GT.md, "What this does not '
               'measure".' % (occ_all.min(), mg.max()), '']
     else:
         good = int(((mg > 0)).sum())
@@ -718,7 +718,7 @@ def markdown(cmSSC, cmSC, title, n_frames, fov, cap, pred_dir, per_frame=None):
               'IoU %.3f. The frame cannot separate a good model from a trivial '
               'one: the camera saw the whole room, so the only hidden volume '
               'left is the inside of the annotated solids. SSC above is still '
-              'meaningful. See MAKING_GT.md.' % (100 * occ, occ),
+              'meaningful. See reconstruction_GT/document/MAKING_GT.md.' % (100 * occ, occ),
               '']
     L += ['',
           '**What the occupancy figure is, and is not.** It counts only '

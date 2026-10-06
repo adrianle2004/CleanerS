@@ -52,7 +52,7 @@ you check against the real furniture.
 
 The fit uses the points inside the box, and the sensor only ever saw the front
 and top of a bed. So F gives you the visible extent, and the far side against a
-wall is yours to extend with the arrows -- MAKING_GT.md, "Annotate solids, not
+wall is yours to extend with the arrows -- document/MAKING_GT.md, "Annotate solids, not
 surfaces". G matters for the same reason: a bed's ground truth is solid from
 the floor up, not a duvet-thick shell.
 """

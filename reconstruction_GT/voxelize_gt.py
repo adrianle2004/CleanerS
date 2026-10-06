@@ -2,7 +2,7 @@
 reconstruction_GT/voxelize_gt.py
 
 Turn the solids you placed against a room mesh into the two arrays the
-evaluator reads: `label3d` (60x36x60) and `label_weight`. MAKING_GT.md steps
+evaluator reads: `label3d` (60x36x60) and `label_weight`. document/MAKING_GT.md steps
 6-9; verify_voxelizer.py proves this file reproduces NYU's own files.
 
     python -m reconstruction_GT.voxelize_gt captures/room06 \
@@ -21,7 +21,7 @@ The chain, and where each piece comes from:
 `label3d` never touches depth: it is your annotation, voxelized. The TSDF is
 the model's own input, and enters only through `label_weight`'s occluded term
 (`tsdf_low < -0.5`) -- which is why GT is per FRAME even though the solids are
-per ROOM. See MAKING_GT.md, "The frame contract".
+per ROOM. See document/MAKING_GT.md, "The frame contract".
 
 *** THE GRID ***
 
@@ -70,7 +70,7 @@ the walls and the empty interior then run to the top of the grid, which is what
 NYU does on the third of its frames that carry no ceiling.
 
 A `mesh` solid is filled by ray-casting occupancy, so the mesh must be closed.
-An open scan surface will come out hollow -- the failure MAKING_GT.md's
+An open scan surface will come out hollow -- the failure document/MAKING_GT.md's
 "Annotate solids, not surfaces" is about.
 
 Solids are written in order, so a later one overwrites an earlier one where
@@ -315,7 +315,7 @@ def build_label_volume(spec, grid):
     if room is None:
         log.warning('no "room" in the solids file: everything outside your '
                     'objects stays 255, so the metric sees almost no empty '
-                    'space. See MAKING_GT.md, "What to mark 255".')
+                    'space. See document/MAKING_GT.md, "What to mark 255".')
     else:
         th = float(room.get('thickness', 2 * grid.unit))
         # the same rule every other solid follows: a 3x3 `rotation` if the
@@ -420,7 +420,7 @@ def compute_label_weight(label, tsdf_ds):
     """NYU's scoring mask: annotated (1..253) OR observed-empty (tsdf < -0.5).
 
     Deterministic. NOT `reprojection.getLabelWeight`, which samples background
-    at random -- see MAKING_GT.md Gotcha 7.
+    at random -- see document/MAKING_GT.md Gotcha 7.
     """
     lw = np.zeros(np.shape(label), np.float32)
     lw[np.abs(127 - np.asarray(label)) < 127] = 1.0
@@ -523,7 +523,7 @@ def main():
     solids_path = args.solids or os.path.join(cap, 'gt', 'solids.json')
     if not os.path.exists(solids_path):
         raise SystemExit('no solids file at %s -- place solids first '
-                         '(MAKING_GT.md step 5)' % solids_path)
+                         '(document/MAKING_GT.md step 5)' % solids_path)
     with open(os.path.join(cap, 'meta.json')) as f:
         meta = json.load(f)
     spec = load_solids(solids_path)

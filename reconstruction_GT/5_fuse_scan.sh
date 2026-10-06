@@ -40,5 +40,5 @@ sys.exit(2 if warned else 0)
 PY
 
 say "mesh ready: $DIR/scan/room.ply"
-echo "Open it in CloudCompare and place solids (MAKING_GT.md step 5)."
+echo "Open it in CloudCompare and place solids (document/MAKING_GT.md step 5)."
 echo "Note: the voxelizer that turns solids into GT files is not written yet."

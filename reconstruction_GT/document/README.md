@@ -4,6 +4,7 @@ Record a room, annotate it, score CleanerS on it. Every step has a command.
 
 - **Why any of it works this way:** [MAKING_GT.md](MAKING_GT.md)
 - **Every key in the annotation tool:** [BOX_EDITOR.md](BOX_EDITOR.md)
+- **What it all established — the write-up:** [FINDINGS.md](FINDINGS.md)
 
 Run everything from the repo root, in the `CleanerS` conda environment (the
 shell scripts find the interpreter themselves, so `conda activate` is optional

@@ -125,8 +125,8 @@ same object", which is why a constant "solid" beats it.
 
 **So the capture target is not "2.5 m of depth" for its own sake — it is
 whatever clears about 1 m of hidden extent.** 2.5 m of depth is simply how NYU
-gets there. room08 topped out at 0.84 m and never cleared it, which is the
-single reason its SC numbers cannot be quoted.
+gets there. room08 topped out at 0.89 m and never cleared it, which is why most
+of its viewpoints cannot carry an SC number — though its best ones still can.
 
 (The two benchmarks diverge above the knee: NYU's occupancy curls back up,
 49% → 65%, while Occ-ScanNet's keeps falling, 45% → 40%. That is its sparse
@@ -169,8 +169,12 @@ everywhere" would score:
 | room08, most hidden extent | 48.8 | 85.5 | **−35.0** |
 
 NYU is positive everywhere: the model beats the baseline whatever the shot.
-room08 is negative everywhere, and *least* negative where there is least to
-find. Meanwhile the **median SSC of those same bands stays between 32.6 and 40.7**
+Those room08 rows are **band medians, and they hide the frames that work** —
+32 of its 210 swept frames do clear the baseline, six by more than +20, which
+is inside NYU's own range. `live_000180` scores SC 81.9 against a 57% baseline,
+a margin of +24.9. So room08 measures completion at a minority of viewpoints;
+read SC frame by frame against its own baseline, never pooled over a mixed
+set. room07 is the room that cannot: 0 of 159 frames clear it, best +0.0. Meanwhile the **median SSC of those same bands stays between 32.6 and 40.7**
 while SC swings 48.8 to 92.7 — the model's semantic output barely notices the
 viewpoint; only SC's baseline does. (Individual frames spread wider, 17.9 to
 65.1; it is the band-to-band medians that are flat.)
@@ -184,7 +188,7 @@ exceeds 90%. Read that warning before quoting any SC number.
 
 | | SC (completion) | SSC (semantics) |
 | --- | --- | --- |
-| **your rooms** | no — too small, 71–98% occupied | **yes — the best of the three** |
+| **your rooms** | room08 at its best viewpoints (+25 margin); room07 never | **yes — the best of the three** |
 | **NYU** | yes (75.0) | yes (47.7) |
 | **Occ-ScanNet** | floor-free (57.9), but it reads low | no (16.4 — the GT is too sparse) |
 

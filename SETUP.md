@@ -124,7 +124,10 @@ https://github.com/IntelRealSense/librealsense into `/etc/udev/rules.d/`, then
 ./reconstruction_GT/1_check_camera.sh      # USB 3? IMU?
 ```
 
-Then [reconstruction_GT/README.md](reconstruction_GT/README.md) is the capture → GT →
+Results from the two rooms already captured:
+[reconstruction_GT/document/FINDINGS.md](reconstruction_GT/document/FINDINGS.md).
+
+Then [reconstruction_GT/document/README.md](reconstruction_GT/document/README.md) is the capture → GT →
 evaluation runbook, and [inference/document/README.md](inference/document/README.md)
 the module reference.
 
