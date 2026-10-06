@@ -1,6 +1,6 @@
 # Evaluation — room08 (camera view only)
 
-Generated 2026-09-30 by `reconstruction_GT/evaluate_gt.py` from `outputs/room08/prediction`, against the ground truth in `captures/room08/gt`. 5 frames.
+Generated 2026-10-07 by `reconstruction_GT/evaluate_gt.py` from `outputs/room08/prediction`, against the ground truth in `captures/room08/gt`. 5 frames.
 
 Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/document/EVALUATION.md`: **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over the classes present; **SC** the same set restricted to `mapping == 307200` — the voxels no depth pixel reached — scored occupied-vs-empty.
 
@@ -38,6 +38,10 @@ The total above pools every frame. Each on its own:
 | `live_000235` | 1526 | 1188 | 95% | 40.9 | 26.3 | 6 |
 | `live_000240` | 1471 | 1152 | 98% | 53.4 | 34.1 | 6 |
 | `live_000580` | 3292 | 2409 | 36% | 60.3 | 29.1 | 6 |
+
+**What the occupancy figure is, and is not.** It counts only voxels INSIDE the annotated room: everything beyond the shell is 255 and enters neither side of the fraction. So it does not say the room is full -- it says how much of the hidden volume within these walls is furniture and wall interior, which rises as the room gets smaller, because a camera standing in a small room sees nearly all of its free space. It is a measurement of the ANNOTATION, and the shell is the lever: on room07, growing the shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to 43.0%, without touching a single piece of furniture (wall thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). Growing the shell is not a legitimate fix -- those voxels are outside the room, and calling them empty would assert free space where there is a wall. The honest shell sits at the walls, and this number is its consequence.
+
+**SSC is not affected by it.** SSC averages per-class IoU over the classes present and leaves `empty` out of that average, so a mostly-occupied set is what it wants rather than a defect, and most of its set is genuinely hidden -- it measures completion, not visible segmentation.
 
 ## Across the sweep
 
@@ -138,6 +142,49 @@ What the two ends differ in most, largest first: **how much of the SC set is occ
 
 > 32 of 210 viewpoints beat the trivial baseline. The ones that do are the frames where the hidden volume is neither inside a solid (nothing to find) nor enormous (too much to guess); on this room that is a median depth of 2.10 m against 1.60 m for the worst tenth.
 
+
+### The same thing measured on the benchmarks
+
+NYU (what CleanerS was trained and evaluated on) and Occ-ScanNet, put through this identical measurement: NYU 654 frames, ScanNet 1500 frames.
+
+
+**Correlation with SC**
+
+| property of the viewpoint | here | NYU | ScanNet |
+| --- | ---: | ---: | ---: |
+| camera height above the floor | +0.68 | +0.01 | -0.10 |
+| how far the camera looks down | +0.04 | +0.18 | -0.10 |
+| median distance to what it sees | +0.41 | -0.15 | +0.01 |
+| share of the frame closer than 1.5 m | -0.57 | +0.01 | -0.02 |
+| room hidden behind the visible surface | -0.73 | +0.08 | +0.08 |
+| size of the SC set | -0.64 | -0.36 | -0.47 |
+| how much of the SC set is occupied | +0.46 | +0.39 | +0.56 |
+| **mean \|correlation\|** | **0.51** | **0.17** | **0.19** |
+
+**Correlation with SSC**
+
+| property of the viewpoint | here | NYU | ScanNet |
+| --- | ---: | ---: | ---: |
+| camera height above the floor | +0.05 | +0.05 | -0.07 |
+| how far the camera looks down | +0.25 | +0.11 | -0.13 |
+| median distance to what it sees | -0.16 | -0.11 | +0.02 |
+| share of the frame closer than 1.5 m | +0.15 | +0.00 | -0.01 |
+| room hidden behind the visible surface | -0.15 | +0.08 | +0.13 |
+| size of the SC set | -0.21 | -0.13 | -0.24 |
+| how much of the SC set is occupied | +0.13 | +0.03 | +0.26 |
+| **mean \|correlation\|** | **0.16** | **0.07** | **0.12** |
+
+Viewpoint matters far more here than in the benchmarks (mean |correlation| with SC 0.51 against 0.18). The rows above therefore describe this capture, not the metric: in a large scene the shot barely predicts the score.
+
+| | this room | NYU | ScanNet |
+| --- | ---: | ---: | ---: |
+| median camera height | 1.06 m | 1.34 m | 1.43 m |
+| median distance to the scene | 1.67 m | 2.49 m | 1.77 m |
+| median room hidden behind the surface | 0.36 m | 1.72 m | 1.64 m |
+| median SC set occupied | 87% | 55% | 45% |
+| median SC set | 2038 voxels | 10811 voxels | 6226 voxels |
+
+The gap that drives the rest is **how much room is hidden behind what the camera sees**: NYU 1.72 m, ScanNet 1.64 m, this room 0.36 m. A frame that hides nothing cannot be asked to complete anything, and a room too small to hide anything cannot produce such a frame.
 
 ### Worked example: room hidden behind the visible surface
 

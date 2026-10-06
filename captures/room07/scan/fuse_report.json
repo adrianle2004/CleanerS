@@ -39,7 +39,7 @@
   "frames_dropped": 0,
   "stop_reason": "end of bag",
   "fitness": {
-    "min": 0.6957,
+    "min": 0.6956,
     "median": 0.8759
   },
   "dropped": [],
@@ -52,7 +52,7 @@
       "median_diff_m": -0.015
     },
     "imu_tilt": {
-      "status": "warn",
+      "status": "ok",
       "samples": 32,
       "tilt_deg": 2.45,
       "offset_at_3m_cm": 12.8,
@@ -62,38 +62,39 @@
         0.0427,
         -0.9991,
         0.0034
-      ]
+      ],
+      "compensated": "meta.json carries up_camera, so the grid follows gravity rather than assuming level"
     },
     "floor": {
       "status": "ok",
-      "lowest_up_surface_z_m": 0.0043,
-      "surface_tilt_deg": 1.88,
+      "lowest_up_surface_z_m": 0.0,
+      "surface_tilt_deg": 0.02,
       "area_m2": 5.1,
-      "vertices": 35751,
+      "vertices": 35894,
       "normal_world": [
-        -0.000381,
-        -0.032799,
-        0.999462
+        -4.8e-05,
+        -0.000414,
+        1.0
       ]
     }
   },
-  "frame": "world: live_cam_pose(camera_height=1.0534, yaw=0, assumed level) from meta.json",
+  "frame": "world: live_cam_pose(camera_height=1.0858, yaw=0, measured tilt) from meta.json",
   "bounds_m": {
     "min": [
       -1.796,
-      -0.25,
-      -0.037
+      -0.246,
+      -0.032
     ],
     "max": [
       3.017,
-      3.94,
-      2.683
+      3.966,
+      2.618
     ]
   },
   "mesh": {
     "file": "room.ply",
     "cloud": "room_cloud.ply",
-    "vertices": 436859,
-    "triangles": 855870
+    "vertices": 436997,
+    "triangles": 856125
   }
 }

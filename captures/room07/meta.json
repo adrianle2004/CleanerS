@@ -42,7 +42,7 @@
       1.0
     ]
   ],
-  "camera_height": 1.0534,
+  "camera_height": 1.0858,
   "yaw": 0.0,
   "depth_max": 10.0,
   "undistorted": true,
@@ -52,239 +52,14 @@
   },
   "frames": [
     "live_000000",
-    "live_000160",
-    "live_000170",
-    "live_000330",
-    "live_000320"
+    "live_000320",
+    "live_000530",
+    "live_000535",
+    "live_000325"
   ],
   "camera_height_tape": 1.15,
-  "camera_height_source": "floor plane fit, 33397 points, 1.86 deg, from scan/fuse_report.json on 2026-09-24; tape reading kept as camera_height_tape",
+  "camera_height_source": "floor plane fit, 35924 points, 0.01 deg, from scan/fuse_report.json on 2026-10-06; tape reading kept as camera_height_tape",
   "frame_meta": {
-    "live_000160": {
-      "source": "sweep frame 160 of scan/scan.bag",
-      "cam_K": [
-        [
-          518.85791015625,
-          0.0,
-          326.0668029785156
-        ],
-        [
-          0.0,
-          518.2328491210938,
-          254.1839141845703
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "cam_K_native": [
-        [
-          422.6502685546875,
-          0.0,
-          422.8204345703125
-        ],
-        [
-          0.0,
-          422.14111328125,
-          242.89407348632812
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 1.007,
-      "camera_height_source": "tracked pose of bag frame 160",
-      "yaw": 0.0,
-      "up_camera": [
-        -0.022799,
-        -0.998781,
-        -0.04379
-      ],
-      "up_camera_source": "tracked pose of bag frame 160 (gravity in its own camera frame)",
-      "world_from_room": [
-        [
-          0.620299,
-          -0.784366,
-          0.0,
-          0.050141
-        ],
-        [
-          0.784366,
-          0.620299,
-          0.0,
-          -0.368184
-        ],
-        [
-          -0.0,
-          -0.0,
-          1.0,
-          0.0
-        ],
-        [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
-    },
-    "live_000170": {
-      "source": "sweep frame 170 of scan/scan.bag",
-      "cam_K": [
-        [
-          518.85791015625,
-          0.0,
-          326.0668029785156
-        ],
-        [
-          0.0,
-          518.2328491210938,
-          254.1839141845703
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "cam_K_native": [
-        [
-          422.6502685546875,
-          0.0,
-          422.8204345703125
-        ],
-        [
-          0.0,
-          422.14111328125,
-          242.89407348632812
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 1.0054,
-      "camera_height_source": "tracked pose of bag frame 170",
-      "yaw": 0.0,
-      "up_camera": [
-        -0.037744,
-        -0.997784,
-        -0.054796
-      ],
-      "up_camera_source": "tracked pose of bag frame 170 (gravity in its own camera frame)",
-      "world_from_room": [
-        [
-          0.686059,
-          -0.727546,
-          -0.0,
-          0.021746
-        ],
-        [
-          0.727546,
-          0.686059,
-          -0.0,
-          -0.40022
-        ],
-        [
-          -0.0,
-          0.0,
-          1.0,
-          0.0
-        ],
-        [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
-    },
-    "live_000330": {
-      "source": "sweep frame 330 of scan/scan.bag",
-      "cam_K": [
-        [
-          518.85791015625,
-          0.0,
-          326.0668029785156
-        ],
-        [
-          0.0,
-          518.2328491210938,
-          254.1839141845703
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "cam_K_native": [
-        [
-          422.6502685546875,
-          0.0,
-          422.8204345703125
-        ],
-        [
-          0.0,
-          422.14111328125,
-          242.89407348632812
-        ],
-        [
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.4455,
-      "camera_height_source": "tracked pose of bag frame 330",
-      "yaw": 0.0,
-      "up_camera": [
-        0.044576,
-        -0.978447,
-        -0.201628
-      ],
-      "up_camera_source": "tracked pose of bag frame 330 (gravity in its own camera frame)",
-      "world_from_room": [
-        [
-          0.893511,
-          -0.449041,
-          0.0,
-          0.138096
-        ],
-        [
-          0.449041,
-          0.893511,
-          -0.0,
-          -0.420242
-        ],
-        [
-          -0.0,
-          -0.0,
-          1.0,
-          -0.0
-        ],
-        [
-          0.0,
-          0.0,
-          0.0,
-          1.0
-        ]
-      ],
-      "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
-    },
     "live_000320": {
       "source": "sweep frame 320 of scan/scan.bag",
       "cam_K": [
@@ -322,31 +97,106 @@
         ]
       ],
       "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.4433,
+      "camera_height": 0.4617,
       "camera_height_source": "tracked pose of bag frame 320",
       "yaw": 0.0,
       "up_camera": [
-        0.069499,
-        -0.97973,
-        -0.187877
+        0.08381,
+        -0.972671,
+        -0.216535
       ],
       "up_camera_source": "tracked pose of bag frame 320 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.88742,
-          -0.460961,
-          -0.0,
-          0.140992
+          0.886003,
+          -0.463678,
+          1e-06,
+          0.133094
         ],
         [
-          0.460962,
-          0.88742,
+          0.463678,
+          0.886004,
           -0.0,
-          -0.416997
+          -0.398521
         ],
         [
           0.0,
           0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000530": {
+      "source": "sweep frame 530 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          326.0668029785156
+        ],
+        [
+          0.0,
+          518.2328491210938,
+          254.1839141845703
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          422.6502685546875,
+          0.0,
+          422.8204345703125
+        ],
+        [
+          0.0,
+          422.14111328125,
+          242.89407348632812
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 0.8812,
+      "camera_height_source": "tracked pose of bag frame 530",
+      "yaw": 0.0,
+      "up_camera": [
+        0.119373,
+        -0.977593,
+        -0.173383
+      ],
+      "up_camera_source": "tracked pose of bag frame 530 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.63362,
+          -0.773645,
+          -0.0,
+          0.181182
+        ],
+        [
+          0.773645,
+          0.63362,
+          0.0,
+          -0.646125
+        ],
+        [
+          -0.0,
+          -0.0,
           1.0,
           -0.0
         ],
@@ -359,6 +209,162 @@
       ],
       "undistorted": false,
       "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000535": {
+      "source": "sweep frame 535 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          326.0668029785156
+        ],
+        [
+          0.0,
+          518.2328491210938,
+          254.1839141845703
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          422.6502685546875,
+          0.0,
+          422.8204345703125
+        ],
+        [
+          0.0,
+          422.14111328125,
+          242.89407348632812
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 0.8981,
+      "camera_height_source": "tracked pose of bag frame 535",
+      "yaw": 0.0,
+      "up_camera": [
+        0.104775,
+        -0.979138,
+        -0.1741
+      ],
+      "up_camera_source": "tracked pose of bag frame 535 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.641601,
+          -0.767038,
+          -1e-06,
+          0.166027
+        ],
+        [
+          0.767039,
+          0.641602,
+          0.0,
+          -0.664081
+        ],
+        [
+          -0.0,
+          -0.0,
+          1.0,
+          -0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+    },
+    "live_000325": {
+      "source": "sweep frame 325 of scan/scan.bag",
+      "cam_K": [
+        [
+          518.85791015625,
+          0.0,
+          326.0668029785156
+        ],
+        [
+          0.0,
+          518.2328491210938,
+          254.1839141845703
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "cam_K_native": [
+        [
+          422.6502685546875,
+          0.0,
+          422.8204345703125
+        ],
+        [
+          0.0,
+          422.14111328125,
+          242.89407348632812
+        ],
+        [
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
+      "camera_height": 0.4574,
+      "camera_height_source": "tracked pose of bag frame 325",
+      "yaw": 0.0,
+      "up_camera": [
+        0.06722,
+        -0.974272,
+        -0.215118
+      ],
+      "up_camera_source": "tracked pose of bag frame 325 (gravity in its own camera frame)",
+      "world_from_room": [
+        [
+          0.883512,
+          -0.468408,
+          0.0,
+          0.151806
+        ],
+        [
+          0.468408,
+          0.883512,
+          0.0,
+          -0.394567
+        ],
+        [
+          -0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "undistorted": false,
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
     }
-  }
+  },
+  "up_camera": [
+    -0.000381,
+    -0.999462,
+    -0.032799
+  ],
+  "up_camera_source": "floor plane, 35751 points, via scan/fuse_report.json on 2026-10-06; it was 1.88 deg off level"
 }
