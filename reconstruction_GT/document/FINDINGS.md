@@ -237,12 +237,18 @@ Ordinary for dense frame-to-model SLAM without loop closure; Intel's own
 integrates the IMU, so accelerometer error has no path into the trajectory at
 all.
 
-**That residual is not the error the ground truth sees.** The annotation was
-drawn on the mesh fused from the same trajectory, so a frame's pose and the
-local mesh carry the same drift and it cancels where the scoring happens.
-Measured with point-to-plane ICP of each frame's own depth against the fused
-room, the real misalignment is **10–30 mm, a third of a voxel** — stable from a
-250 mm correspondence distance down to 50 mm, so converged rather than loose.
+**That residual is not a distortion of the reconstruction, and it is the
+reconstruction the ground truth is built in.** Tested annotation-free — a bent
+reconstruction cannot keep a large plane flat — vertical planes fused from the
+whole sweep come out flat to 6.7–17.1 mm, and fusing adds **at most 2.6 mm**
+over a single frame's view of the same wall. Frame-to-model tracking anchors
+each frame to the accumulated model, so error appears as a slow near-global
+change of world frame rather than local warping, and everything the ground
+truth does is relative, so a change of world frame cancels.
+
+What is left between a frame and the annotation is **36–56 mm**, and that is
+dominated by the annotation's own fidelity rather than by placement: a bed is
+not a box.
 
 It is corrected per frame, which is REP-105's split rather than a better
 tracker: leave the drifting trajectory alone and give each scored frame a
@@ -253,16 +259,18 @@ python -m reconstruction_GT.drift_check       captures/room08
 python -m reconstruction_GT.refine_frame_pose captures/room08 --write
 ```
 
-Effect on the scores, as a third of a voxel should have: room07 SSC 39.4 →
-39.5 and SC 72.4 → 72.4, room08 SSC 35.5 → 35.4 and SC 59.2 → 59.6. So pose
-error contributes about **±0.1** to the room figures.
+Effect on the scores: room07 SSC 39.4 → 39.5 and SC 72.4 → 72.4, room08 SSC
+35.5 → 35.4 and SC 59.2 → 59.6. So pose error contributes about **±0.1** to the
+room figures, and the correction is a polish rather than a fix.
 
-Two traps, both documented in full in the companion doc because both pointed
-the wrong way: perturbing the annotation by the *global* residual suggests
-±4 SSC of uncertainty (wrong premise — the error is not independent of the
-annotation), and *hit rate* looks like the natural alignment objective but is
-biased, since shifting the annotation toward the camera buries observed
-surfaces inside solids and raises it for nothing.
+Three traps, all documented in the companion doc because each pointed the
+wrong way: perturbing the annotation by the *global* residual suggests ±4 SSC
+of uncertainty (wrong premise — the error is not independent of the
+annotation); *hit rate* looks like the natural alignment objective but rises
+whenever the annotation is pushed toward the camera, burying surfaces inside
+solids; and ICP *against the mesh* reads only 5–30 mm because the mesh near a
+frame was fused from that frame's own temporal neighbours, so it is blind to
+the accumulated bend by construction.
 
 Used for what it is good for, hit rate shows room08's two worst frames are
 **under-annotated** rather than misaligned: 40% of the surfaces `live_000235`

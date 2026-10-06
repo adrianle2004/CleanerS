@@ -6,14 +6,24 @@ that pose is wrong, the frame's ground truth is built in the wrong place and
 together, so they stay consistent with each other while both slide away from
 the room.
 
-This document is how that was measured, the two ways it is easy to measure it
-wrongly, and the fix that is applied now.
+This document is how that was measured, the three ways it is easy to measure
+it wrongly, and what the answer turned out to be.
 
-The short answer: **the trajectory drifts 1–2.4% of path length, and that is
-not the error the ground truth sees. The error that matters is 10–30 mm, a
-third of a voxel, and it is now corrected per frame.** Getting from the first
-number to the second is the whole content below, because the first number
-makes the drift look fatal and it is not.
+The short answer, in the order the terms were actually separated:
+
+- the **trajectory** drifts 156–175 mm over a sweep, 1–2.4% of path length;
+- the **reconstruction** that drift is blamed for is nevertheless flat to
+  within sensor noise — fusing the whole sweep smears a wall by at most
+  **2.6 mm** over a single frame's view of it;
+- so the drift is a slow, near-global change of world frame, not a local
+  distortion, and **everything the ground truth does is relative**, so it
+  cancels;
+- what is left between a frame and the annotation is **36–56 mm**, dominated
+  not by placement but by the annotation's own fidelity: a bed is not a box.
+
+The ground truth is sound. Getting to that took discarding three plausible
+measurements, each of which pointed the other way, and they are all recorded
+below because the mistakes are the useful part.
 
 ```bash
 python -m reconstruction_GT.drift_check       captures/room08          # measure
@@ -134,44 +144,103 @@ artefact. ICP, which is unbiased, puts the true offset at 10–30 mm.
 What hit rate *is* good for, once alignment has been ruled out separately, is
 annotation **coverage** — see section 8.
 
-## 6. Measuring it properly: ICP against the fused mesh
+## 6. Measuring it properly — and what the mesh can and cannot tell you
 
-Point-to-plane ICP of each evaluated frame's own depth against the fused room
-cloud, both in room coordinates:
+### The trap in the obvious target
 
-| | correction | rotation | inlier RMSE | fitness |
-| --- | ---: | ---: | ---: | ---: |
-| room07 `live_000320` | 30.4 mm | 0.770° | 16.5 mm | 1.000 |
-| room07 `live_000325` | 27.8 mm | 0.672° | 16.9 mm | 1.000 |
-| room07 `live_000530` | 25.2 mm | 0.484° | 13.5 mm | 1.000 |
-| room07 `live_000535` | 23.9 mm | 0.470° | 13.9 mm | 1.000 |
-| room08 `live_000180` | 19.8 mm | 0.556° | 20.2 mm | 1.000 |
-| room08 `live_000235` | 10.7 mm | 0.882° | 12.9 mm | 1.000 |
-| room08 `live_000240` | 10.9 mm | 0.761° | 13.9 mm | 1.000 |
-| room08 `live_000580` | 29.3 mm | 0.678° | 19.1 mm | 1.000 |
+ICP each frame against the fused mesh and the corrections come out at
+10–30 mm. That number is real but it answers the wrong question, **because the
+mesh is built from the same drifting trajectory.** Worse, the mesh *near* a
+frame was fused mostly from frames near it in time, which share its drift
+almost exactly. Frame-to-mesh ICP is therefore structurally blind to the
+accumulated bend; it measures local tracking noise and nothing else.
 
-**10–30 mm — a third of a voxel — not the 100–175 mm of global drift.** The
-co-drift argument holds, and it is now measured rather than asserted.
+Measured without an optimiser (point-to-plane distance at the as-built pose, so
+nothing can diverge):
 
-Converged, not loose: tightening the correspondence distance from 250 mm to
-100 mm to 50 mm leaves the answer alone (`live_000180`: 19.8 / 19.8 / 18.1 mm;
-`live_000580`: 29.3 / 29.7 / 31.5 mm). A sloppy fit would wander.
+| | frame → mesh | frame → annotation | within 1 voxel |
+| --- | ---: | ---: | ---: |
+| room07 `live_000320` | 5.3 mm | 43.0 mm | 88% |
+| room07 `live_000325` | 5.0 mm | 40.2 mm | 89% |
+| room07 `live_000530` | 5.4 mm | 55.5 mm | 91% |
+| room07 `live_000535` | 5.5 mm | 55.9 mm | 90% |
+| room08 `live_000180` | 9.2 mm | 39.7 mm | 93% |
+| room08 `live_000235` | 5.4 mm | 36.5 mm | 73% |
+| room08 `live_000240` | 5.9 mm | 39.4 mm | 72% |
+| room08 `live_000580` | 9.0 mm | 36.7 mm | 92% |
 
-### Why the target is the mesh and not the annotation
+Frame-to-mesh is 5–9 mm, confirming the blindness: a frame always sits on its
+own neighbourhood. Frame-to-**annotation** is 36–56 mm, and that is the
+quantity the ground truth actually depends on, because the annotation is one
+global human-fitted model rather than a per-frame fusion.
 
-`refine_frame_pose.py` aligns to the **fused room cloud**: measured geometry.
+### Is the reconstruction itself bent?
 
-Aligning to the annotation instead would place observed surfaces inside
-annotated solids — which is precisely what SSC's surface voxels score. The
-number would improve whether or not the pose improved. That is the same
-circularity as section 5's hit rate, just hidden inside an optimiser.
+This is the question the forward/reverse residual seems to answer and does not.
+Test it annotation-free: **a bent reconstruction cannot keep a large plane
+flat**, because surfaces contributed by early frames sit off the ones
+contributed late. So fit planes in the fused cloud and compare their thickness
+with the same plane seen in a *single* frame, which is pure sensor noise with
+no fusion involved.
 
-`--target solids` exists for diagnosis. Do not report a score from a capture
-refined that way without saying so.
+| | fused plane RMS | single frame, same plane | fusion adds |
+| --- | ---: | ---: | ---: |
+| room07 floor (45,415 pts) | 13.0 mm | 8.0–8.8 mm | ~10 mm |
+| room07 wall 1 (69,907 pts) | 8.6 mm | 15.3 mm | **0.0 mm** |
+| room07 walls 2–3 | 17.1 / 11.3 mm | — | — |
+| room08 floor (36,394 pts) | 12.1 mm | 13.1 mm | **0.0 mm** |
+| room08 wall 1 (39,866 pts) | 14.6 mm | 14.4 mm | **2.6 mm** |
+| room08 wall 2 (37,752 pts) | 6.7 mm | 21.2 mm | **0.0 mm** |
+| room08 wall 3 (26,573 pts) | 15.4 mm | 26.5 mm | **0.0 mm** |
 
-The mesh carries the sweep's drift too, but that is the point: the annotation
-was drawn on that mesh, so frame-to-mesh alignment is as good as the
-annotation is, with no circularity.
+Walls are the ones that matter, because a *horizontal* bend would not smear a
+horizontal floor — the same blind spot the `floor` check has. Vertical planes
+observed across the sweep come out flat to **6.7–17.1 mm**, and fusing the
+whole sweep adds **at most 2.6 mm** over a single frame. Several fused planes
+are *tighter* than one frame's view of them, which is averaging beating sensor
+noise.
+
+**So the reconstruction is not meaningfully distorted, and the 156–175 mm
+forward/reverse residual does not say that it is.** The two numbers measure
+different things: the residual is the disagreement between two independent
+integration paths, each internally self-consistent, ending in slightly
+different global frames.
+
+That is the nature of frame-to-**model** tracking, as against frame-to-frame.
+Every frame is aligned to the accumulated model, so the model acts as an
+anchor and errors do not compound locally. Drift appears as a slow,
+approximately global transformation rather than a local distortion — which is
+exactly why KinectFusion-family systems produce locally excellent, globally
+drifting maps.
+
+### Why a global transformation is harmless here
+
+Everything we score is relative. The annotation lives in the reconstruction;
+each frame's grid is placed by that frame's pose in the same reconstruction;
+the model never sees world coordinates. A rigid change of world frame cancels
+out of all of it. Only **local** distortion could corrupt the ground truth, and
+that is bounded above at 2.6 mm.
+
+What is left of the 36–56 mm frame-to-annotation residual is therefore mostly
+not placement at all — it is **the annotation's own fidelity**: a bed is not a
+box. A box approximation of real furniture is wrong by tens of millimetres by
+construction, and that is not an error, it is the ground truth's definition.
+The one drift-correlated signal visible in it is room07's rise from 40–43 mm
+mid-sweep to 55–56 mm late, about 15 mm.
+
+### Not aligning to the annotation, again
+
+With the shell's normals fixed (see below), ICP against the annotation does
+converge, and it still cannot be trusted: `live_000240` asks for 141–157 mm and
+**8.5–9.0° of rotation**, which is the optimiser exploiting the fact that a box
+is a poor model of a bed. `--target solids` stays diagnosis-only, and
+`refine_frame_pose.py` keeps the mesh as its target.
+
+> A bug worth recording: `o3d.geometry.TriangleMesh.create_box` winds its
+> triangles **outward**, but the camera is *inside* the room shell and sees its
+> far walls. The first version of the camera-facing cull therefore kept exactly
+> the faces the camera cannot see, and ICP diverged to 1.2–1.8 m and 20–46°.
+> The shell's winding is now flipped so its normals point into the room.
 
 ## 7. The fix: ROS 2's split, not a better tracker
 
@@ -235,9 +304,10 @@ Applied to both rooms, ground truth rebuilt, same predictions re-scored:
 | room07 | 39.4 | **39.5** | 72.4 | **72.4** |
 | room08 | 35.5 | **35.4** | 59.2 | **59.6** |
 
-Which is what a third of a voxel should do. **The honest conclusion is that
-the drift was never corrupting the ground truth** — but that could not be known
-without measuring it, and the two wrong turns above both pointed the other way.
+Nothing, in other words — which is the right outcome given section 6. The
+correction removes the 5–9 mm frame-to-mesh residual, and 5–9 mm is a tenth of
+a voxel, so it is a polish rather than a fix. **It is applied because it is
+measured and recorded, not because the ground truth needed it.**
 
 The uncertainty on the room SSC figures from pose error is about **±0.1**, not
 the ±4 that section 4's sensitivity table suggests in isolation.
@@ -260,13 +330,21 @@ those two frames. Marking it would raise them.
 
 ## 9. What this does not fix
 
-The per-frame correction fixes the **scored frames**, not the **mesh**. The
-reconstruction is still built open-loop, so it is still mildly bent, and the
-annotation drawn on it inherits that: a box fitted to a wall seen early is
-slightly off the same wall seen late — about 70 mm across a 4 m room at 1° of
-bend.
+Two things are genuinely left, and neither is the one this document set out
+to find.
 
-The proper fix is Open3D's offline **Reconstruction System**, already present
+**Annotation fidelity, which is now the dominant term.** 36–56 mm of
+frame-to-annotation residual is mostly boxes standing in for furniture, and no
+amount of pose work touches it. Finer solids, or `shape: mesh`, would.
+
+**Global consistency, which we do not currently need.** The reconstruction is
+locally sound (≤2.6 mm of fusion smear) but its world frame still drifts, so a
+*single* box cannot fit a wall that was observed at both ends of a long sweep
+as well as it fits one observed briefly. Our rooms are small enough that this
+stays inside the box-approximation error; a larger room, or a longer sweep,
+would not be.
+
+For that, the fix is Open3D's offline **Reconstruction System**, already present
 in the installed wheel at `open3d/examples/reconstruction_system/` (Choi et
 al., *Robust Reconstruction of Indoor Scenes*, CVPR 2015):
 

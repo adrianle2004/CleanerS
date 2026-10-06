@@ -143,6 +143,12 @@ def target_from_solids(cap, cam_pos):
         m.translate(-size / 2.0)
         m.rotate(solid_rotation(room), center=(0, 0, 0))
         m.translate(c)
+        # create_box winds its triangles outward, but the camera is INSIDE the
+        # shell and sees the far walls. Flip the winding so the shell's normals
+        # point into the room, or the camera-facing cull below keeps exactly
+        # the faces the camera cannot see.
+        m.triangles = o3d.utility.Vector3iVector(
+            np.asarray(m.triangles)[:, ::-1])
         meshes.append(m)
     for s in spec.get('solids', []):
         if s.get('shape', 'box') != 'box':
