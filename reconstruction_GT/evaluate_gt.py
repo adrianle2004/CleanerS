@@ -285,6 +285,103 @@ def worked_example(x, y, cap, key, label, step, step_name, n):
     return L
 
 
+NYU_VIEWPOINTS = 'outputs/nyu_viewpoints.csv'
+SCANNET_VIEWPOINTS = 'outputs/scannet_viewpoints.csv'
+
+
+def reference_sets():
+    """The benchmark distributions, measured the same way, for scale.
+
+    Without them a table of correlations invites the reader to take it as a
+    fact about SC and SSC. It is a fact about THIS ROOM, and the comparison
+    says how much of it generalises.
+    """
+    import csv
+    out = []
+    for name, path in (('NYU', NYU_VIEWPOINTS), ('ScanNet', SCANNET_VIEWPOINTS)):
+        if not os.path.exists(path):
+            continue
+        rows = [x for x in csv.DictReader(open(path))]
+        if not rows:
+            continue
+        d = {}
+        for k in rows[0]:
+            if k in ('frame', 'scene'):
+                continue
+            vals = []
+            for x in rows:
+                try:
+                    vals.append(float(x[k]) if x[k] not in ('', None) else np.nan)
+                except ValueError:
+                    vals.append(np.nan)
+            d[k] = np.array(vals)
+        out.append((name, d, len(rows)))
+    return out
+
+
+def _corr(a, b):
+    m = np.isfinite(a) & np.isfinite(b)
+    return float(np.corrcoef(a[m], b[m])[0, 1]) if m.sum() > 10 else np.nan
+
+
+def nyu_reference(props, col, r):
+    refs = reference_sets()
+    if not refs:
+        return []
+    names = ' | '.join('%s' % n for n, _, _ in refs)
+    L = ['', '### The same thing measured on the benchmarks', '',
+         'NYU (what CleanerS was trained and evaluated on) and Occ-ScanNet, '
+         'put through this identical measurement: %s.'
+         % ', '.join('%s %d frames' % (n, c) for n, _, c in refs), '', '']
+    head = '| property of the viewpoint | here |' + ''.join(' %s |' % n for n, _, _ in refs)
+    for metric, lab in (('sc_iou', 'SC'), ('ssc_miou', 'SSC')):
+        L += ['**Correlation with %s**' % lab, '', head,
+              '| --- | ---: |' + ' ---: |' * len(refs)]
+        for k, pl in props:
+            row = '| %s | %+.2f |' % (pl, r(col(k), col(metric)))
+            for _, d, _ in refs:
+                row += ' %+.2f |' % _corr(d[k], d[metric]) if k in d else ' - |'
+            L.append(row)
+        here = np.mean([abs(r(col(k), col(metric))) for k, _ in props])
+        row = '| **mean \\|correlation\\|** | **%.2f** |' % here
+        for _, d, _ in refs:
+            row += ' **%.2f** |' % np.nanmean(
+                [abs(_corr(d[k], d[metric])) for k, _ in props if k in d])
+        L += [row, '']
+    sc_here = np.mean([abs(r(col(k), col('sc_iou'))) for k, _ in props])
+    sc_ref = np.nanmean([np.nanmean([abs(_corr(d[k], d['sc_iou']))
+                                     for k, _ in props if k in d])
+                         for _, d, _ in refs])
+    L += ['Viewpoint %s here than in the benchmarks (mean |correlation| with '
+          'SC %.2f against %.2f). %s'
+          % ('matters far more' if sc_here > sc_ref + 0.1 else 'matters about '
+             'as much', sc_here, sc_ref,
+             'The rows above therefore describe this capture, not the metric: '
+             'in a large scene the shot barely predicts the score.'
+             if sc_here > sc_ref + 0.1 else
+             'These rows are not peculiar to this capture.'), '',
+          '| | this room |' + ''.join(' %s |' % n for n, _, _ in refs),
+          '| --- | ---: |' + ' ---: |' * len(refs)]
+    for k, lab, unit, fmt in (('cam_z', 'median camera height', ' m', '%.2f'),
+                              ('depth_med', 'median distance to the scene', ' m', '%.2f'),
+                              ('free_mean', 'median room hidden behind the surface', ' m', '%.2f'),
+                              ('occ_pct', 'median SC set occupied', '%', '%.0f'),
+                              ('sc_voxels', 'median SC set', ' voxels', '%.0f')):
+        row = ('| %s | ' + fmt + '%s |') % (lab, np.median(col(k)), unit)
+        for _, d, _ in refs:
+            row += (' ' + fmt + '%s |') % (np.nanmedian(d[k]), unit) if k in d else ' - |'
+        L.append(row)
+    hid = {n: np.nanmedian(d['free_mean']) for n, d, _ in refs if 'free_mean' in d}
+    if hid:
+        L += ['', 'The gap that drives the rest is **how much room is hidden '
+              'behind what the camera sees**: %s, this room %.2f m. A frame '
+              'that hides nothing cannot be asked to complete anything, and a '
+              'room too small to hide anything cannot produce such a frame.'
+              % (', '.join('%s %.2f m' % (n, v) for n, v in hid.items()),
+                 np.median(col('free_mean')))]
+    return L
+
+
 def viewpoint_analysis(rows, num, cap):
     """What separates the viewpoints that score well from the ones that do not.
 
@@ -471,6 +568,7 @@ def viewpoint_analysis(rows, num, cap):
               'the worst tenth.' % (good, len(rows),
                                     np.median(col('depth_med')[top_i]),
                                     np.median(col('depth_med')[bot_i])), '']
+    L += nyu_reference(props, col, r)
     a_key, a_lab = a[0], a[1]
     a_step, a_step_name = dict((q[0], (q[2], q[3]))
                                for q in props_full)[a_key]
@@ -620,7 +718,30 @@ def markdown(cmSSC, cmSC, title, n_frames, fov, cap, pred_dir, per_frame=None):
               'IoU %.3f. The frame cannot separate a good model from a trivial '
               'one: the camera saw the whole room, so the only hidden volume '
               'left is the inside of the annotated solids. SSC above is still '
-              'meaningful. See MAKING_GT.md.' % (100 * occ, occ)]
+              'meaningful. See MAKING_GT.md.' % (100 * occ, occ),
+              '']
+    L += ['',
+          '**What the occupancy figure is, and is not.** It counts only '
+          'voxels INSIDE the annotated room: everything beyond the shell is '
+          '255 and enters neither side of the fraction. So it does not say '
+          'the room is full -- it says how much of the hidden volume within '
+          'these walls is furniture and wall interior, which rises as the '
+          'room gets smaller, because a camera standing in a small room sees '
+          'nearly all of its free space. It is a measurement of the '
+          'ANNOTATION, and the shell is the lever: on room07, growing the '
+          'shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to '
+          '43.0%, without touching a single piece of furniture (wall '
+          'thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). '
+          'Growing the shell is not a legitimate fix -- those voxels are '
+          'outside the room, and calling them empty would assert free space '
+          'where there is a wall. The honest shell sits at the walls, and '
+          'this number is its consequence.',
+          '',
+          '**SSC is not affected by it.** SSC averages per-class IoU over the '
+          'classes present and leaves `empty` out of that average, so a '
+          'mostly-occupied set is what it wants rather than a defect, and '
+          'most of its set is genuinely hidden -- it measures completion, not '
+          'visible segmentation.']
     L += sweep_section(cap)
     return '\n'.join(L) + '\n'
 

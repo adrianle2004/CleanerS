@@ -99,7 +99,7 @@ def _start(bag_path, want_color=True, align='depth'):
 def bag_metadata(bag_path):
     """What the header says, without reading the frames."""
     import pyrealsense2 as rs
-    pipe, profile, K, scale, _ = _start(bag_path, want_color=False)
+    pipe, profile, K, scale, _, _ = _start(bag_path, want_color=False)
     try:
         stream = profile.get_stream(rs.stream.depth).as_video_stream_profile()
         dev = profile.get_device()

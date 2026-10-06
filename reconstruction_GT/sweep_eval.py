@@ -174,10 +174,15 @@ def viewpoint_stats(depth, cam_K, T, room):
       near_pct    how much of the frame is closer than 1.5 m
       floor_pct   how much of it is floor (world z < 12 cm)
       free_mean   the mean distance, along each ray, from the surface the
-                  camera hit to where that ray leaves the ROOM. That is the
-                  hidden volume the metric will ask the model about: zero when
-                  a ray dies on a wall or inside furniture, large when it dies
-                  on the near side of something with room behind it.
+                  camera hit to where that ray leaves the ROOM -- the hidden
+                  EXTENT, not hidden free space. It counts whatever lies behind
+                  the first surface, the inside of the wardrobe as readily as
+                  the air behind it, and is zero when a ray dies on a wall
+                  because the wall is the boundary. How much of that extent is
+                  actually empty is a separate measurement: the occupancy of
+                  the SC set. The product of the two is what decides whether SC
+                  can test anything -- on NYU it is 0.67 m of empty hidden
+                  depth per ray, on room07 0.002 m.
 
     `room` is the annotated shell, so this is measured against the same box the
     ground truth is painted in, not against the fused surface.

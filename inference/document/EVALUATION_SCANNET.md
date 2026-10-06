@@ -1,6 +1,6 @@
 # Occ-ScanNet evaluation
 
-Generated 2026-09-23 by `inference/evaluate_scannet.py` from `./outputs/scannet`; rerun it after regenerating the predictions. CleanerS checkpoint `CleanerS_ckpt.pth`, trained on NYU only — every number here is a zero-shot transfer to ScanNet. Inputs use ScanNet's own per-scene depth calibration (`scans/<scene>/<scene>.txt`).
+Generated 2026-10-07 by `inference/evaluate_scannet.py` from `./outputs/scannet`; rerun it after regenerating the predictions. CleanerS checkpoint `CleanerS_ckpt.pth`, trained on NYU only — every number here is a zero-shot transfer to ScanNet. Inputs use ScanNet's own per-scene depth calibration (`scans/<scene>/<scene>.txt`).
 
 Protocol is `examples/segmentation/test_NYU.py`'s, the same as `EVALUATION.md`, applied to the released Occ-ScanNet labels (`target`): **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over classes 1-11; **SC** the same restricted to `mapping == 307200`, the voxels no depth pixel reached, scored occupied-vs-empty. `label_weight` is rebuilt the way the NYU files were made: GT object, or `tsdf < -0.5`.
 
@@ -230,7 +230,7 @@ The two NYU rows score **the same predictions** on CleanerS's own test split. Th
 
 ## Why ScanNet still scores below NYU: annotation or model?
 
-Same scoring rule, so the remaining gap is the ground truth, the model, or the input. Two checks separate them.
+Same scoring rule, so the remaining gap is the ground truth, the model, or the input. Three checks separate them.
 
 ### 1. Floor height — the grid assumption breaks, and the model follows a habit
 
@@ -261,7 +261,30 @@ Only voxels a depth pixel landed in **and** the GT calls an object. Nothing here
 
 Classes that drop a little are ordinary transfer loss: a new sensor and new rooms. The largest drops besides floor (`bed`, `window`, `chair`) are too big for that alone and may come from class definitions — CompleteScanNet's categories mapped onto NYU's 11 need not match what NYU's annotators called those objects. Not verified: that needs CompleteScanNet's raw labels.
 
-### 3. What is left
+### 3. The gap at matched difficulty — precision, not recall
+
+SC moves with the difficulty of the frame, so part of the headline gap is not a result. The scored set is the hidden space, and its occupancy is exactly what a constant "occupied" prediction scores: predict occupied everywhere and TP = P, FP = N − P, FN = 0, so IoU = P/N. NYU's median scored set is 55% occupied against Occ-ScanNet's 34%, so NYU is being asked an easier question before the model is involved.
+
+Matched on that baseline, and split into the two halves of SC that do **not** move with it (medians within each band, frame counts in brackets):
+
+| scored set occupied | NYU SC | prec | recall | Occ-ScanNet SC | prec | recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0–20% | 78.4 (63) | 90.2% | 87.2% | 47.3 (286) | 55.8% | 84.1% |
+| 20–35% | 72.6 (103) | 89.1% | 83.3% | 50.6 (481) | 65.0% | 75.9% |
+| 35–50% | 73.2 (116) | 88.6% | 84.5% | 54.1 (399) | 71.4% | 74.8% |
+| 50–65% | 77.3 (125) | 89.6% | 88.5% | 61.1 (199) | 78.1% | 76.3% |
+| 65–80% | 80.8 (136) | 89.8% | 90.5% | 74.3 (85) | 83.9% | 88.1% |
+| 80–100% | 90.0 (111) | 96.3% | 95.0% | 89.5 (50) | 97.3% | 96.6% |
+
+**Recall is comparable throughout; precision is not, and the precision gap closes as the baseline rises.** In the emptiest band (0–20% occupied) the same model predicts at 55.8% precision on Occ-ScanNet against 90.2% on NYU, while recall differs by 3.1 points. In the fullest (80–100%) the two are indistinguishable: precision 97.3% against 96.3%, SC 89.5 against 90.0.
+
+A recall gap would mean the model fails to complete structure the annotation does carry. A precision gap that appears only where the annotation says "mostly empty" means the opposite: the model predicts structure the annotation does not carry, and is charged for it. There is less to carry — Occ-ScanNet's median scored set holds 1617 occupied voxels out of 5151 (31%) against NYU's 4881 out of 10811 (45%) — so each false positive also costs proportionally more IoU.
+
+This does not clear the model — the prediction is the same either way — but it puts the SC gap on the annotation side, alongside section 1's floor, rather than on a failure to complete. `document/USING_THE_MODEL.md` carries the same comparison against the two hand-annotated rooms, which are denser than either benchmark.
+
+Reproduce: `python -m reconstruction_GT.sc_gap --all` (writes `outputs/sc_gap.csv`, one row per frame of all four datasets with SC, precision, recall and the baseline).
+
+### 4. What is left
 
 Completion of hidden parts is scored against a different recipe — CompleteScanNet CAD voxels copied onto the 8 cm grid by nearest neighbour, against NYU's 2 cm solids with the 4×4×4 rule — and 14.9% of Occ-ScanNet's GT object voxels sit where the depth sensor measured free space. Separating that from the model needs GT rebuilt NYU's way from CompleteScanNet.
 

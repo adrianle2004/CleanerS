@@ -288,6 +288,7 @@ Back up `gt/solids.json`. Everything else regenerates from the bag and it.
 python -m reconstruction_GT.verify_voxelizer          # 9 checks vs NYU + Occ-ScanNet
 python -m reconstruction_GT.evaluate_gt --nyu         # must print SC 75.0 / SSC 47.7
 python -m reconstruction_GT.bag_reader <bag>          # frame i is frame i, at any speed
+python -m reconstruction_GT.imu_check captures/room08 # what the accelerometer is worth
 ```
 
 The first proves the voxelizer still reproduces NYU's shipped files bit-exactly;
@@ -295,6 +296,60 @@ the second proves the evaluator still measures what the repo measures. Run them
 after touching either. The third proves a bag still reads the same frames
 whether the loop is fast or slow, which is what lets a frame index address a
 pose -- MAKING_GT.md, gotcha 10.
+
+The fourth measures the accelerometer against the only independent thing that
+knows which way is down, the fused floor. On this D455 it reads 9.02 m/s^2 at
+rest instead of 9.81 -- an 8% scale error, harmless because only the DIRECTION
+is used -- with 0.04 deg of noise but **2.5 deg of direction error**. That is
+why `refine_tilt.sh --from-floor` exists and why the grid should follow the
+floor rather than the IMU. It writes a plot of the whole bag to
+`captures/<room>/scan/imu_check.png`.
+
+## Comparing against the benchmarks
+
+```bash
+python -m reconstruction_GT.sc_gap --all        # build the CSVs, then the tables
+python -m reconstruction_GT.sc_gap --report     # just the tables, from the CSVs
+```
+
+`sc_gap.py` measures the same quantities on NYU test, a 1500-frame sample of
+Occ-ScanNet val, and both rooms, so a correlation measured here can be read
+against the benchmarks instead of being mistaken for a fact about SC. It writes
+four CSVs, each a stage that is skipped if the file already exists:
+
+| file | what it holds |
+| --- | --- |
+| `outputs/nyu_perframe.csv` | SC, its trivial baseline, the margin and SSC per NYU test frame |
+| `outputs/nyu_viewpoints.csv` | the above plus camera height, median depth and hidden extent |
+| `outputs/scannet_viewpoints.csv` | the same on Occ-ScanNet, plus GT floor voxel count and tilt |
+| `outputs/sc_gap.csv` | precision, recall and the baseline per frame, all four datasets |
+
+The first three are what `evaluate_gt.py --report` reads for its NYU and
+ScanNet reference columns, so build them before regenerating a room report that
+should carry those columns. The fourth answers why SC is ~79 on NYU and ~55 on
+Occ-ScanNet: matched on the baseline, recall is comparable and precision is not,
+which is `document/EVALUATION_SCANNET.md` section 3.
+
+## Long jobs, and a laptop that sleeps
+
+A sweep is tens of minutes on the GPU. Run it under the guard and a closed lid
+cannot lose it:
+
+```bash
+./reconstruction_GT/guard.sh sweep8 \
+    python -u -m reconstruction_GT.sweep_eval captures/room08 --every 5
+
+touch  outputs/guard/sweep8.pause     # pause          rm the file to continue
+touch  outputs/guard/sweep8.stop      # stop for good
+tail -f outputs/guard/sweep8.log
+```
+
+It restarts the job if its output goes quiet for five minutes of AWAKE time --
+quiet measured in `/proc/uptime`, which does not advance while the machine is
+asleep, so sleeping is not mistaken for a wedged GPU. Restarting is cheap
+because the jobs resume: `run_inference` skips frames that already have a
+prediction (`--overwrite` to redo) and `sweep_eval` keeps its CSV and skips
+frames already in it (`--restart` to ignore).
 
 ## When something looks wrong
 

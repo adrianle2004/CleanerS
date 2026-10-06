@@ -16,7 +16,10 @@ For what the capture settings do to the output — with measured numbers — see
 [CAMERA_TUNING.md](CAMERA_TUNING.md). For hand-making ground truth so a live
 capture can be evaluated the way NYU is, see [MAKING_GT.md](../../reconstruction_GT/MAKING_GT.md).
 For why furniture gets extruded through the wall behind it — measured over all
-1449 NYU frames — see [OCCLUSION.md](OCCLUSION.md).
+1449 NYU frames — see [OCCLUSION.md](OCCLUSION.md). For what the model is
+actually reliable at, which classes to distrust, how to hold the camera and
+which metric to quote — measured on hand-annotated real rooms against NYU and
+Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
 
 ## Contents
 

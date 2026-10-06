@@ -25,7 +25,7 @@ DIR="$(capdir "$ROOM")"
 REFUSE=1
 [ "${1:-}" = "--no-refuse" ] && REFUSE=0
 
-"$PY" - "$DIR" <<'PY'
+REPO="$REPO" "$PY" - "$DIR" <<'PY'
 import json, os, sys, time
 cap = sys.argv[1]
 meta_path = os.path.join(cap, 'meta.json')
@@ -60,6 +60,33 @@ if not 0.2 <= new <= 3.0:
     raise SystemExit('%.3f m is not a plausible camera height -- refusing' % new)
 
 meta.setdefault('camera_height_tape', old)      # keep the original measurement
+# A height change moves the world vertically, so an annotation made in the old
+# one no longer sits on the room. Carry it across, same as refine_tilt.sh.
+sol_path = os.path.join(cap, 'gt', 'solids.json')
+if os.path.exists(sol_path) and abs(new - float(meta['camera_height'])) > 1e-6:
+    import numpy as np
+    sys.path.insert(0, os.environ.get('REPO', '.'))
+    from inference.frame_loader import live_cam_pose
+    from reconstruction_GT.voxelize_gt import transform_solids
+    yaw0 = float(meta.get('yaw', 0.0))
+    up0 = meta.get('up_camera')
+    A = (live_cam_pose(new, yaw0, up0).astype(np.float64)
+         @ np.linalg.inv(live_cam_pose(float(meta['camera_height']), yaw0, up0)
+                         .astype(np.float64)))
+    spec = json.load(open(sol_path))
+    backup = sol_path + '.preheight'
+    if not os.path.exists(backup):
+        json.dump(spec, open(backup, 'w'), indent=2)
+    moved = transform_solids(spec, A)
+    moved['_moved'] = ('shifted %+.4f m on %s when camera_height was refined; '
+                       'the original is beside this file as '
+                       'solids.json.preheight'
+                       % (new - float(meta['camera_height']),
+                          time.strftime('%Y-%m-%d')))
+    json.dump(moved, open(sol_path, 'w'), indent=2)
+    print('  moved %d solids by %+.4f m to follow the new height'
+          % (len(moved.get('solids', [])), new - float(meta['camera_height'])))
+
 meta['camera_height'] = new
 meta['camera_height_source'] = (
     'floor plane fit, %d points, %.2f deg, from scan/fuse_report.json on %s; '

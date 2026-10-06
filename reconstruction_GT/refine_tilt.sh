@@ -78,6 +78,32 @@ if meta.get('up_camera') == up:
 if tilt > 25:
     raise SystemExit('%.0f deg is not a camera someone aimed at a room -- '
                      'refusing' % tilt)
+# Changing `up_camera` re-defines the world: the mesh will be re-fused into a
+# frame rotated by the correction, and ANY ANNOTATION ALREADY MADE is expressed
+# in the old one. Carry it across with the same 4x4 the frames use, or an
+# afternoon of boxes silently ends up tilted against its own room.
+sol_path = os.path.join(cap, 'gt', 'solids.json')
+if os.path.exists(sol_path):
+    sys.path.insert(0, os.environ.get('REPO', '.'))
+    from inference.frame_loader import live_cam_pose
+    from reconstruction_GT.voxelize_gt import transform_solids
+    h = float(meta['camera_height'])
+    yaw_old = float(meta.get('yaw', 0.0))
+    P_old = live_cam_pose(h, yaw_old, meta.get('up_camera')).astype(np.float64)
+    P_new = live_cam_pose(h, yaw_old, up).astype(np.float64)
+    A = P_new @ np.linalg.inv(P_old)                 # new world <- old world
+    spec = json.load(open(sol_path))
+    backup = sol_path + '.pretilt'
+    if not os.path.exists(backup):
+        json.dump(spec, open(backup, 'w'), indent=2)
+    moved = transform_solids(spec, A)
+    moved['_moved'] = ('rotated into the corrected frame on %s (was %.2f deg '
+                       'off level); the original is beside this file as '
+                       'solids.json.pretilt' % (time.strftime('%Y-%m-%d'), tilt))
+    json.dump(moved, open(sol_path, 'w'), indent=2)
+    print('  moved %d solids into the corrected frame (backup: %s)'
+          % (len(moved.get('solids', [])), os.path.basename(backup)))
+
 meta['up_camera'] = [round(float(v), 6) for v in up]
 meta['up_camera_source'] = (
     ('floor plane, %d points, via scan/fuse_report.json on %s; it was %.2f deg '
@@ -91,8 +117,15 @@ json.dump(meta, open(meta_path, 'w'), indent=2)
 print('  meta.json updated: the grid now follows gravity, not the assumption')
 PY
 RC=$?
-[ "$RC" -eq 3 ] && exit 0
-[ "$RC" -ne 0 ] && exit "$RC"
+# `[ test ] && action` under `set -e` aborts the script when the test is FALSE,
+# which silently skipped the re-fuse below and left meta.json describing a
+# world the mesh was not in. Same trap as the three guards in _common.sh.
+if [ "$RC" -eq 3 ]; then
+    exit 0
+fi
+if [ "$RC" -ne 0 ]; then
+    exit "$RC"
+fi
 
 if [ "$REFUSE" -eq 1 ]; then
     say "re-fusing in the corrected frame"

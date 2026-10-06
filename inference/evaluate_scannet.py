@@ -30,6 +30,13 @@ Beyond the tables it measures what differs from NYU:
   - pitch: ScanNet is hand-held and looks down more than NYU.
   - where the errors sit: surface voxels a depth pixel reached, space the
     camera saw through, and hidden space.
+  - the SC gap at matched difficulty: SC rises with the occupancy of the scored
+    set (which is also what a constant "occupied" prediction scores), and NYU's
+    is 21 points higher, so the two are compared band by band and split into
+    precision and recall, which do not move with it. That table comes from
+    outputs/sc_gap.csv -- build it with
+        python -m reconstruction_GT.sc_gap --all
+    and the section is skipped with a pointer if the file is absent.
 
 Usage (from the repo root):
     python -m inference.evaluate_scannet --pred_dir ./outputs/scannet \
@@ -47,6 +54,7 @@ import numpy as np
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _THIS_DIR)
+sys.path.insert(0, os.path.dirname(_THIS_DIR))
 from evaluate import (confusion, metrics, load_ids, CLASSES, N_CLASSES, IGNORE,  # noqa: E402
                       MAPPING_SENTINEL, DEFAULT_NYU, DEFAULT_PRED,
                       table, sc_breakdown, sc_class_rows, SC_COLUMNS)
@@ -395,8 +403,8 @@ def diagnosis_section(res):
         return []
     dn, ds = nyu['diag'], res['diag']
     L = ['## Why ScanNet still scores below NYU: annotation or model?\n']
-    L.append('Same scoring rule, so the remaining gap is the ground truth, the model, or the input. Two checks '
-             'separate them.\n')
+    L.append('Same scoring rule, so the remaining gap is the ground truth, the model, or the input. Three '
+             'checks separate them.\n')
 
     L.append('### 1. Floor height — the grid assumption breaks, and the model follows a habit\n')
     fg_n, fp_n = dn['floor_gt'] / max(dn['floor_gt'].sum(), 1), dn['floor_pred'] / max(dn['floor_pred'].sum(), 1)
@@ -442,7 +450,18 @@ def diagnosis_section(res):
              'NYU\'s 11 need not match what NYU\'s annotators called those objects. Not verified: that needs '
              'CompleteScanNet\'s raw labels.\n' % ', '.join('`%s`' % c for c in big))
 
-    L.append('### 3. What is left\n')
+    try:
+        from reconstruction_GT.sc_gap import markdown_section
+        sec = markdown_section()
+    except ImportError:
+        sec = []
+    if sec:
+        L += sec
+    else:
+        L.append('### 3. The gap at matched difficulty\n')
+        L.append('Needs `outputs/sc_gap.csv`: `python -m reconstruction_GT.sc_gap --all`.\n')
+
+    L.append('### 4. What is left\n')
     L.append('Completion of hidden parts is scored against a different recipe — CompleteScanNet CAD voxels copied '
              'onto the 8 cm grid by nearest neighbour, against NYU\'s 2 cm solids with the 4×4×4 rule — and '
              '%.1f%% of Occ-ScanNet\'s GT object voxels sit where the depth sensor measured free space. Separating '
