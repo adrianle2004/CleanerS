@@ -157,3 +157,5 @@ outputs/guard/*.pause
 # refine_tilt.sh / refine_height.sh keep the annotation they are about to move;
 # the committed solids.json plus git history is the real undo path
 captures/*/gt/solids.json.pre*
+# refine_frame_pose.sh keeps the record it is about to change; git history is the undo path
+captures/*/meta.json.preicp

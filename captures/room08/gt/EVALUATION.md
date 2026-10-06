@@ -8,22 +8,22 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 
 | class | TP | FP | FN | precision | recall | IoU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `empty` *(not in mIoU)* | 3379 | 3541 | 233 | 48.8% | 93.5% | 47.2% |
-| `ceiling` | 323 | 137 | 41 | 70.2% | 88.7% | 64.5% |
-| `floor` | 286 | 435 | 0 | 39.7% | 100.0% | 39.7% |
-| `wall` | 2631 | 520 | 1163 | 83.5% | 69.3% | 61.0% |
-| `window` | 756 | 150 | 1011 | 83.4% | 42.8% | 39.4% |
-| `bed` | 2071 | 397 | 2437 | 83.9% | 45.9% | 42.2% |
-| `sofa` | 0 | 464 | 0 | 0.0% | 0.0% | 0.0% |
+| `empty` *(not in mIoU)* | 3376 | 3525 | 232 | 48.9% | 93.6% | 47.3% |
+| `ceiling` | 310 | 142 | 39 | 68.6% | 88.8% | 63.1% |
+| `floor` | 287 | 435 | 0 | 39.8% | 100.0% | 39.8% |
+| `wall` | 2671 | 547 | 1162 | 83.0% | 69.7% | 61.0% |
+| `window` | 757 | 147 | 1020 | 83.7% | 42.6% | 39.3% |
+| `bed` | 2082 | 404 | 2432 | 83.7% | 46.1% | 42.3% |
+| `sofa` | 0 | 462 | 0 | 0.0% | 0.0% | 0.0% |
 | `table` | 0 | 83 | 0 | 0.0% | 0.0% | 0.0% |
-| `tvs` | 0 | 0 | 258 | 0.0% | 0.0% | 0.0% |
-| `furn` | 168 | 420 | 546 | 28.6% | 23.5% | 14.8% |
-| `objs` | 287 | 268 | 726 | 51.7% | 28.3% | 22.4% |
+| `tvs` | 0 | 0 | 256 | 0.0% | 0.0% | 0.0% |
+| `furn` | 173 | 421 | 555 | 29.1% | 23.8% | 15.1% |
+| `objs` | 290 | 266 | 736 | 52.2% | 28.3% | 22.4% |
 
-**SSC mIoU (8 classes present): 35.5**
+**SSC mIoU (8 classes present): 35.4**
   Absent from this ground truth, so not averaged: `chair`, `sofa`, `table`.
 
-**SC IoU: 59.2**  |  precision 95.9  recall 60.7  |  12627 voxels, 71% of them occupied
+**SC IoU: 59.6**  |  precision 96.0  recall 61.2  |  12687 voxels, 72% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
@@ -34,12 +34,12 @@ The total above pools every frame, which weights every voxel equally -- and the 
 | frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `live_000000` | 6746 | 5707 | 82% | 58.6 | -23.1 | 33.3 | 6 |
-| `live_000180` | 3281 | 2171 | 57% | 81.9 | **+25.1** | 36.1 | 6 |
-| `live_000235` | 1526 | 1188 | 95% | 40.9 | -54.4 | 26.3 | 6 |
-| `live_000240` | 1471 | 1152 | 98% | 53.4 | -44.5 | 34.1 | 6 |
-| `live_000580` | 3292 | 2409 | 36% | 60.3 | **+24.7** | 29.1 | 6 |
+| `live_000180` | 3285 | 2190 | 57% | 82.6 | **+25.5** | 35.7 | 6 |
+| `live_000235` | 1522 | 1194 | 96% | 41.4 | -54.2 | 25.9 | 6 |
+| `live_000240` | 1483 | 1161 | 98% | 54.6 | -43.2 | 34.0 | 6 |
+| `live_000580` | 3342 | 2435 | 37% | 61.6 | **+25.1** | 29.0 | 6 |
 
-Measuring completion here (positive margin): `live_000180` (+25.1), `live_000580` (+24.7). Those are the only frames whose SC is worth quoting; NYU's own margins run +12.6 to +23.2 by band, for scale.
+Measuring completion here (positive margin): `live_000180` (+25.5), `live_000580` (+25.1). Those are the only frames whose SC is worth quoting; NYU's own margins run +12.6 to +23.2 by band, for scale.
 
 **What the occupancy figure is, and is not.** It counts only voxels INSIDE the annotated room: everything beyond the shell is 255 and enters neither side of the fraction. So it does not say the room is full -- it says how much of the hidden volume within these walls is furniture and wall interior, which rises as the room gets smaller, because a camera standing in a small room sees nearly all of its free space. It is a measurement of the ANNOTATION, and the shell is the lever: on room07, growing the shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to 43.0%, without touching a single piece of furniture (wall thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). Growing the shell is not a legitimate fix -- those voxels are outside the room, and calling them empty would assert free space where there is a wall. The honest shell sits at the walls, and this number is its consequence.
 

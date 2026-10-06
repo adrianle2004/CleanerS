@@ -217,7 +217,83 @@ hole in the annotation — which cannot be said of Occ-ScanNet, where 14% of
 frames have no floor at all and the floors that exist are tilted a median 1.94°
 inside the grid.
 
-## 6. What is not done
+## 6. How much the trajectory drifts, and why it does not matter
+
+`fuse_scan.py` tracks frame-to-model with no loop closure, so the trajectory
+drifts. Measured by running the identical tracker over the identical frames
+forwards and then backwards — same geometry, opposite direction of
+accumulation, so the two can only disagree by drift:
+
+```bash
+python -m reconstruction_GT.drift_check captures/room08
+```
+
+| | path | residual at the far end | as % of path | at the evaluated frames |
+| --- | ---: | ---: | ---: | ---: |
+| room07 | 7.21 m | 174.9 mm / 0.28° | 2.42% | 66–80 mm |
+| room08 | 14.40 m | 155.9 mm / 1.41° | 1.08% | 94–102 mm |
+
+Both runs reproduce the committed `fuse_report.json` fitness exactly (0.876,
+0.867), so this is the real tracker. 1–2.4% of path length is ordinary for
+dense frame-to-model SLAM without loop closure — Intel's own `rs-kinfu` is
+KinectFusion and has the same limitation by construction.
+
+**That residual is not the error that matters, and it would be easy to
+conclude otherwise.** Perturbing a frame's annotation by its own residual and
+re-scoring moves SSC by up to 9 points and SC by up to 15, which makes the
+drift look fatal. But that perturbation assumes the pose error is independent
+of the annotation, and it is not: the annotation was drawn on the mesh fused
+from the same trajectory, so a frame's pose and the local mesh carry the same
+drift and it cancels where the scoring happens.
+
+Measured, rather than argued — point-to-plane ICP of each evaluated frame's
+own depth against the fused room:
+
+| | correction | rotation | inlier RMSE | fitness |
+| --- | ---: | ---: | ---: | ---: |
+| room07, 4 frames | 23.9–30.4 mm | 0.47–0.77° | 13.5–16.9 mm | 1.000 |
+| room08, 4 frames | 10.7–29.3 mm | 0.56–0.88° | 12.9–20.2 mm | 1.000 |
+
+So the real frame-to-room misalignment is **10–30 mm, a third of a voxel** —
+not the 100–175 mm of global drift. Stable from a 250 mm correspondence
+distance down to 50 mm, so it is converged rather than loose. Applying it and
+rebuilding the ground truth moves the scores almost not at all: room07 SSC
+39.4 → 39.5 and SC 72.4 → 72.4, room08 SSC 35.5 → 35.4 and SC 59.2 → 59.6.
+
+The corrections are applied and recorded, each frame carrying its own
+`pose_refined` block with the fitness, RMSE and the values it replaced:
+
+```bash
+python -m reconstruction_GT.refine_frame_pose captures/room08          # report
+python -m reconstruction_GT.refine_frame_pose captures/room08 --write  # apply
+```
+
+This is REP-105's split rather than a better tracker: the trajectory stays as
+it is, and each scored frame gets a correction in `world_from_room` — the same
+role `map -> odom` plays in ROS 2, which keeps continuous-but-drifting odometry
+and lets a localisation node publish the correction. Only a handful of frames
+per capture are ever scored, so a global fix is not needed to get them right.
+
+It aligns to the **fused mesh, not the annotation**, on purpose. Aligning to
+the annotation would place observed surfaces inside annotated solids, which is
+what SSC's surface voxels score, so it would improve the number whether or not
+the pose improved. `--target solids` exists for diagnosis only.
+
+A warning about the obvious shortcut: *hit rate* — the share of
+observed-surface voxels the annotation calls solid — looks like a natural
+alignment objective and is a biased one. Shifting the annotation toward the
+camera buries observed surfaces deeper inside solids and raises it without
+improving anything. Maximising it over 100 mm shifts prefers a shifted
+annotation on 7 of 8 frames; ICP, which is unbiased, says the true offset is
+10–30 mm. Trust the RMSE, not the hit rate.
+
+What the hit rate does show, once alignment is ruled out, is annotation
+coverage: room08's `live_000235` and `live_000240` sit at 59–60%, meaning 40%
+of the surfaces their depth measured are annotated as empty space. That is
+unmarked clutter, not a pose problem, and it is the real ceiling on those two
+frames.
+
+## 7. What is not done
 
 - **A room large enough for SC throughout.** room08 manages it at 15% of
   viewpoints; a room clearing ~1 m of hidden extent would manage it
@@ -232,6 +308,23 @@ inside the grid.
   object voxels sit where the depth sensor measured free space.
 - **The `empty` class spread**: 9.0% IoU in room07 against 47.2% in room08.
   Worth understanding before leaning on either room's `empty` column.
+- **Annotation coverage on the worst frames.** room08 `live_000235` / `240`
+  have 40% of their measured surfaces falling in voxels annotated as empty —
+  unmarked clutter. Marking it would raise those frames' ceiling; section 6
+  shows it is not a pose problem.
+- **Loop closure in fusion (option B).** The per-frame correction above fixes
+  the scored frames, not the mesh. The proper fix for the reconstruction
+  itself is Open3D's offline Reconstruction System, which is already in the
+  installed wheel at `open3d/examples/reconstruction_system/` (Choi et al.,
+  CVPR 2015): fragments, RGBD odometry inside each, then a pose graph whose
+  edges are split into reliable odometry edges and `uncertain=True` loop
+  closure edges, optimised with `GlobalOptimizationLevenbergMarquardt`. It
+  ships a `config/realsense.json`, and `slac.py` additionally corrects the
+  non-rigid "bent room" distortion that a rigid pose graph leaves behind.
+  Worth doing when the next room is captured, since it rebuilds the mesh and
+  the annotation would want re-checking against it — `refine_tilt.sh` and
+  `refine_height.sh` already carry solids through `transform_solids`, so the
+  annotation can follow a moved world.
 
 ## Reproducing all of it
 

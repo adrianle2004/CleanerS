@@ -8,22 +8,22 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 
 | class | TP | FP | FN | precision | recall | IoU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `empty` *(not in mIoU)* | 332 | 3557 | 22 | 8.5% | 93.8% | 8.5% |
+| `empty` *(not in mIoU)* | 333 | 3545 | 22 | 8.6% | 93.8% | 8.5% |
 | `ceiling` | 4 | 22 | 4 | 15.4% | 50.0% | 13.3% |
-| `floor` | 203 | 1315 | 0 | 13.4% | 100.0% | 13.4% |
-| `wall` | 2747 | 390 | 2128 | 87.6% | 56.3% | 52.2% |
+| `floor` | 202 | 1318 | 0 | 13.3% | 100.0% | 13.3% |
+| `wall` | 2713 | 384 | 2080 | 87.6% | 56.6% | 52.4% |
 | `window` | 528 | 72 | 12 | 88.0% | 97.8% | 86.3% |
 | `chair` | 76 | 3 | 50 | 96.2% | 60.3% | 58.9% |
-| `bed` | 4528 | 1205 | 4155 | 79.0% | 52.1% | 45.8% |
-| `sofa` | 0 | 968 | 0 | 0.0% | 0.0% | 0.0% |
+| `bed` | 4588 | 1189 | 4140 | 79.4% | 52.6% | 46.3% |
+| `sofa` | 0 | 979 | 0 | 0.0% | 0.0% | 0.0% |
 | `table` | 161 | 233 | 94 | 40.9% | 63.1% | 33.0% |
-| `furn` | 0 | 614 | 0 | 0.0% | 0.0% | 0.0% |
-| `objs` | 318 | 154 | 2068 | 67.4% | 13.3% | 12.5% |
+| `furn` | 0 | 620 | 0 | 0.0% | 0.0% | 0.0% |
+| `objs` | 317 | 134 | 2097 | 70.3% | 13.1% | 12.4% |
 
-**SSC mIoU (8 classes present): 39.4**
+**SSC mIoU (8 classes present): 39.5**
   Absent from this ground truth, so not averaged: `sofa`, `tvs`, `furn`.
 
-**SC IoU: 72.4**  |  precision 99.8  recall 72.5  |  13285 voxels, 97% of them occupied
+**SC IoU: 72.4**  |  precision 99.8  recall 72.5  |  13257 voxels, 97% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
@@ -34,10 +34,10 @@ The total above pools every frame, which weights every voxel equally -- and the 
 | frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `live_000000` | 5944 | 4412 | 98% | 87.1 | -10.4 | 50.3 | 7 |
-| `live_000320` | 4055 | 3422 | 96% | 53.2 | -43.2 | 15.0 | 5 |
-| `live_000325` | 4068 | 3441 | 96% | 55.4 | -41.0 | 17.1 | 5 |
-| `live_000530` | 1621 | 957 | 100% | 100.0 | +0.0 | 39.1 | 4 |
-| `live_000535` | 1742 | 1053 | 100% | 100.0 | +0.0 | 42.4 | 4 |
+| `live_000320` | 4054 | 3419 | 96% | 53.4 | -43.0 | 15.2 | 5 |
+| `live_000325` | 4069 | 3444 | 96% | 55.5 | -40.8 | 16.9 | 5 |
+| `live_000530` | 1632 | 956 | 100% | 100.0 | +0.0 | 40.5 | 4 |
+| `live_000535` | 1722 | 1026 | 100% | 100.0 | +0.0 | 43.0 | 4 |
 
 No frame here has a positive margin, so no viewpoint in this capture measures completion. Quote SSC.
 

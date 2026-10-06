@@ -97,33 +97,33 @@
         ]
       ],
       "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.4617,
-      "camera_height_source": "tracked pose of bag frame 320",
+      "camera_height": 0.4633,
+      "camera_height_source": "tracked pose of bag frame 320; then ICP-refined against the fused room (shift 30 mm)",
       "yaw": 0.0,
       "up_camera": [
-        0.08381,
-        -0.972671,
-        -0.216535
+        0.085965,
+        -0.972694,
+        -0.215585
       ],
       "up_camera_source": "tracked pose of bag frame 320 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.886003,
-          -0.463678,
+          0.879563,
+          -0.475781,
           1e-06,
-          0.133094
+          0.164631
         ],
         [
-          0.463678,
-          0.886004,
+          0.475781,
+          0.879564,
           -0.0,
-          -0.398521
+          -0.398466
         ],
         [
           0.0,
           0.0,
           1.0,
-          0.0
+          -0.0
         ],
         [
           0.0,
@@ -133,7 +133,48 @@
         ]
       ],
       "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py.",
+      "pose_refined": {
+        "method": "point-to-plane ICP of this frame's depth against the fused room (mesh), correcting the frame-to-model drift measured by drift_check.py",
+        "fitness": 1.0,
+        "inlier_rmse_mm": 16.52,
+        "shift_mm": 30.4,
+        "turn_deg": 0.7702,
+        "previous": {
+          "camera_height": 0.4617,
+          "up_camera": [
+            0.08381,
+            -0.972671,
+            -0.216535
+          ],
+          "world_from_room": [
+            [
+              0.886003,
+              -0.463678,
+              1e-06,
+              0.133094
+            ],
+            [
+              0.463678,
+              0.886004,
+              -0.0,
+              -0.398521
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      }
     },
     "live_000530": {
       "source": "sweep frame 530 of scan/scan.bag",
@@ -172,33 +213,33 @@
         ]
       ],
       "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.8812,
-      "camera_height_source": "tracked pose of bag frame 530",
+      "camera_height": 0.8964,
+      "camera_height_source": "tracked pose of bag frame 530; then ICP-refined against the fused room (shift 25 mm)",
       "yaw": 0.0,
       "up_camera": [
-        0.119373,
-        -0.977593,
-        -0.173383
+        0.123378,
+        -0.976283,
+        -0.177902
       ],
       "up_camera_source": "tracked pose of bag frame 530 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.63362,
-          -0.773645,
+          0.628574,
+          -0.77775,
           -0.0,
-          0.181182
+          0.198949
         ],
         [
-          0.773645,
-          0.63362,
+          0.77775,
+          0.628574,
+          -0.0,
+          -0.640461
+        ],
+        [
+          -0.0,
           0.0,
-          -0.646125
-        ],
-        [
-          -0.0,
-          -0.0,
           1.0,
-          -0.0
+          0.0
         ],
         [
           0.0,
@@ -208,7 +249,48 @@
         ]
       ],
       "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py.",
+      "pose_refined": {
+        "method": "point-to-plane ICP of this frame's depth against the fused room (mesh), correcting the frame-to-model drift measured by drift_check.py",
+        "fitness": 1.0,
+        "inlier_rmse_mm": 13.47,
+        "shift_mm": 25.19,
+        "turn_deg": 0.4843,
+        "previous": {
+          "camera_height": 0.8812,
+          "up_camera": [
+            0.119373,
+            -0.977593,
+            -0.173383
+          ],
+          "world_from_room": [
+            [
+              0.63362,
+              -0.773645,
+              -0.0,
+              0.181182
+            ],
+            [
+              0.773645,
+              0.63362,
+              0.0,
+              -0.646125
+            ],
+            [
+              -0.0,
+              -0.0,
+              1.0,
+              -0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      }
     },
     "live_000535": {
       "source": "sweep frame 535 of scan/scan.bag",
@@ -247,33 +329,33 @@
         ]
       ],
       "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.8981,
-      "camera_height_source": "tracked pose of bag frame 535",
+      "camera_height": 0.9118,
+      "camera_height_source": "tracked pose of bag frame 535; then ICP-refined against the fused room (shift 24 mm)",
       "yaw": 0.0,
       "up_camera": [
-        0.104775,
-        -0.979138,
-        -0.1741
+        0.108775,
+        -0.978142,
+        -0.177217
       ],
       "up_camera_source": "tracked pose of bag frame 535 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.641601,
-          -0.767038,
+          0.636148,
+          -0.771567,
           -1e-06,
-          0.166027
+          0.1848
         ],
         [
-          0.767039,
-          0.641602,
+          0.771568,
+          0.636149,
+          -0.0,
+          -0.657559
+        ],
+        [
           0.0,
-          -0.664081
-        ],
-        [
-          -0.0,
-          -0.0,
+          0.0,
           1.0,
-          -0.0
+          0.0
         ],
         [
           0.0,
@@ -283,7 +365,48 @@
         ]
       ],
       "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py.",
+      "pose_refined": {
+        "method": "point-to-plane ICP of this frame's depth against the fused room (mesh), correcting the frame-to-model drift measured by drift_check.py",
+        "fitness": 1.0,
+        "inlier_rmse_mm": 13.9,
+        "shift_mm": 23.91,
+        "turn_deg": 0.4695,
+        "previous": {
+          "camera_height": 0.8981,
+          "up_camera": [
+            0.104775,
+            -0.979138,
+            -0.1741
+          ],
+          "world_from_room": [
+            [
+              0.641601,
+              -0.767038,
+              -1e-06,
+              0.166027
+            ],
+            [
+              0.767039,
+              0.641602,
+              0.0,
+              -0.664081
+            ],
+            [
+              -0.0,
+              -0.0,
+              1.0,
+              -0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      }
     },
     "live_000325": {
       "source": "sweep frame 325 of scan/scan.bag",
@@ -322,31 +445,31 @@
         ]
       ],
       "registration": "depth projected into the colour camera (rs.align to colour), colour left untouched, unprojected with the colour intrinsics -- NYU's arrangement, and the same one inference/camera.py uses for the still frame, so every frame of this capture matches what the model was trained on",
-      "camera_height": 0.4574,
-      "camera_height_source": "tracked pose of bag frame 325",
+      "camera_height": 0.4602,
+      "camera_height_source": "tracked pose of bag frame 325; then ICP-refined against the fused room (shift 28 mm)",
       "yaw": 0.0,
       "up_camera": [
-        0.06722,
-        -0.974272,
-        -0.215118
+        0.069244,
+        -0.974216,
+        -0.214729
       ],
       "up_camera_source": "tracked pose of bag frame 325 (gravity in its own camera frame)",
       "world_from_room": [
         [
-          0.883512,
-          -0.468408,
-          0.0,
-          0.151806
+          0.877829,
+          -0.478973,
+          -0.0,
+          0.180538
         ],
         [
-          0.468408,
-          0.883512,
+          0.478973,
+          0.877829,
           0.0,
-          -0.394567
+          -0.393797
         ],
         [
           -0.0,
-          0.0,
+          -0.0,
           1.0,
           0.0
         ],
@@ -358,7 +481,48 @@
         ]
       ],
       "undistorted": false,
-      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py."
+      "note": "exported from the sweep: raw (distorted) frame, pose from tracking. See reconstruction_GT/export_frame.py.",
+      "pose_refined": {
+        "method": "point-to-plane ICP of this frame's depth against the fused room (mesh), correcting the frame-to-model drift measured by drift_check.py",
+        "fitness": 1.0,
+        "inlier_rmse_mm": 16.9,
+        "shift_mm": 27.79,
+        "turn_deg": 0.6723,
+        "previous": {
+          "camera_height": 0.4574,
+          "up_camera": [
+            0.06722,
+            -0.974272,
+            -0.215118
+          ],
+          "world_from_room": [
+            [
+              0.883512,
+              -0.468408,
+              0.0,
+              0.151806
+            ],
+            [
+              0.468408,
+              0.883512,
+              0.0,
+              -0.394567
+            ],
+            [
+              -0.0,
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ]
+        }
+      }
     }
   },
   "up_camera": [

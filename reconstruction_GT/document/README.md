@@ -302,6 +302,7 @@ python -m reconstruction_GT.verify_voxelizer          # 9 checks vs NYU + Occ-Sc
 python -m reconstruction_GT.evaluate_gt --nyu         # must print SC 75.0 / SSC 47.7
 python -m reconstruction_GT.bag_reader <bag>          # frame i is frame i, at any speed
 python -m reconstruction_GT.imu_check captures/room08 # what the accelerometer is worth
+python -m reconstruction_GT.drift_check captures/room08  # how far the trajectory drifts
 ```
 
 The first proves the voxelizer still reproduces NYU's shipped files bit-exactly;
@@ -317,6 +318,25 @@ is used -- with 0.04 deg of noise but **2.5 deg of direction error**. That is
 why `refine_tilt.sh --from-floor` exists and why the grid should follow the
 floor rather than the IMU. It writes a plot of the whole bag to
 `captures/<room>/scan/imu_check.png`.
+
+The fifth runs the sweep through the tracker forwards and then backwards --
+same frames, opposite direction of accumulation -- so the two trajectories can
+only disagree by drift. It reports 175 mm over room07's 7.2 m and 156 mm over
+room08's 14.4 m, 1-2.4% of path length, which is ordinary for frame-to-model
+SLAM with no loop closure. That is NOT the error the ground truth sees: the
+annotation is drawn on the mesh the same trajectory built, so the drift mostly
+cancels where the scoring happens. The residual that does not cancel is
+10-30 mm per scored frame, and `refine_frame_pose.py` removes it:
+
+```bash
+python -m reconstruction_GT.refine_frame_pose captures/room08          # report
+python -m reconstruction_GT.refine_frame_pose captures/room08 --write  # apply
+```
+
+It is ROS 2's `map -> odom` idea: leave the drifting trajectory alone and give
+each scored frame its own correction in `world_from_room`. Re-run `voxelize_gt`
+for each frame it touched, then `evaluate_gt --report`. Full numbers and the
+pitfalls in [FINDINGS.md](FINDINGS.md), section 6.
 
 ## Comparing against the benchmarks
 
