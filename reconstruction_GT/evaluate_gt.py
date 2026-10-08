@@ -665,6 +665,64 @@ def sweep_section(cap, rank='margin', top=5):
     return L
 
 
+def error_budget(cap):
+    """Every known error in these numbers, measured, with its size.
+
+    It belongs beside the score rather than in a document, because the score is
+    what gets quoted. Each row is something that was actually measured --
+    document/DRIFT_AND_ALIGNMENT.md says how -- and the honest summary is that
+    one row dominates and it is not a pose error.
+    """
+    import json
+    refined = 0
+    try:
+        meta = json.load(open(os.path.join(cap, 'meta.json')))
+        refined = sum(1 for v in meta.get('frame_meta', {}).values()
+                      if 'pose_refined' in v)
+    except (IOError, ValueError):
+        pass
+    L = ['', '## Error budget', '',
+         'What is known to be wrong with the numbers above, and by how much. '
+         'Measured, not estimated; `document/DRIFT_AND_ALIGNMENT.md` has the '
+         'method for each row.', '',
+         '| term | size | effect on the score |',
+         '| --- | ---: | --- |']
+    L.append('| **annotation fidelity** — a box standing in for real furniture '
+             '| 36–56 mm | **the dominant term.** Not a placement error: it is '
+             'what the ground truth *defines*, so it cannot be corrected, only '
+             'annotated more finely (`shape: mesh`, smaller solids) |')
+    L.append('| frame pose vs the reconstruction | 5–9 mm%s | ±0.1 SSC |'
+             % (', corrected on %d frame%s' % (refined, '' if refined == 1 else 's')
+                if refined else ', **not corrected here**'))
+    L.append('| sensor depth noise, single frame | 8–13 mm plane RMS | inside '
+             'the row above |')
+    L.append('| reconstruction self-consistency | ≤2.6 mm | fusing the whole '
+             'sweep smears a wall by no more than this over one frame\'s view '
+             'of it, so the reconstruction is not warped |')
+    L.append('| trajectory drift, whole sweep | 156–175 mm | **cancels.** It is '
+             'a near-global change of world frame, and everything scored here '
+             'is relative: the annotation and each frame\'s grid live in the '
+             'same reconstruction |')
+    L.append('| camera height: tape vs floor-plane fit | ~60 mm | the tape\'s, '
+             'not the geometry\'s — the two rooms disagree in *opposite* '
+             'directions, where a scale error would push both the same way |')
+    L.append('')
+    if refined:
+        L.append('> The pose correction on %d frame%s is a **polish, not a '
+                 'fix**: it was built expecting a ~100 mm error and the error '
+                 'is 5–9 mm, a tenth of a voxel. It is kept because it is '
+                 'measured and recorded (each frame\'s `pose_refined` block '
+                 'holds its fitness, RMSE and the values it replaced), not '
+                 'because these numbers needed it. Re-run '
+                 '`refine_frame_pose.py` after any `export_frame`, since a '
+                 'freshly exported frame carries the raw tracked pose.'
+                 % (refined, '' if refined == 1 else 's'))
+        L.append('')
+    L.append('So the figure worth improving is the annotation, not the poses.')
+    L.append('')
+    return L
+
+
 def markdown(cmSSC, cmSC, title, n_frames, fov, cap, pred_dir, per_frame=None):
     """The same numbers as the printed table, as a report that can be kept."""
     import time
@@ -707,6 +765,7 @@ def markdown(cmSSC, cmSC, title, n_frames, fov, cap, pred_dir, per_frame=None):
           % (100 * iouS[1], 100 * tpS[1] / max(tpS[1] + fpS[1], 1),
              100 * tpS[1] / max(tpS[1] + fnS[1], 1), scored, 100 * occ), '',
           'NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).']
+    L += error_budget(cap)
     if per_frame and len(per_frame) > 1:
         L += ['', '## Per frame', '',
               'The total above pools every frame, which weights every voxel '

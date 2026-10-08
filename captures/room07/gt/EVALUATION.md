@@ -1,6 +1,6 @@
 # Evaluation — room07 (camera view only)
 
-Generated 2026-10-07 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
+Generated 2026-10-08 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
 
 Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/document/EVALUATION.md`: **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over the classes present; **SC** the same set restricted to `mapping == 307200` — the voxels no depth pixel reached — scored occupied-vs-empty.
 
@@ -26,6 +26,24 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 **SC IoU: 72.4**  |  precision 99.8  recall 72.5  |  13257 voxels, 97% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
+
+## Error budget
+
+What is known to be wrong with the numbers above, and by how much. Measured, not estimated; `document/DRIFT_AND_ALIGNMENT.md` has the method for each row.
+
+| term | size | effect on the score |
+| --- | ---: | --- |
+| **annotation fidelity** — a box standing in for real furniture | 36–56 mm | **the dominant term.** Not a placement error: it is what the ground truth *defines*, so it cannot be corrected, only annotated more finely (`shape: mesh`, smaller solids) |
+| frame pose vs the reconstruction | 5–9 mm, corrected on 4 frames | ±0.1 SSC |
+| sensor depth noise, single frame | 8–13 mm plane RMS | inside the row above |
+| reconstruction self-consistency | ≤2.6 mm | fusing the whole sweep smears a wall by no more than this over one frame's view of it, so the reconstruction is not warped |
+| trajectory drift, whole sweep | 156–175 mm | **cancels.** It is a near-global change of world frame, and everything scored here is relative: the annotation and each frame's grid live in the same reconstruction |
+| camera height: tape vs floor-plane fit | ~60 mm | the tape's, not the geometry's — the two rooms disagree in *opposite* directions, where a scale error would push both the same way |
+
+> The pose correction on 4 frames is a **polish, not a fix**: it was built expecting a ~100 mm error and the error is 5–9 mm, a tenth of a voxel. It is kept because it is measured and recorded (each frame's `pose_refined` block holds its fitness, RMSE and the values it replaced), not because these numbers needed it. Re-run `refine_frame_pose.py` after any `export_frame`, since a freshly exported frame carries the raw tracked pose.
+
+So the figure worth improving is the annotation, not the poses.
+
 
 ## Per frame
 

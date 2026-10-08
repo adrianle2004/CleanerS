@@ -304,10 +304,23 @@ Applied to both rooms, ground truth rebuilt, same predictions re-scored:
 | room07 | 39.4 | **39.5** | 72.4 | **72.4** |
 | room08 | 35.5 | **35.4** | 59.2 | **59.6** |
 
-Nothing, in other words — which is the right outcome given section 6. The
-correction removes the 5–9 mm frame-to-mesh residual, and 5–9 mm is a tenth of
-a voxel, so it is a polish rather than a fix. **It is applied because it is
-measured and recorded, not because the ground truth needed it.**
+Nothing, in other words — which is the right outcome given section 6.
+
+**Be plain about what this means: the correction was built for a problem that
+does not exist at the size it was built for.** It was aimed at ~100 mm of
+suspected pose error; the real residual is 5–9 mm, a tenth of a voxel. It
+removes that, so it is a polish rather than a fix.
+
+It is kept rather than reverted because it is measured, recorded with its
+fitness and RMSE, and not wrong — but it is not what makes the ground truth
+sound. The plane-flatness test in section 6 is. The correction carries a small
+standing cost too: it has to be re-run after any `export_frame`, because a
+freshly exported frame carries the raw tracked pose, and forgetting leaves a
+capture half-corrected.
+
+Each room's `gt/EVALUATION.md` now carries an **error budget** listing this term
+beside every other known error in the numbers, so the caveat travels with the
+score instead of living only here.
 
 The uncertainty on the room SSC figures from pose error is about **±0.1**, not
 the ±4 that section 4's sensitivity table suggests in isolation.

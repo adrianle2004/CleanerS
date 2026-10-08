@@ -261,7 +261,13 @@ python -m reconstruction_GT.refine_frame_pose captures/room08 --write
 
 Effect on the scores: room07 SSC 39.4 → 39.5 and SC 72.4 → 72.4, room08 SSC
 35.5 → 35.4 and SC 59.2 → 59.6. So pose error contributes about **±0.1** to the
-room figures, and the correction is a polish rather than a fix.
+room figures.
+
+The correction is therefore a **polish, not a fix** — built for a ~100 mm
+problem that turned out to be 5–9 mm — and it is kept, with that noted, rather
+than reverted. Each room's `gt/EVALUATION.md` carries an error budget putting it
+beside every other known error, where the dominant term is not pose at all but
+the annotation standing boxes in for furniture (36–56 mm).
 
 Three traps, all documented in the companion doc because each pointed the
 wrong way: perturbing the annotation by the *global* residual suggests ±4 SSC
