@@ -81,8 +81,14 @@ def parse_args():
     p.add_argument('--max_frames', type=int, default=0, help='per scene, 0 = all')
     p.add_argument('--out_dir', default=None,
                    help='default: ./outputs/scannet')
-    p.add_argument('--encoder', default='auto', choices=['auto', 'cuda', 'numpy'],
-                   help="TSDF encoder: SSCNet's CUDA kernels or the numpy port (see FrameLoader)")
+    p.add_argument('--encoder', default='auto',
+                   choices=['auto', 'torch', 'cuda', 'numpy'],
+                   help="TSDF encoder (see FrameLoader): 'torch' 116 ms/frame, "
+                        "'cuda' (SSCNet's kernels) 1101, 'numpy' 1026. NOTE "
+                        "'auto' now resolves to torch, not to the kernels; "
+                        'say --encoder cuda to reproduce the published '
+                        'Occ-ScanNet numbers on exactly the path that made '
+                        'them.')
     p.add_argument('--overwrite', action='store_true')
     args, opts = p.parse_known_args()
     if not args.scenes and not args.split:

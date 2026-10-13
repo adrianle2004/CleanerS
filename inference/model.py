@@ -108,15 +108,52 @@ def _build_forward_kwargs(sample, device):
     }
 
 
+def use_amp(device, amp=False):
+    """Whether to run the forward pass in mixed precision.
+
+    `amp` is False/None/'off' (the default -- OFF), True/'on', or 'auto',
+    which means on whenever the model is on a GPU. AMP halves the forward
+    pass (346 -> 201 ms on an RTX 3050 Ti) for about 1 voxel in 500: over all
+    654 NYU test frames it moves SSC mIoU 47.7288 -> 47.7285 and SC 74.9528 ->
+    74.9530, i.e. the fourth decimal.
+
+    Off is the default for the same reason numpy is FrameLoader's default
+    encoder -- the batch tools that produced the published numbers must keep
+    producing them. run_live asks for 'auto'.
+
+    CUDA only, whatever is asked: torch.cpu.amp exists in 1.10 but is
+    bfloat16-only and trips over the same cast that defeats model.half().
+    """
+    if amp is None or amp is False or amp == 'off':
+        return False
+    if amp not in (True, 'on', 'auto'):
+        raise ValueError("amp must be True, False, 'on', 'off' or 'auto', "
+                         'not %r' % (amp,))
+    return torch.device(device).type == 'cuda'
+
+
 @torch.no_grad()
-def predict(model, sample, device):
+def predict(model, sample, device, amp=False):
     """Returns (pred_label, weight): pred_label (60,36,60) int array of argmax
     class indices, weight (60,36,60) our own observed-voxel mask (not from the
     model -- comes straight from sample, same as test_NYU.py pulling
-    label_weight from the loaded data dict rather than the model's output)."""
+    label_weight from the loaded data dict rather than the model's output).
+
+    amp: False (default), True, or 'auto' -- see use_amp. AMP rather than
+    model.half(),
+    because the model cannot run wholly in half: unet3d.py:177 does
+    `(segres == 0).float()`, which forces fp32 back into the middle of the
+    graph and the next conv dies with "Input type (torch.cuda.FloatTensor) and
+    weight type (torch.cuda.HalfTensor) should be the same". autocast picks
+    the dtype per operation instead -- convolutions and matmuls in fp16,
+    reductions and normalisations left in fp32 -- so that cast is a no-op
+    rather than a crash, and the weights stay fp32 throughout.
+    """
     data = _build_forward_kwargs(sample, device)
 
-    pred_3d, _, _, _ = model(**data)          # verified call shape from test_NYU.py
+    with torch.cuda.amp.autocast(enabled=use_amp(device, amp)):
+        pred_3d, _, _, _ = model(**data)      # verified call shape from test_NYU.py
+    pred_3d = pred_3d.float()
     pred_3d = pred_3d.flatten(2).permute(0, 2, 1)   # (B, 12, 60,36,60) -> (B, 129600, 12)
     pred_label = pred_3d[0].argmax(dim=1).view(60, 36, 60).cpu().numpy()
 

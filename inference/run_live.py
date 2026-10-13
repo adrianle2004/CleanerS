@@ -55,13 +55,13 @@ from cleaner.utils import EasyConfig
 
 try:
     from .camera import open_source
-    from .frame_loader import FrameLoader
+    from .frame_loader import FrameLoader, torch_cuda_available
     from . import model as model_mod
     from .visualize import save_prediction_ply
     from .utils import get_device, setup_logging, ensure_dir
 except ImportError:
     from camera import open_source
-    from frame_loader import FrameLoader
+    from frame_loader import FrameLoader, torch_cuda_available
     import model as model_mod
     from visualize import save_prediction_ply
     from utils import get_device, setup_logging, ensure_dir
@@ -117,6 +117,17 @@ def parse_args():
     p.add_argument('--loop', action='store_true', help='replay sources only')
     p.add_argument('--fps', type=float, default=None, help='throttle replay')
 
+    p.add_argument('--encoder', default='auto',
+                   choices=['auto', 'torch', 'numpy', 'cuda'],
+                   help="which arithmetic builds the TSDF, the stage that "
+                        "dominates a frame: 'torch' 116 ms, 'cuda' (SSCNet's "
+                        "kernels) 1101, 'numpy' 1026. 'auto' is torch when a "
+                        'GPU is visible, else numpy. See FrameLoader.')
+    p.add_argument('--amp', default='auto', choices=['auto', 'on', 'off'],
+                   help='mixed precision on the forward pass: 346 -> 201 ms, '
+                        'for 1 voxel in 500 and the fourth decimal of the NYU '
+                        "score. 'auto' is on whenever the model is on a GPU.")
+
     p.add_argument('--out_dir', default='./outputs')
     p.add_argument('--save', default='ply', choices=['ply', 'npy', 'both', 'none'],
                    help="'none' still reports throughput; use it to benchmark")
@@ -158,6 +169,9 @@ def main():
     args, opts = parse_args()
     cfg = load_cfg(args, opts)
     device = get_device()
+    encoder = args.encoder
+    if encoder == 'auto':
+        encoder = 'torch' if torch_cuda_available() else 'numpy'
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
@@ -175,8 +189,9 @@ def main():
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov) as src:
-        log.info('source=%s fov=%s save=%s mask=%s',
-                 args.source, args.fov, args.save, args.mask)
+        log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s',
+                 args.source, args.fov, args.save, args.mask, encoder,
+                 'on' if model_mod.use_amp(device, args.amp) else 'off')
         for frame in src.frames():
             if _STOP:
                 break
@@ -192,7 +207,8 @@ def main():
                 # replay of a dataset frame that carries its own registration
                 loader = FrameLoader(frame.depth, frame.vox_origin,
                                      frame.cam_pose, rgb=frame.rgb,
-                                     cam_K=frame.cam_K)
+                                     cam_K=frame.cam_K, encoder=encoder,
+                                     device=device)
             else:
                 # explicit CLI beats the capture's record, which beats the
                 # default -- so replaying a capture reproduces the
@@ -209,11 +225,13 @@ def main():
                     yaw = 0.0
                 loader = FrameLoader.from_live_camera(
                     frame.depth, rgb=frame.rgb, cam_K=frame.cam_K,
-                    camera_height=height, yaw=yaw)
+                    camera_height=height, yaw=yaw, encoder=encoder,
+                    device=device)
             sample = loader.build_tsdf_and_mapping()
             t1 = time.time()
 
-            pred_label, _ = model_mod.predict(model, sample, device=device)
+            pred_label, _ = model_mod.predict(model, sample, device=device,
+                                              amp=args.amp)
             t2 = time.time()
             enc_s += t1 - t0
             inf_s += t2 - t1

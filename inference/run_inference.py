@@ -107,6 +107,19 @@ def parse_args():
     p.add_argument('--yaw', type=float, default=None,
                     help="override meta.json's yaw (radians)")
 
+    p.add_argument('--encoder', type=str, default='numpy',
+                    choices=['numpy', 'torch', 'cuda', 'auto'],
+                    help="which arithmetic builds the TSDF (see FrameLoader). "
+                         "Defaults to 'numpy', the path the published NYU and "
+                         "room numbers were measured on -- a batch tool should "
+                         "reproduce them byte for byte by default. "
+                         "'--encoder auto --amp on' is ~4x faster and moves "
+                         "the NYU score in the fourth decimal; run_live uses "
+                         "that pair by default instead.")
+    p.add_argument('--amp', type=str, default='off', choices=['auto', 'on', 'off'],
+                    help='mixed precision on the forward pass: 346 -> 201 ms '
+                         'per frame, for 1 voxel in 500. Off by default here '
+                         'for the same reason as --encoder.')
     p.add_argument('--out_dir', type=str, default='./outputs')
     p.add_argument('--overwrite', action='store_true',
                    help='redo frames that already have a prediction; without '
@@ -192,13 +205,14 @@ def build_vis_mask(sample, frame_name, mode, tsdf_dir):
 
 
 def process_one_frame(bin_path, png_path, rgb_path, model, device, pred_dir, ply_dir,
-                      mask_mode='auto', tsdf_dir=None):
+                      mask_mode='auto', tsdf_dir=None, encoder='numpy', amp=False):
     frame_name = os.path.splitext(os.path.basename(bin_path))[0]
 
-    loader = FrameLoader.from_nyu_bin(bin_path, png_path, rgb_path=rgb_path)
+    loader = FrameLoader.from_nyu_bin(bin_path, png_path, rgb_path=rgb_path,
+                                      encoder=encoder, device=device)
     sample = loader.build_tsdf_and_mapping()
 
-    pred_label, _ = model_mod.predict(model, sample, device=device)
+    pred_label, _ = model_mod.predict(model, sample, device=device, amp=amp)
     mask, used = build_vis_mask(sample, frame_name, mask_mode, tsdf_dir)
 
     np.save(os.path.join(pred_dir, f'{frame_name}.npy'), pred_label)
@@ -245,7 +259,8 @@ def resolve_frame_camera(meta, stem, args):
 
 def process_one_live_frame(depth_path, rgb_path, cam_K, camera_height, yaw,
                             model, device, pred_dir, ply_dir, mask_mode,
-                            up_camera=None, extra=None):
+                            up_camera=None, extra=None, encoder='numpy',
+                            amp=False):
     frame_name = os.path.splitext(os.path.basename(depth_path))[0]
 
     raw = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -266,10 +281,10 @@ def process_one_live_frame(depth_path, rgb_path, cam_K, camera_height, yaw,
     loader = FrameLoader.from_live_camera(
         depth, rgb=rgb.astype(np.float32), cam_K=cam_K,
         camera_height=camera_height, yaw=yaw, up_camera=up_camera,
-        **(extra or {}))
+        encoder=encoder, device=device, **(extra or {}))
     sample = loader.build_tsdf_and_mapping()
 
-    pred_label, _ = model_mod.predict(model, sample, device=device)
+    pred_label, _ = model_mod.predict(model, sample, device=device, amp=amp)
     # no ground truth for a live frame, so label_weight/auto cannot apply
     mask, used = build_vis_mask(sample, frame_name,
                                 'surface' if mask_mode in ('auto', 'label_weight')
@@ -333,7 +348,8 @@ def main():
                       f'per point')
             process_one_live_frame(dp, rp, cam_K, camera_height, yaw, model,
                                     device, pred_dir, ply_dir, args.mask,
-                                    up_camera, extra)
+                                    up_camera, extra, encoder=args.encoder,
+                                    amp=args.amp)
 
     elif args.data_dir is not None:
         # ---- Batch mode: every matched .bin/.png pair in the folder ----
@@ -354,7 +370,8 @@ def main():
                 rgb_path = candidate
             try:
                 process_one_frame(bin_path, png_path, rgb_path, model, device, pred_dir, ply_dir,
-                                  mask_mode=args.mask, tsdf_dir=args.tsdf_dir)
+                                  mask_mode=args.mask, tsdf_dir=args.tsdf_dir,
+                                  encoder=args.encoder, amp=args.amp)
                 succeeded.append(frame_id)
             except Exception as e:
                 logging.warning(f'[{frame_id}] failed, skipping: {e}')
@@ -366,7 +383,8 @@ def main():
     else:
         # ---- Single-pair mode ----
         process_one_frame(args.bin_path, args.png_path, args.rgb_path, model, device, pred_dir, ply_dir,
-                          mask_mode=args.mask, tsdf_dir=args.tsdf_dir)
+                          mask_mode=args.mask, tsdf_dir=args.tsdf_dir,
+                          encoder=args.encoder, amp=args.amp)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
   - [`camera.py`](#camerapy--frame-sources)
   - [`capture.py`](#capturepy--capture-to-disk)
   - [`frame_loader.py`](#frame_loaderpy--geometry-encoder)
+  - [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode)
   - [`model.py`](#modelpy--checkpoint-loading-and-forward-pass)
   - [`visualize.py`](#visualizepy--voxels--ply)
   - [`run_inference.py`](#run_inferencepy--batch--single-frame-runner)
@@ -55,6 +56,8 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
 - [GEOMETRY.md](GEOMETRY.md) — the math: min-Z, align, undistort, FOV match
 - [OCCLUSION.md](OCCLUSION.md) — what the model does behind what it cannot see
 - [EVALUATION_SCANNET.md](EVALUATION_SCANNET.md) — zero-shot transfer to Occ-ScanNet val, against ISO/MonoScene, and what the scoring protocol does to the numbers
+- [HARDWARE.md](HARDWARE.md) — what a frame costs on what: the per-stage timings, the VRAM floor, the minimum card, and the CPU-only case
+- [CONCEPTS.md](CONCEPTS.md) — the terms HARDWARE.md uses, explained from the code: why the truncation is 12 voxels, what a 1-D pass of the distance transform actually does, what slabbing and projection are, and what fp16 and AMP are
 - [What to notice](#what-to-notice)
 - [Verified device numbers](#verified-device-numbers)
 - [Documentation drift](#documentation-drift)
@@ -450,18 +453,33 @@ IMG_H, IMG_W     = 480, 640
 MAPPING_SENTINEL = 307200                # == IMG_H * IMG_W
 ```
 
-#### `FrameLoader(depth, vox_origin, cam_pose, rgb=None, cam_K=None, drop_invalid_depth=False, encoder='numpy')`
+#### `FrameLoader(depth, vox_origin, cam_pose, rgb=None, cam_K=None, drop_invalid_depth=False, encoder='numpy', device=None)`
 
-`encoder='cuda'` runs SSCNet's own `depth2Grid__` + `SquaredDistanceTransform__`
-from `data/utils/datautil.cu` instead of `_build_high_res_tsdf`; `'auto'` uses
-it when `DataProcess` imports and falls back to numpy. The library is preloaded
+Four encoders, agreeing to within a handful of boundary voxels and differing
+by an order of magnitude in speed. Per frame on the dev box:
+
+| `encoder` | ms | what it is |
+| --- | ---: | --- |
+| `'numpy'` | 1026 | scipy's exact transform on the CPU — **the default** |
+| `'cuda'` | 1101 | SSCNet's `datautil.cu` kernels; raises if unimportable |
+| `'torch'` | **116** | [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) |
+| `'auto'` | | `'torch'` with a CUDA card, else `'numpy'` |
+
+`device` is for `'torch'` only. Numpy stays the constructor default so the
+NYU-validated path is what anything unaware of the flag keeps getting;
+`run_live` asks for `'auto'`, `run_inference` for `'numpy'`.
+[HARDWARE.md](HARDWARE.md) has the per-stage breakdown and the VRAM floors.
+
+`'cuda'` runs SSCNet's own `depth2Grid__` + `SquaredDistanceTransform__`
+instead of `_build_high_res_tsdf`. The library is preloaded
 by absolute path and the call briefly `chdir`s into `data/utils/`, because the
 extension `dlopen`s `./build/libdatautil.so`. Checked on ScanNet frames: the
 mapping is identical, 0–247 of 8.29 M high-res voxels differ (surface voxels on
 a voxel boundary, float32 vs float64), and the low-res TSDF differs by at most
 0.019. The kernel returns no observed mask, so `weight` is rebuilt as
-`tsdf != 0 | surface` (agrees with numpy on ≥ 99.99% of low-res voxels).
-Numpy stays the default so the NYU-validated path is unchanged.
+`tsdf != 0 | surface` (agrees with numpy on ≥ 99.99% of low-res voxels). It is
+**not** the fast path — its transform brute-forces ~15,600 candidates per
+voxel, which scipy beats on a CPU.
 
 `drop_invalid_depth` excludes `depth <= 0` pixels from the surface stamp. Leave
 `False` to reproduce the NYU reference exactly; set `True` for live sensors.
@@ -473,13 +491,17 @@ floor-anchored live grid *contains* it (verified at high-res voxel
 `x=0, y=65, z=120`, in bounds on all three axes), and a D455 reports 0 for
 every out-of-range or low-confidence pixel, so the blob would be permanent.
 
-#### `from_nyu_bin(bin_path, png_path, rgb_path=None)` (classmethod)
+#### `from_nyu_bin(bin_path, png_path, rgb_path=None, encoder='numpy', device=None)` (classmethod)
 
 Reads the header for `vox_origin`/`cam_pose`, decodes depth with the NYU
 rotation. `cv2.imread` fails silently by returning `None`, so the RGB load is
 explicitly checked.
 
-#### `from_live_camera(depth, rgb=None, cam_pose=None, vox_origin=None, cam_K=None, camera_height=1.25, yaw=0.0, drop_invalid_depth=True)` (classmethod)
+#### `from_live_camera(depth, rgb=None, cam_pose=None, vox_origin=None, cam_K=None, camera_height=1.25, yaw=0.0, drop_invalid_depth=True, up_camera=None, cam_K_color=None, color_from_depth=None, encoder='auto', device=None)` (classmethod)
+
+Note the default: `encoder='auto'`, unlike the constructor's `'numpy'`. A live
+frame has no reference to reproduce, so this path takes the fast encoder
+whenever there is a card to run it on.
 
 Builds a **gravity-aligned, floor-anchored** grid in NYU's convention when
 `cam_pose` is not supplied:
@@ -515,9 +537,23 @@ The public entry point. Builds the high-res TSDF, block-mean downsamples it,
 thresholds the weight at 0.5, builds the low-res mapping, and inverts that
 mapping into `mapping2d`.
 
+With `encoder='torch'` the first two steps are fused — `_build_low_res_tsdf_torch`
+returns 60×36×60 directly, because the slabbing that keeps its peak at 97 MB
+reduces each z-slab on the spot. The `>= 0.5` weight threshold and everything
+downstream are identical either way.
+
+#### `_build_low_res_tsdf_torch() -> (tsdf_low, weight_mean)`
+
+Delegates to `tsdf_torch.encode_low`, passing `self.device`. Returns the
+low-res pair, `weight_mean` still unthresholded so the caller applies the same
+`>= 0.5` the numpy path applies.
+
 #### `_build_high_res_tsdf() -> (tsdf, weight)`
 
-**This is the 915 ms bottleneck.** Steps:
+**The reference encoder, and the slow one: ~1.0 s of a 1.33 s frame.** It is
+kept as the default and as the thing every other encoder is checked against;
+[`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) is the same steps in
+torch at 110 ms. Steps:
 
 1. Unproject every pixel to camera coordinates, transform to world by
    `point_cam @ R.T + t`, and stamp an occupancy grid. Axis assignment is
@@ -556,6 +592,80 @@ only ~30% of voxels. This array drives the model's 2D→3D feature reprojection.
 
 `float32` throughout, matching the CUDA kernel. Many pixels can fall in one
 voxel; numpy keeps the last write, which matches the reference.
+
+---
+
+### `tsdf_torch.py` — the fast TSDF encode
+
+`FrameLoader(encoder='torch')`. The same geometry as `_build_high_res_tsdf`,
+line for line; only the arithmetic moves. 116 ms against numpy's 1026 and the
+CUDA extension's 1101 — 110 ms of it the encode proper, 9 ms the two mapping
+tables, which stay in numpy on both paths.
+
+#### Why it is faster than both
+
+The only non-elementwise part of the encode is the distance transform, and it
+is **truncated** at `VOX_MARGIN / VOX_UNIT_HI` = 12 voxels
+(`refined = min(d/12, 1)`). Nothing outside the 25³ box around a voxel can
+change its value — and squared Euclidean distance over a bounded box is
+**separable**, being `dx² + dy² + dz²`, a sum of independent terms. So the
+minimum over the box is three 1-D minimisations of `f[i-d] + d²`, `|d| ≤ 12`,
+along z then y then x:
+
+```
+start        0    ∞    ∞    ∞          surface voxel at the left
+one pass     0    1    4    9          each cell: min over d of (f[i-d] + d²)
+√            0    1    2    3          distance, in voxels
+```
+
+75 whole-array shifted minima replace, per voxel, either SSCNet's brute force
+over all ~15,600 candidates in that same box, or scipy's exact unbounded
+transform on the CPU. The result is exact, not an approximation.
+
+#### `encode_low(depth, cam_K, cam_pose, vox_origin, drop_invalid_depth=True, device=None, slab=24, edt_dtype=None)`
+
+Returns `(tsdf_low, weight_low)`, both (60,36,60) float32 numpy. `weight_low`
+is the block **mean** of the high-res observed mask, left unthresholded so the
+caller applies the same `>= 0.5` the numpy path does. Order is preserved where
+it matters: unobserved voxels are zeroed at **high** resolution, before the
+4×4×4 block mean, so boundary blocks keep their fractional values.
+
+| argument | default | |
+| --- | --- | --- |
+| `device` | cuda if available | the encoder runs on CPU too, ~1.2× numpy |
+| `slab` | 24 | z-layers per projection pass; must divide by 4 |
+| `edt_dtype` | fp16 on cuda, fp32 on cpu | the transform's precision |
+
+**`slab`** — the projection stage is independent per voxel, so it runs a z-slab
+at a time and each slab is block-meaned straight into the result. The high-res
+TSDF is never held whole. Only the distance field must be, since the transform
+reaches ±12 voxels across slab boundaries: that is the floor, one
+240×144×240 array plus one 1-D pass's temporaries. Peak 779 → 97 MB
+(measured with nothing else resident), bit-identical, same speed.
+
+**`edt_dtype`** — fp16 is **exact** here, not a trade. Every value in the
+transform is a whole number ≤ 3·12² = 432, and fp16 holds every integer to 2048
+exactly; verified bit-identical over the NYU test set. Only the sentinel
+changes, since 1e9 overflows half — `BIG_F16 = 60000.0`, still unreachable by
+any real squared distance. fp32 on CPU because there are no half kernels there.
+
+#### `_edt1d(f, axis, big)`
+
+One 1-D pass: 25 `torch.roll` shifts and a running `minimum`. `roll` wraps, so
+the `d` cells that came round from the far face are blanked to the sentinel —
+without that the grid would be a torus and a surface at `z=0` would cast
+distance into `z=239`.
+
+#### `available()`
+
+`torch.cuda.is_available()` — what `encoder='auto'` turns on.
+
+#### Agreement
+
+Slabbing and fp16 are bit-identical to the unslabbed fp32 torch encode.
+Torch-vs-numpy carries one difference, float32 against scipy's float64, worth
+2,047 of 84.76 M low-res voxels (0.0024%, max 0.068). On all 654 NYU test
+frames: SSC mIoU 47.7285 / SC 74.9530, against numpy's 47.7285 / 74.9528.
 
 ---
 
@@ -600,13 +710,37 @@ These are confirmed safe, not assumed: `TSDFNet.forward(self, tsdf)`,
 `Unet3d.forward(self, feature2d, mapping2d, tsdf_feat=None)` reference none of
 them. Only `img`, `tsdf` and `mapping2d` drive the computation graph.
 
-#### `predict(model, sample, device) -> (pred_label, weight)`
+#### `use_amp(device, amp=False) -> bool`
 
-Decorated `@torch.no_grad()`. Calls `pred_3d, _, _, _ = model(**data)`, then
+Whether the forward pass runs in mixed precision. `amp` is `False`/`None`/
+`'off'` (**the default — off**), `True`/`'on'`, or `'auto'`, which means on
+whenever the model is on a CUDA device. CUDA only whatever is asked:
+`torch.cpu.amp` exists in 1.10 but is bfloat16-only and hits the same cast
+described below.
+
+Off by default for the same reason `numpy` is `FrameLoader`'s default encoder —
+`sweep_eval.py`, `nyu_occlusion_sweep.py` and `run_scannet.py` all call
+`predict` and must keep producing the numbers already published. `run_live`
+asks for `'auto'`.
+
+#### `predict(model, sample, device, amp=False) -> (pred_label, weight)`
+
+Decorated `@torch.no_grad()`. Calls `pred_3d, _, _, _ = model(**data)` inside
+`torch.cuda.amp.autocast(enabled=use_amp(device, amp))`, then
 `flatten(2).permute(0,2,1)` → `(B, 129600, 12)` → argmax → `(60,36,60)` int.
 
 `weight` is returned from `sample`, **not** from the model — same as
 `test_NYU.py` pulling `label_weight` from the data dict rather than the output.
+
+AMP halves the forward pass, 346 → 201 ms, and moves the NYU score in the
+fourth decimal (47.7288 → 47.7285 SSC mIoU). It has to be `autocast` and not
+`model.half()`: `unet3d.py:177` does `(segres == 0).float()`, which forces fp32
+back into the middle of a half graph, and the next convolution dies with
+*Input type (torch.cuda.FloatTensor) and weight type (torch.cuda.HalfTensor)
+should be the same*. `autocast` chooses per operation — convolutions and
+matmuls in fp16, reductions and normalisations left in fp32 — so that cast is a
+no-op instead of a crash, and the weights stay fp32 throughout. The output is
+cast back to float before the argmax.
 
 ---
 
@@ -662,6 +796,16 @@ Three mutually exclusive modes, validated in `parse_args`.
 
 Plus `--cfg`, `--pretrained_path` (required), `--out_dir`, `--mask`,
 `--tsdf_dir`. Unknown args pass through as `opts` for `cfg.update`.
+
+| flag | default | notes |
+| --- | --- | --- |
+| `--encoder {numpy,torch,cuda,auto}` | `numpy` | the TSDF arithmetic |
+| `--amp {auto,on,off}` | `off` | mixed precision on the forward pass |
+
+Both default to the slow, reproducible path **on purpose**: this is the tool
+that produced the published NYU and room numbers, and its output is compared
+byte for byte against `custom_visual_pred/`. `--encoder auto --amp on` is ~4×
+faster and costs the fourth decimal.
 
 #### `load_cfg(args, opts)`
 
@@ -743,8 +887,15 @@ and closes the sensor cleanly.
 | `--rgb_dir`, `--loop`, `--fps` | | replay sources only |
 | `--save {ply,npy,both,none}` | `ply` | `none` still reports throughput — use it to benchmark |
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
+| `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
+| `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
 | `--max_frames` | 0 (unlimited) | |
 | `--log_every` | 30 | |
+
+The two speed flags default to the fast path here, the opposite of
+`run_inference`: 0.71 → 2.88 fps replaying room07, 0.67 → 2.80 on NYU. Both
+resolve to the old behaviour on a machine with no CUDA card, so nothing gets
+slower anywhere. `--encoder numpy --amp off` is the old path exactly.
 
 #### `build_mask(sample, mode)`
 
@@ -761,9 +912,13 @@ Installs the signal handlers, loads the model, restores logging, then iterates
 - **`None`** → live; resolve height and yaw by **CLI → frame → default**, then
   `from_live_camera`.
 
+`--encoder auto` and `--amp auto` are resolved once before the loop and logged
+on the `source=` line, so a run states which path it actually took.
+
 Encode and inference time are accumulated separately and reported as
-`encode N ms | infer N ms`, which is how the 915 ms encode bottleneck was
-identified.
+`encode N ms | infer N ms`, which is how the encode bottleneck was identified.
+Both stages end in a `.cpu()` copy, which synchronises, so the split is honest
+and not an artefact of CUDA's asynchrony.
 
 ---
 
@@ -1782,11 +1937,16 @@ trusts them in the meantime.
 
 ## Open items
 
-- **Encoding costs 915 ms/frame** vs 576 ms for the network with the numpy
-  encoder. `FrameLoader(encoder='cuda')` now uses the compiled
-  `data/utils/datautil.cu` kernels (285 ms alone, ~0.45 s for a whole frame
-  encode on ScanNet, identical mapping, TSDF within 0.019). Not yet wired into
-  `run_inference.py` / `run_live.py`, which still default to numpy.
+- ~~Encoding costs 915 ms/frame~~ **done.** `FrameLoader(encoder='torch')`
+  does it in 116 ms and `run_live` defaults to it on any machine with a CUDA
+  card: 0.75 → 3.16 fps for the whole pipeline. The `'cuda'` extension turned
+  out **not** to be the fast path (1101 ms, not the 285 recorded here — that
+  figure does not reproduce). `run_inference` still defaults to numpy on
+  purpose. See [HARDWARE.md](HARDWARE.md).
+- **The model forward is now the floor**, 201 ms of a 317 ms frame, and it is
+  not addressable here: fixed-size 3D convolutions, nothing reusable between
+  independent single-shot completions. Past ~0.29 s needs TensorRT/ONNX, a
+  faster card, or a world-fixed volume — which needs the localisation below.
 - IMU gravity alignment — hardware confirmed present, not wired in.
 - The volume is camera-fixed, so frames are independent completions rather than
   an accumulating reconstruction. That needs SLAM driving `cam_pose`.

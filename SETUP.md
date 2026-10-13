@@ -90,8 +90,17 @@ directory (`cleaner/utils/paths.py`).
 
 ## 5. Optional: the CUDA TSDF encoder
 
-`inference.frame_loader.FrameLoader(encoder='cuda')` is ~4.5x faster than the numpy
-encoder (285 vs 1317 ms/frame). The prebuilt `data/utils/DataProcess*.so` and
+**You probably do not need this.** The fast encoder is
+`FrameLoader(encoder='torch')` -- 116 ms/frame against numpy's 1026 -- and it
+needs nothing beyond torch, so it works on any machine with an NVIDIA card.
+`run_live` already uses it by default; see
+[inference/document/HARDWARE.md](inference/document/HARDWARE.md).
+
+This section is about SSCNet's own `datautil.cu` kernels,
+`FrameLoader(encoder='cuda')`, which are kept for comparison and measure
+**1101 ms/frame** here -- slower than scipy, because the transform brute-forces
+~15,600 candidates per voxel. (An earlier note in this file claimed 285 ms;
+that does not reproduce.) The prebuilt `data/utils/DataProcess*.so` and
 `data/utils/build/libdatautil.so` come down with the data and work as-is on a
 machine like the one above. Check:
 
@@ -100,7 +109,9 @@ python -c "from inference.frame_loader import load_cuda_encoder as l; print(l())
 # <module 'DataProcess' ...>   -> usable;   None -> rebuild
 ```
 
-`encoder='auto'` falls back to numpy on its own, so this only matters for speed.
+`encoder='auto'` resolves to `'torch'` whenever a CUDA card is visible and to
+`'numpy'` otherwise, so it never picks this path; ask for `encoder='cuda'` by
+name.
 To rebuild (needs a system CUDA toolkit and gcc-12; `CMakeLists.txt` hardcodes
 `/usr/bin/gcc-12`):
 

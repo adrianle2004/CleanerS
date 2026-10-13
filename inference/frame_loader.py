@@ -73,6 +73,18 @@ def load_cuda_encoder():
     return _dataprocess or None
 
 
+def torch_cuda_available():
+    """Whether encoder='torch' has a GPU to run on -- what 'auto' turns on.
+
+    It also runs on the CPU, ~1.3x faster than numpy, but the gain there is
+    not worth changing anyone's default for; ask for it by name."""
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
+
+
 def live_cam_pose(camera_height, yaw=0.0, up_camera=None):
     """Camera-to-world in NYU's gravity-aligned, floor-anchored convention.
 
@@ -150,7 +162,7 @@ def cam_pose_from_meta(meta, stem=None):
 
 class FrameLoader:
     def __init__(self, depth, vox_origin, cam_pose, rgb=None, cam_K=None,
-                 drop_invalid_depth=False, encoder='numpy',
+                 drop_invalid_depth=False, encoder='numpy', device=None,
                  cam_K_color=None, color_from_depth=None):
         """drop_invalid_depth: exclude depth<=0 pixels from the surface stamp.
 
@@ -162,11 +174,33 @@ class FrameLoader:
         a floor-anchored live grid contains it, and a D455 reports 0 for every
         out-of-range or low-confidence pixel, so the blob would be permanent.
 
-        encoder: 'numpy' (validated against the NYU reference), 'cuda'
-        (SSCNet's datautil.cu kernels; raises if unavailable) or 'auto'
-        (cuda when importable, else numpy). On ScanNet frames the two differ on
-        0-247 of 8.29 M high-res voxels -- surface voxels on a voxel boundary,
-        float32 vs float64 -- and by at most 0.019 after the 4x block mean.
+        encoder: which arithmetic builds the TSDF. All four agree to within
+        a handful of boundary voxels; they differ by an order of magnitude in
+        speed. Measured per frame on an RTX 3050 Ti laptop:
+
+            'numpy'  1026 ms  scipy's exact transform on the CPU. The path
+                              validated against the NYU reference, and the
+                              default -- nothing that reproduces a published
+                              number changes unless it is asked to.
+            'cuda'   1101 ms  SSCNet's own datautil.cu kernels. Raises if
+                              DataProcess is not importable. NOT the fast
+                              path: its transform brute-forces ~15,600
+                              candidates per voxel.
+            'torch'    110 ms  inference/tsdf_torch.py -- the same transform
+                              done separably, 3 x 25 whole-array passes.
+                              Needs torch; uses the GPU when there is one.
+            'auto'             'torch' when a CUDA GPU is visible, else
+                              'numpy'.
+
+        On ScanNet frames 'cuda' differs from 'numpy' on 0-247 of 8.29 M
+        high-res voxels -- surface voxels on a voxel boundary, float32 vs
+        float64 -- and by at most 0.019 after the 4x block mean. 'torch'
+        carries the same float32-vs-float64 difference and nothing else: over
+        all 654 NYU test frames it scores SSC mIoU 47.7285 / SC 74.9530
+        against 'numpy' 47.7285 / 74.9528. document/HARDWARE.md has the
+        per-stage timings and the VRAM floor.
+
+        device: for encoder='torch' only; defaults to cuda when available.
         """
         self.depth = depth
         self.vox_origin = vox_origin.astype(np.float32)
@@ -181,17 +215,21 @@ class FrameLoader:
         self.color_from_depth = (np.asarray(color_from_depth, np.float64)
                                  if color_from_depth is not None else None)
         self.drop_invalid_depth = drop_invalid_depth
-        if encoder not in ('numpy', 'cuda', 'auto'):
-            raise ValueError('encoder must be numpy, cuda or auto, not %r' % encoder)
-        if encoder != 'numpy' and load_cuda_encoder() is None:
-            if encoder == 'cuda':
-                raise ImportError('DataProcess CUDA encoder not importable from %s' % CUDA_UTILS_DIR)
-            encoder = 'numpy'
-        self.encoder = encoder if encoder != 'auto' else 'cuda'
+        if encoder not in ('numpy', 'torch', 'cuda', 'auto'):
+            raise ValueError('encoder must be numpy, torch, cuda or auto, '
+                             'not %r' % encoder)
+        if encoder == 'auto':
+            encoder = 'torch' if torch_cuda_available() else 'numpy'
+        if encoder == 'cuda' and load_cuda_encoder() is None:
+            raise ImportError('DataProcess CUDA encoder not importable from %s'
+                              % CUDA_UTILS_DIR)
+        self.encoder = encoder
+        self.device = device
 
     # -- constructors --
     @classmethod
-    def from_nyu_bin(cls, bin_path, png_path, rgb_path=None):
+    def from_nyu_bin(cls, bin_path, png_path, rgb_path=None,
+                     encoder='numpy', device=None):
         vox_origin, cam_pose = cls._load_bin_header(bin_path)
         depth = cls._load_depth(png_path)
         rgb = None
@@ -204,13 +242,15 @@ class FrameLoader:
                     f"(cv2.imread fails silently instead of raising, hence this check.)"
                 )
             rgb = rgb.astype(np.float32)
-        return cls(depth, vox_origin, cam_pose, rgb=rgb)
+        return cls(depth, vox_origin, cam_pose, rgb=rgb, encoder=encoder,
+                   device=device)
 
     @classmethod
     def from_live_camera(cls, depth, rgb=None, cam_pose=None, vox_origin=None,
                          cam_K=None, camera_height=1.25, yaw=0.0,
                          drop_invalid_depth=True, up_camera=None,
-                         cam_K_color=None, color_from_depth=None):
+                         cam_K_color=None, color_from_depth=None,
+                         encoder='auto', device=None):
         """depth: (480,640) float32 array in METRES, already decoded (no
         bit-shift -- that trick is specific to NYU's raw Kinect PNG encoding).
 
@@ -247,7 +287,8 @@ class FrameLoader:
             vox_origin = np.array([-2.4, 0.0, -0.05], dtype=np.float32)
         return cls(depth, vox_origin, cam_pose, rgb=rgb, cam_K=cam_K,
                    cam_K_color=cam_K_color, color_from_depth=color_from_depth,
-                   drop_invalid_depth=drop_invalid_depth)
+                   drop_invalid_depth=drop_invalid_depth,
+                   encoder=encoder, device=device)
 
     @staticmethod
     def _load_bin_header(bin_path):
@@ -264,12 +305,18 @@ class FrameLoader:
 
     # -- geometry pipeline (validated) --
     def build_tsdf_and_mapping(self):
-        if self.encoder == 'cuda':
-            tsdf_hi, weight_hi = self._build_high_res_tsdf_cuda()
+        if self.encoder == 'torch':
+            # already 60x36x60: the high-res volume is block-meaned a z-slab
+            # at a time and never held whole
+            tsdf_low, weight_mean = self._build_low_res_tsdf_torch()
+            weight_low = (weight_mean >= 0.5).astype(np.float32)
         else:
-            tsdf_hi, weight_hi = self._build_high_res_tsdf()
-        tsdf_low = self._downsample_block_mean(tsdf_hi).astype(np.float32)
-        weight_low = (self._downsample_block_mean(weight_hi) >= 0.5).astype(np.float32)
+            if self.encoder == 'cuda':
+                tsdf_hi, weight_hi = self._build_high_res_tsdf_cuda()
+            else:
+                tsdf_hi, weight_hi = self._build_high_res_tsdf()
+            tsdf_low = self._downsample_block_mean(tsdf_hi).astype(np.float32)
+            weight_low = (self._downsample_block_mean(weight_hi) >= 0.5).astype(np.float32)
         mapping_low = self._build_low_res_mapping()
 
         mapping2d = self._build_mapping2d(mapping_low)
@@ -465,6 +512,22 @@ class FrameLoader:
         weight = ((tsdf != 0) | occ).astype(np.float32)
         shape = (VOX_SIZE_HI[2], VOX_SIZE_HI[1], VOX_SIZE_HI[0])
         return tsdf.reshape(shape), weight.reshape(shape)
+
+    def _build_low_res_tsdf_torch(self):
+        """_build_high_res_tsdf + the block mean, in torch. 116 ms vs 1026.
+
+        Returns the low-res pair directly, because the two stages are fused:
+        the projection runs a z-slab at a time and each slab is reduced on the
+        spot, which is what keeps the peak at 97 MB instead of 779. The
+        transform is the same truncated squared EDT, computed separably --
+        inference/tsdf_torch.py explains why that is exact."""
+        try:
+            from . import tsdf_torch
+        except ImportError:
+            import tsdf_torch
+        return tsdf_torch.encode_low(
+            self.depth, self.cam_K, self.cam_pose, self.vox_origin,
+            drop_invalid_depth=self.drop_invalid_depth, device=self.device)
 
     @staticmethod
     def _downsample_block_mean(vol, r=SAMPLE_RATIO):
