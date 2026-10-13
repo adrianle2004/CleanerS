@@ -7,6 +7,7 @@ and cannot be used for.
 
 Everything here is reproducible from the repo. Each section names the command.
 
+- Everything analysed, on one page: [RECAP_ANALYSING.md](RECAP_ANALYSING.md)
 - How the ground truth is made: [MAKING_GT.md](MAKING_GT.md)
 - The tool reference: [README.md](README.md), [BOX_EDITOR.md](BOX_EDITOR.md)
 - How to use the model that came out of it:

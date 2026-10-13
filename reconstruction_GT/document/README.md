@@ -4,6 +4,7 @@ Record a room, annotate it, score CleanerS on it. Every step has a command.
 
 - **Why any of it works this way:** [MAKING_GT.md](MAKING_GT.md)
 - **Every key in the annotation tool:** [BOX_EDITOR.md](BOX_EDITOR.md)
+- **Everything analysed, on one page:** [RECAP_ANALYSING.md](RECAP_ANALYSING.md)
 - **What it all established — the write-up:** [FINDINGS.md](FINDINGS.md)
 - **How far the poses can be trusted:** [DRIFT_AND_ALIGNMENT.md](DRIFT_AND_ALIGNMENT.md)
 
