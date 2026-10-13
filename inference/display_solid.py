@@ -14,6 +14,7 @@ per-class colour -- which is what makes one chair distinguishable from the next.
     python inference/display_solid.py visual_pred/CleanerS/NYU0015.ply
     python inference/display_solid.py <ply> --colour class        # flat labels
     python inference/display_solid.py <ply> --visibility points   # strict
+    python inference/display_solid.py <ply> --visibility all       # everything
     python inference/display_solid.py <ply> --screenshot out.png
 
 Hover the cursor over the geometry: the voxel under it is outlined in yellow
@@ -34,7 +35,8 @@ Defaults are marked (*); each is a --flag, and C cycles the second one live.
 1. --visibility  WHERE A VOXEL'S COLOUR COMES FROM  (see photo_colours)
 
    Which measured points belong to a given cube. Two rules that differ by a
-   single number, plus a fallback for having no depth frame at all.
+   single number, a fallback for having no depth frame at all, and the three
+   of them stacked.
 
    points(*)  Unproject every valid depth pixel and give each voxel the mean
               colour of the points INSIDE it. All in 3D -- no projection, no
@@ -91,9 +93,26 @@ Defaults are marked (*); each is a --flag, and C cycles the second one live.
               apart in depth, the nearest wins every pixel, and the rest fall
               back to the flat class colour.
 
-   The readout distinguishes the two: "measured inside this voxel" vs
-   "measured just outside it (within --reach)", and says "hidden -- colour
-   inferred" for the ones neither could reach.
+   all        All three, in that order, each voxel taking its colour from the
+              first rule that reaches it -- so every voxel `points` could
+              colour keeps the colour `points` gave it, from its own
+              measurements alone, and the later stages only fill in around it.
+
+              The photo stage is NOT plain `zbuffer`. A pixel counts for a
+              voxel only if the depth there agrees with the voxel's own range
+              to within --agree, or there is no depth there at all -- dropout,
+              where the photo is the only evidence and nothing contradicts it.
+              Ungated, 88% of the voxels the z-buffer adds here own pixels
+              whose depth is over 0.2 m away, a median of 1.41 m IN FRONT of
+              them: the colour of the foreground object. Held out against
+              voxels whose own colour is known, the gate wins on all 8 frames
+              measured, 0.8-7.8 of 255 against 0.9-10.8, and still lifts
+              coverage from 14.4-66.1% to 17.8-68.8%. See photo_from_image.
+
+   The readout names whichever rule the voxel under the cursor was coloured
+   by: "measured inside this voxel", "measured just outside it (within
+   --reach)", "read from the photo (no depth there to disagree)", or "hidden
+   -- colour inferred" for the ones nothing reached.
 
 2. --colour / the C key   WHICH PALETTE IS DRAWN
 
@@ -151,8 +170,9 @@ Both use the same vox_origin / cam_pose / cam_K the frame went through on the
 way IN (frame_loader.py). Nothing here is estimated: the pose comes from the
 .bin header for NYU frames and from the capture's own meta.json (camera_height,
 yaw, cam_K) for live ones, and the file refuses to guess if it can't find them.
---visibility surface and points additionally need the frame's depth, found the
-same way; zbuffer is the one rule that works from the colour image alone.
+--visibility points, surface and all additionally need the frame's depth,
+found the same way; zbuffer is the one rule that works from the colour image
+alone.
 """
 
 import argparse
@@ -174,6 +194,24 @@ COLOR_TO_CLASS = {tuple(int(c) for c in rgb): (i, CLASS_NAMES[i])
 
 VOX_UNIT = 0.08          # low-res voxel edge, metres (0.02 * 4)
 GRID = (60, 36, 60)      # ply x, ply y, ply z
+
+# --visibility all, third stage: how far the depth frame may disagree with a
+# voxel's own range before the pixel it is front-most on is thrown out. One
+# voxel; see photo_from_image for what it is protecting against.
+IMAGE_AGREE = 0.08
+
+# Where a voxel's colour came from. --visibility all is the only rule that can
+# produce more than one of these in a frame, and the readout names whichever
+# one the voxel under the cursor got.
+SRC_NONE, SRC_INSIDE, SRC_REACH, SRC_IMAGE, SRC_IMAGE_FAR = 0, 1, 2, 3, 4
+SOURCE_TEXT = {
+    SRC_NONE: 'hidden -- colour inferred',
+    SRC_INSIDE: 'measured inside this voxel',
+    SRC_REACH: 'measured just outside it (within --reach)',
+    SRC_IMAGE: 'read from the photo (no depth there to disagree)',
+    SRC_IMAGE_FAR: 'read from the photo (the depth there measures something '
+                   'else)',
+}
 
 
 # ------------------------------------------------------------------ ply input
@@ -413,14 +451,18 @@ def photo_from_points(idx, vox_origin, cam_pose, cam_K, image, depth,
 
 
 def photo_colours(idx, vox_origin, cam_pose, cam_K, image, depth,
-                  mode='points', reach=0.75):
+                  mode='points', reach=0.75, agree=IMAGE_AGREE, strict=False):
     """Colour the voxels from the frame, and say how well each one is known.
 
-    Returns (colours, visible, measured). `measured` is the strict statement --
-    a measured point lies inside this voxel; `visible` also includes voxels the
-    surface merely passes close to.
+    Returns (colours, visible, measured, source). `measured` is the strict
+    statement -- a measured point lies inside this voxel; `visible` also
+    includes voxels the surface merely passes close to, or that only the photo
+    reaches. `source` is the per-voxel SRC_* code saying which rule actually
+    supplied the colour, which is the only honest readout once more than one
+    rule is in play.
 
-    Two rules, plus a fallback for when there is no depth frame:
+    Three rules and a combination of them, plus a fallback for when there is
+    no depth frame:
 
     points   the measured points inside the voxel itself (reach 0.5). Exact,
              parameter-free, and the right answer to "did the camera see this
@@ -463,46 +505,95 @@ def photo_colours(idx, vox_origin, cam_pose, cam_K, image, depth,
              apart in depth, the nearest wins every pixel, and the rest fall
              back to the flat class colour. It misses 863 of room01's 1615
              measured voxels.
+
+    all      all three, each voxel taking its colour from the first rule that
+             reaches it: its own measured points, else a neighbour's within
+             `reach`, else the photo pixels it is front-most on -- those split
+             into the pixels the depth frame does not contradict and, last of
+             all, the ones it does (photo_from_image says what each is worth,
+             and `strict` drops the second).
+
+             The order is by how directly the rule measures THAT voxel, so
+             nothing is ever downgraded: every voxel `points` could colour
+             keeps exactly the colour `points` gave it, from its own
+             measurements alone -- which is not true of `surface`, where even
+             a voxel full of its own points takes the mean over the grown
+             region. What the later stages do is fill in around it, and
+             `source` says which voxels those are, so the picture stays
+             readable as evidence rather than becoming one flat claim.
+
+             The last stage is deliberately included: a voxel nothing else
+             reached is otherwise drawn in its flat class colour, which is not
+             a more honest picture than a real pixel of the scene, only a less
+             useful one -- and the readout says which it is either way. Pass
+             strict=True to stop at the gated stage.
     """
+    n = len(idx)
     if mode == 'zbuffer':          # must work with depth=None; that is the point
         c, v = project_photo_colours(idx, vox_origin, cam_pose, cam_K, image)
+        src = np.where(v, SRC_IMAGE, SRC_NONE)
         if depth is None:
-            return c, v, np.zeros(len(idx), dtype=bool)
+            return c, v, np.zeros(n, dtype=bool), src
         _, measured = photo_from_points(idx, vox_origin, cam_pose, cam_K,
                                         image, depth, reach=0.5)
-        return c, v, measured & v
+        return c, v, measured & v, src
 
-    strict, measured = photo_from_points(idx, vox_origin, cam_pose, cam_K,
-                                         image, depth, reach=0.5)
+    own, measured = photo_from_points(idx, vox_origin, cam_pose, cam_K,
+                                      image, depth, reach=0.5)
     if mode == 'points':
-        return strict, measured, measured
+        return own, measured, measured, np.where(measured, SRC_INSIDE,
+                                                 SRC_NONE)
     # the same rule, reaching a little past the voxel's face. `measured` above
     # stays the strict statement, so the readout can still say which voxels
     # actually contain measurement and which merely sit against it.
     out, near = photo_from_points(idx, vox_origin, cam_pose, cam_K, image,
                                   depth, reach=reach)
-    return out, near, measured
+    if mode == 'surface':
+        return out, near, measured, np.where(
+            measured, SRC_INSIDE, np.where(near, SRC_REACH, SRC_NONE))
+
+    # 'all': the rules stacked, best source first. A voxel with its own points
+    # keeps `own`, its strict colour, rather than `out`'s grown mean -- the
+    # whole point of stacking is that no voxel is coloured by a rule weaker
+    # than the one that already reached it.
+    image_c, image_v, far_c, far_v = photo_from_image(
+        idx, vox_origin, cam_pose, cam_K, image, depth, agree=agree)
+    third = image_v & ~near
+    fourth = (np.zeros(n, dtype=bool) if strict
+              else far_v & ~near & ~third)
+    colour = out.copy()
+    colour[measured] = own[measured]
+    colour[third] = image_c[third]
+    colour[fourth] = far_c[fourth]
+    source = np.where(measured, SRC_INSIDE,
+                      np.where(near, SRC_REACH,
+                               np.where(third, SRC_IMAGE,
+                                        np.where(fourth, SRC_IMAGE_FAR,
+                                                 SRC_NONE))))
+    # measured is in near for any reach >= 0.5, but a caller is free to pass
+    # less than that, and `visible` must stay exactly "source says something"
+    return colour, measured | near | third | fourth, measured, source
 
 
-def project_photo_colours(idx, vox_origin, cam_pose, cam_K, image):
-    """The z-buffer rule: colour each voxel from the pixels it is front-most on.
+def paint_owners(idx, vox_origin, cam_pose, cam_K, shape):
+    """Paint the voxels into an image of `shape`, far to near, and say which
+    one ends up on top of each pixel.
 
-    Kept because it is the only rule that needs no depth frame. Each voxel is
-    painted into the image as the perspective-correct square it covers, far to
-    near, and takes the mean of the pixels it still owns -- not a single sample
-    that a one-pixel misalignment could take off the wrong object.
+    Returns (who, z): who[v, u] is the row of the voxel front-most over that
+    pixel, or -1 where no voxel covers it, and z holds every voxel's range
+    from the camera. Each voxel covers the perspective-correct square its 8 cm
+    cube subtends, not a single sample, so a one-pixel misalignment cannot
+    take its colour off the wrong object.
 
-    Its weakness is structural, not a matter of tuning: it decides visibility
-    in IMAGE space, so on a surface seen edge-on -- a bed top, a desk -- the
-    consecutive voxels along the ray project almost on top of each other, the
-    nearest wins every pixel, and the rest are declared unseen although they
-    are the same visible surface. photo_from_points has no such problem
-    because it never leaves 3D.
+    Shared by the two rules that work in image space -- project_photo_colours
+    (--visibility zbuffer) and photo_from_image (the third stage of
+    --visibility all) -- so they cannot come to disagree about which voxel
+    owns a pixel.
     """
     R, t = cam_pose[:3, :3], cam_pose[:3, 3]
     fx, fy = cam_K[0, 0], cam_K[1, 1]
     cx, cy = cam_K[0, 2], cam_K[1, 2]
-    H, W = image.shape[:2]
+    H, W = shape
 
     cam = (voxel_centres_world(idx, vox_origin) - t[None, :]) @ R
     z = cam[:, 2]
@@ -527,7 +618,15 @@ def project_photo_colours(idx, vox_origin, cam_pose, cam_K, image):
             continue
         u0, u1, v0, v1 = box[k]
         who[v0:v1, u0:u1] = k
+    return who, z
 
+
+def mean_by_owner(who, image, n):
+    """Mean image colour per owning voxel, over the pixels where who >= 0.
+
+    Pass a `who` with the unwanted pixels set to -1 to average over a subset;
+    that is how photo_from_image drops the pixels the depth frame contradicts.
+    """
     flat = who.reshape(-1)
     owned = flat >= 0
     ids = flat[owned]
@@ -540,19 +639,110 @@ def project_photo_colours(idx, vox_origin, cam_pose, cam_K, image):
     return np.rint(photo).astype(np.int32), visible
 
 
+def photo_from_image(idx, vox_origin, cam_pose, cam_K, image, depth,
+                     agree=IMAGE_AGREE, z_min=0.2, z_max=8.0):
+    """Colour each voxel from the photo pixels it is front-most on, keeping
+    only the pixels the depth frame does not contradict.
+
+    The z-buffer rule with one extra test, and the test is what makes it
+    usable as a last stage rather than a mode of its own. project_photo_colours
+    decides visibility among the VOXELS and never consults the depth frame, so
+    a voxel standing behind a measured surface -- or buried inside one -- is
+    still front-most if no other predicted voxel lies on that ray, and it
+    takes the colour of whatever the camera actually saw there. Measured on
+    room01's own frame: of the voxels the plain z-buffer adds beyond the two 3D
+    rules, 88% own pixels whose depth is more than 0.2 m away from them, the
+    median being 1.41 m IN FRONT. That colour belongs to the foreground
+    object, not to the voxel.
+
+    So a pixel counts for a voxel only if
+
+      * the depth there is within `agree` (one voxel) of the voxel's own
+        range -- the pixel is a measurement OF this voxel; or
+      * there is no depth there at all. Dropout, and the photo is then the
+        only evidence either way: nothing in the measurement and nothing in
+        the prediction puts anything in front of this voxel, so its pixel is
+        the best the frame has to offer.
+
+    The first case photo_from_points has mostly already covered. The second is
+    the new information, and the reason this stage earns a place: depth
+    dropout and colour loss are not co-located, so the camera's colour
+    survives in plenty of places its ranging does not.
+
+    Returns (colours, visible, far_colours, far_visible): the gated answer,
+    then the SAME painting read from the pixels the gate threw out -- the ones
+    whose depth measures something at a different range. photo_colours uses
+    that as a last stage, below everything else, because it is the weakest
+    evidence here and should only ever colour a voxel nothing else reached.
+
+    How good an inference: hold out the voxels that DO hold their own measured
+    points, so the right colour is known, and colour them by this rule
+    instead. Over 8 frames (room01/03/04 and NYU0001/0002/0015/0284/0515) the
+    median error is 0.8-7.8 of 255 gated against 0.9-10.8 ungated, compared on
+    the same voxels within each frame -- the gate wins in all 8, and at the
+    90th percentile in 7 of 8. It still adds 8-647 voxels a frame beyond
+    points + surface, taking coverage from 14.4-66.1% to 17.8-68.8%.
+    """
+    if depth is None:
+        raise ValueError("photo_from_image needs the frame's depth to know "
+                         "which pixels contradict a voxel; --visibility "
+                         "zbuffer is the rule that works without it")
+    H, W = depth.shape
+    if image.shape[:2] != (H, W):
+        import cv2
+        image = cv2.resize(image, (W, H), interpolation=cv2.INTER_AREA)
+
+    who, z = paint_owners(idx, vox_origin, cam_pose, cam_K, (H, W))
+    owned = who >= 0
+    # the range of whichever voxel owns the pixel, so the test below is made
+    # per PIXEL: one voxel can own pixels with and without depth at once
+    own_z = np.where(owned, z[np.clip(who, 0, None)], 0.0)
+    valid = (depth >= z_min) & (depth <= z_max)
+    agrees = owned & (~valid | (np.abs(depth - own_z) <= agree))
+    n = len(idx)
+    near_c, near_v = mean_by_owner(np.where(agrees, who, -1), image, n)
+    far_c, far_v = mean_by_owner(np.where(owned & ~agrees, who, -1), image, n)
+    return near_c, near_v, far_c, far_v
+
+
+def project_photo_colours(idx, vox_origin, cam_pose, cam_K, image):
+    """The z-buffer rule: colour each voxel from the pixels it is front-most on.
+
+    Kept because it is the only rule that needs no depth frame. Each voxel is
+    painted into the image as the perspective-correct square it covers, far to
+    near, and takes the mean of the pixels it still owns -- not a single sample
+    that a one-pixel misalignment could take off the wrong object.
+
+    Its weakness is structural, not a matter of tuning: it decides visibility
+    in IMAGE space, so on a surface seen edge-on -- a bed top, a desk -- the
+    consecutive voxels along the ray project almost on top of each other, the
+    nearest wins every pixel, and the rest are declared unseen although they
+    are the same visible surface. photo_from_points has no such problem
+    because it never leaves 3D.
+    """
+    who, _ = paint_owners(idx, vox_origin, cam_pose, cam_K, image.shape[:2])
+    return mean_by_owner(who, image, len(idx))
+
+
 def fill_hidden(photo, visible, class_rgb, view_idx, mode):
-    """Colour for the voxels the camera never saw."""
+    """Colour for the voxels the camera never saw.
+
+    Returns (colours, borrowed): `borrowed` marks the hidden voxels that got a
+    sibling's colour under `nearest`, which is never all of them -- a class
+    with no coloured member anywhere in the frame has nothing to borrow from,
+    and those voxels keep the dimmed class colour. Under `class` it is empty.
+    """
     out = photo.copy()
     hidden = ~visible
+    done = np.zeros(len(out), dtype=bool)
     if not hidden.any():
-        return out
+        return out, done
     if mode == 'nearest':
         from scipy.spatial import cKDTree
         # nearest visible voxel OF THE SAME CLASS: nearest overall would
         # smear the wall's colour onto the bed it stands behind
         key = (class_rgb[:, 0].astype(np.int64) << 16
                | class_rgb[:, 1].astype(np.int64) << 8 | class_rgb[:, 2])
-        done = np.zeros(len(out), dtype=bool)
         for k in np.unique(key[hidden]):
             src = np.nonzero(visible & (key == k))[0]
             dst = np.nonzero(hidden & (key == k))[0]
@@ -564,7 +754,7 @@ def fill_hidden(photo, visible, class_rgb, view_idx, mode):
             done[dst] = True
         hidden = hidden & ~done          # no visible sibling -> class colour
     out[hidden] = np.rint(class_rgb[hidden] * 0.55)   # dimmed: reads as unseen
-    return out
+    return out, done
 
 
 # ------------------------------------------------------------ frame discovery
@@ -821,22 +1011,27 @@ def pick_ray(camera, x, y, width, height):
 
 # ------------------------------------------------------------------- readouts
 
-def readout(i, idx, cls, photo, visible, measured=None):
+def readout(i, idx, cls, photo, visible, measured=None, source=None):
     """One line for the voxel under the cursor.
 
-    The last field is how well its colour is known, and the three cases are
-    exactly photo_colours' three outcomes: measured points inside the voxel,
-    measured points within --reach of it, or no measurement at all.
+    The last field is how well its colour is known, and the cases are exactly
+    photo_colours' outcomes: measured points inside the voxel, measured points
+    within --reach of it, the photo alone, or no evidence at all. Given
+    photo_colours' `source` it names the rule that actually supplied the
+    colour -- which is the only way to read --visibility all, where three
+    rules are in play at once; without it the old two-way split stands.
     """
     x, y, z = (int(v) for v in idx[i])
     name = CLASS_NAMES[cls[i]] if cls[i] >= 0 else 'unknown colour'
     r, g, b = (int(v) for v in photo[i])
-    if measured is not None and measured[i]:
-        seen = 'measured inside this voxel'
+    if source is not None:
+        seen = SOURCE_TEXT[int(source[i])]
+    elif measured is not None and measured[i]:
+        seen = SOURCE_TEXT[SRC_INSIDE]
     elif visible[i]:
-        seen = 'measured just outside it (within --reach)'
+        seen = SOURCE_TEXT[SRC_REACH]
     else:
-        seen = 'hidden -- colour inferred'
+        seen = SOURCE_TEXT[SRC_NONE]
     return ("voxel [%2d, %2d, %2d]   %s (class %d)   photo rgb (%3d, %3d, %3d)   %s"
             % (x, y, z, name, cls[i], r, g, b, seen))
 
@@ -845,7 +1040,7 @@ def readout(i, idx, cls, photo, visible, measured=None):
 
 # the three independent switches, in the order the pixels flow through them.
 # See "THE THREE MODE SWITCHES" at the top of this file.
-VISIBILITY_MODES = ['points', 'surface', 'zbuffer']   # where colour comes from
+VISIBILITY_MODES = ['points', 'surface', 'zbuffer', 'all']  # colour source
 COLOUR_MODES = ['photo', 'class']                     # which palette is drawn
 HIDDEN_MODES = ['class', 'nearest']                   # what the rest look like
 
@@ -864,13 +1059,14 @@ class Viewer:
     FOV = 60.0   # vertical, degrees
 
     def __init__(self, mesh, vox_of_vert, shade_of_vert, view_idx, idx, cls,
-                 palette, visible, title, mode, highlight=True, measured=None):
+                 palette, visible, title, mode, highlight=True, measured=None,
+                 source=None):
         from open3d.visualization import gui, rendering
         self.gui = gui
         self.mesh, self.vox_of_vert, self.shade = mesh, vox_of_vert, shade_of_vert
         self.view_idx, self.idx, self.cls = view_idx, idx, cls
         self.palette, self.visible = palette, visible
-        self.measured = measured
+        self.measured, self.source = measured, source
         self.mode = mode
         self._framed = False
         self._picked = None
@@ -1018,7 +1214,7 @@ class Viewer:
                 self.widget3d.scene.show_geometry("pick", True)
             self.info.text = readout(row, self.idx, self.cls,
                                      self.palette['photo'], self.visible,
-                                     self.measured)
+                                     self.measured, self.source)
         self.window.post_redraw()
 
     def _pick_at(self, event):
@@ -1110,10 +1306,12 @@ def main():
                     choices=COLOUR_MODES,
                     help="photo: the colour the camera saw; class: "
                          "display.py's flat per-class colours (default: photo)")
-    ap.add_argument('--hidden', default='class', choices=HIDDEN_MODES,
+    ap.add_argument('--hidden', default=None, choices=HIDDEN_MODES,
                     help="voxels that got no photo colour: their dimmed class "
-                         "colour (default), or the colour of the nearest "
-                         "coloured voxel of the same class")
+                         "colour, or the colour of the nearest coloured voxel "
+                         "of the same class. Default: class, except under "
+                         "--visibility all, whose whole point is to colour "
+                         "every voxel it can, where it is nearest")
     ap.add_argument('--visibility', default='points',
                     choices=VISIBILITY_MODES,
                     help="how a voxel's colour is sourced -- see "
@@ -1122,13 +1320,28 @@ def main():
                          "coloured from another's measurements. surface: also "
                          "takes points within --reach, which fills the fringe "
                          "but is an inference. zbuffer: front-most voxel over "
-                         "each pixel, the one rule needing no depth frame")
+                         "each pixel, the one rule needing no depth frame. "
+                         "all: the three stacked, each voxel taking the first "
+                         "rule that reaches it, with the photo stage gated on "
+                         "--agree")
     ap.add_argument('--reach', type=float, default=0.75, metavar='VOXELS',
                     help="--visibility surface: half-width of the region a "
                          "voxel collects measured points from, in voxels. 0.5 "
                          "is exactly the voxel (= --visibility points); 0.75, "
                          "the default, is 6 cm and picks up a surface running "
                          "along the voxel's face")
+    ap.add_argument('--strict-photo', dest='strict', action='store_true',
+                    help="--visibility all: stop after the photo pixels the "
+                         "depth frame does not contradict, instead of also "
+                         "taking the ones it does. Fewer voxels coloured, "
+                         "every colour better evidenced")
+    ap.add_argument('--agree', type=float, default=IMAGE_AGREE, metavar='METRES',
+                    help="--visibility all, photo stage: how far the depth "
+                         "frame may disagree with a voxel's own range before "
+                         "the pixel it is front-most on is thrown out "
+                         "(default one voxel, %.2f m). Pixels with no depth "
+                         "are kept either way -- there the photo is the only "
+                         "evidence" % IMAGE_AGREE)
     ap.add_argument('--flat', action='store_true',
                     help="no face shading -- flat cubes, harder to read")
     ap.add_argument('--no-cull', dest='cull', action='store_false',
@@ -1149,6 +1362,10 @@ def main():
     ap.add_argument('--no-highlight', dest='highlight', action='store_false',
                     help="don't outline the voxel under the cursor")
     args = ap.parse_args()
+    if args.hidden is None:
+        # the switches stay independent -- this only picks a default, and
+        # --hidden class puts it back
+        args.hidden = 'nearest' if args.visibility == 'all' else 'class'
 
     idx, class_rgb, cls = load_voxels(args.ply_path)
     print("Loaded %s" % args.ply_path)
@@ -1165,6 +1382,7 @@ def main():
         args.colour = 'class'
         photo, visible = class_rgb, np.ones(len(idx), dtype=bool)
         measured = np.zeros(len(idx), dtype=bool)
+        source = np.full(len(idx), SRC_NONE)
     else:
         print("Camera geometry from %s" % frame['source'])
         print("Photo from %s" % os.path.relpath(frame['rgb_path'],
@@ -1178,25 +1396,42 @@ def main():
                     "works from the colour image alone." % args.visibility)
             dep = load_depth(frame['depth_path'], frame['nyu'])
             print("Depth       %s" % frame['depth_path'])
-        photo, visible, measured = photo_colours(
+        photo, visible, measured, source = photo_colours(
             idx, frame['vox_origin'], frame['cam_pose'], frame['cam_K'],
             frame['image'], dep, mode=args.visibility,
-            reach=args.reach)
+            reach=args.reach, agree=args.agree, strict=args.strict)
         if args.visibility == 'zbuffer':
             print("%d/%d voxels (%.1f%%) are front-most over some pixel and "
                   "take the photo colour" % (visible.sum(), len(idx),
                                              100.0 * visible.mean()))
         else:
-            print("%d/%d voxels (%.1f%%) hold a measured point%s"
-                  % (measured.sum(), len(idx), 100.0 * measured.mean(),
-                     "" if args.visibility == 'points' else
-                     "; %d more have measurement within %.3g voxel of them"
-                     % (int((visible & ~measured).sum()), args.reach)))
-        print("%d/%d voxels (%.1f%%) end up with a photo colour; the other "
-              "%d are coloured --hidden %s"
-              % (visible.sum(), len(idx), 100.0 * visible.mean(),
-                 int((~visible).sum()), args.hidden))
-        photo = fill_hidden(photo, visible, class_rgb, view_idx, args.hidden)
+            # one line per rule that supplied any colour, in the order the
+            # rules are tried, so --visibility all shows what each stage added
+            for code, why in (
+                    (SRC_INSIDE, "hold a measured point of their own"),
+                    (SRC_REACH, "take a neighbour's measurement, within "
+                                "%.3g voxel" % args.reach),
+                    (SRC_IMAGE, "are front-most on photo pixels the depth "
+                                "frame does not contradict"),
+                    (SRC_IMAGE_FAR, "are front-most only on photo pixels whose "
+                                    "depth measures something else")):
+                k = int((source == code).sum())
+                if k:
+                    print("%d/%d voxels (%.1f%%) %s"
+                          % (k, len(idx), 100.0 * k / len(idx), why))
+        print("%d/%d voxels (%.1f%%) end up with a photo colour from the "
+              "frame" % (visible.sum(), len(idx), 100.0 * visible.mean()))
+        photo, borrowed = fill_hidden(photo, visible, class_rgb, view_idx,
+                                      args.hidden)
+        if borrowed.any():
+            print("%d more take the colour of the nearest coloured voxel of "
+                  "their own class (--hidden nearest), leaving %d on the flat "
+                  "class colour"
+                  % (int(borrowed.sum()),
+                     int((~visible & ~borrowed).sum())))
+        else:
+            print("the other %d are coloured --hidden %s"
+                  % (int((~visible).sum()), args.hidden))
 
     palette = {'photo': photo, 'class': class_rgb}
 
@@ -1212,7 +1447,8 @@ def main():
     title = (os.path.basename(args.ply_path)
              + ('' if args.fix_axes else '  [raw axes]'))
     run_gui(mesh, vox_of_vert, shade, view_idx, idx, cls, palette, visible,
-            title, args.colour, highlight=args.highlight, measured=measured)
+            title, args.colour, highlight=args.highlight, measured=measured,
+            source=source)
 
 
 def build_cube_mesh_all(view_idx, colours, shaded=True):

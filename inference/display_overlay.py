@@ -18,7 +18,8 @@ Buttons under the view:
                 At 0.55 alpha the class colours still read -- cyan wall, orange
                 bed -- with the photo texture visible underneath.
     visibility  the rule the predicted voxels are coloured by, as in
-                display_solid: points -> surface -> zbuffer, recomputed live.
+                display_solid: points -> surface -> zbuffer -> all,
+                recomputed live.
     surface     the surface colouring: photo -> label -> match
     voxels      the voxel colouring: photo -> class
     hide/show   blank either layer outright
@@ -482,10 +483,19 @@ def main():
                     choices=DS.VISIBILITY_MODES,
                     help="how the predicted voxels get their photo colour, as "
                          "in display_solid (default points -- no voxel is ever "
-                         "coloured from another's measurements)")
+                         "coloured from another's measurements; all stacks the "
+                         "three rules)")
     ap.add_argument('--reach', type=float, default=0.75, metavar='VOXELS',
-                    help="--visibility surface only; see display_solid")
-    ap.add_argument('--hidden', default='class', choices=DS.HIDDEN_MODES)
+                    help="--visibility surface and all; see display_solid")
+    ap.add_argument('--agree', type=float, default=DS.IMAGE_AGREE,
+                    metavar='METRES',
+                    help="--visibility all, photo stage; see display_solid")
+    ap.add_argument('--hidden', default=None, choices=DS.HIDDEN_MODES,
+                    help="how to paint the voxels no rule coloured (default: "
+                         "class, except under --visibility all, where it is "
+                         "nearest)")
+    ap.add_argument('--strict-photo', dest='strict', action='store_true',
+                    help="--visibility all; see display_solid")
     ap.add_argument('--frame-grid', action='store_true',
                     help="frame the whole 60x36x60 grid and reflect about the grid, "
                          "not this file's voxels, so a prediction and its GT open "
@@ -494,6 +504,15 @@ def main():
     if args.frame_grid:
         DS.FIXED_PIVOT = GRID[2] - 1
 
+    def hidden_for(vis_mode):
+        """--hidden follows the rule unless it was given: `all` exists to
+        colour every voxel it can, so the voxels no rule reached take a
+        sibling's colour rather than the flat class one. The button can switch
+        rule live, so this is a function of the rule, not of startup."""
+        if args.hidden is not None:
+            return args.hidden
+        return 'nearest' if vis_mode == 'all' else 'class'
+
     b = RC.build(args.ply_path, args)
     idx, cls, view_idx = b['idx'], b['cls'], b['view_idx']
     class_rgb, frame, depth = b['class_rgb'], b['frame'], b['depth']
@@ -501,10 +520,12 @@ def main():
     def recolour(vis_mode):
         """Voxel colours for one --visibility rule. Handed to the viewer so the
         button can switch rule without restarting (~0.2 s a click)."""
-        ph, seen, meas = DS.photo_colours(
+        ph, seen, meas, _src = DS.photo_colours(
             idx, frame['vox_origin'], frame['cam_pose'], frame['cam_K'],
-            frame['image'], depth, mode=vis_mode, reach=args.reach)
-        ph = DS.fill_hidden(ph, seen, class_rgb, view_idx, args.hidden)
+            frame['image'], depth, mode=vis_mode, reach=args.reach,
+            agree=args.agree, strict=args.strict)
+        ph, _borrowed = DS.fill_hidden(ph, seen, class_rgb, view_idx,
+                                       hidden_for(vis_mode))
         return {'photo': ph, 'class': class_rgb}, seen, meas
 
     palette, _, _ = recolour(args.visibility)

@@ -887,7 +887,7 @@ surface). The readout says which of the two a voxel is.
 
 **Where a voxel's colour comes from — `--visibility`.** The question is which
 measured pixels belong to a given cube, and there are three answers here
-because they are not the same question.
+because they are not the same question — plus `all`, which stacks them.
 
 `points` **(the default)** is the exact one: unproject every valid depth pixel,
 round it to the voxel it lands in, average the colour of the pixels that landed
@@ -964,6 +964,75 @@ points, colour them from outside-only points, and compare with the truth:
 structure changes at roughly the 6 cm scale the reach spans. `--visibility
 points` refuses the inference entirely.
 
+`all` is the three of them stacked, each voxel taking its colour from the first
+rule that reaches it: its own points, else a neighbour's within `--reach`, else
+the photo. The order is by how directly the rule measures *that* voxel, so
+nothing is ever downgraded — every voxel `points` could colour keeps exactly
+the colour `points` gave it, from its own measurements alone. (That is not true
+of `surface`, where even a voxel full of its own points takes the mean over the
+grown region.) The later stages only fill in around it, and `photo_colours`
+returns a per-voxel `source` code so the readout can say which stage a voxel
+came from rather than presenting all three as one claim.
+
+The photo stage is **not** plain `zbuffer`, and it is two stages rather than
+one. A pixel is **stage 3** if the depth there agrees with the voxel's own
+range to within `--agree` (one voxel, 8 cm), or if there is no depth there at
+all — dropout, where the photo is the only evidence and neither the measurement
+nor the prediction puts anything in front of the voxel. Every other pixel the
+voxel is front-most on is **stage 4**, which only ever colours a voxel nothing
+else reached.
+
+That split is the whole difference between a usable last stage and a wrong one.
+`zbuffer` makes neither test — it resolves occlusion among the *voxels* and
+never consults the depth frame, so a voxel standing behind a measured surface
+is still front-most if no other predicted voxel lies on that ray, and it takes
+the colour of whatever the camera really saw. Of the voxels the ungated
+z-buffer adds beyond the two 3D rules on room01's frame, **88 % own pixels
+whose depth is over 0.2 m away** — a median of 1.41 m *in front* of them, i.e.
+the foreground object's colour. Demoted rather than discarded, those pixels
+still beat a flat class colour for looking at the scene, and `--strict-photo`
+drops them for anyone who disagrees.
+
+Hold both stages to the same test as `surface`: take the voxels that do have
+their own points, colour them by the rule instead, and compare with the truth.
+
+| | gated (median / 90th) | ungated (median / 90th) | voxels `all` adds | coverage |
+| --- | --- | --- | --- | --- |
+| room01 | 1.0 / 6.9 | 1.1 / 6.1 | 81 | 66.1 % → 68.8 % |
+| room03 | 1.4 / 22.9 | 1.6 / 27.4 | 8 | 34.8 % → 34.9 % |
+| room04 | 6.4 / 39.4 | 7.8 / 47.1 | 58 | 65.7 % → 66.3 % |
+| NYU0001 | 1.7 / 18.1 | 2.0 / 25.3 | 157 | 31.0 % → 32.7 % |
+| NYU0002 | 2.8 / 30.0 | 3.1 / 33.2 | 103 | 20.4 % → 22.3 % |
+| NYU0015 | 1.9 / 14.8 | 2.2 / 18.6 | 173 | 33.3 % → 35.3 % |
+| NYU0284 | 7.8 / 47.5 | 10.8 / 52.2 | 647 | 40.4 % → 49.2 % |
+| NYU0515 | 0.8 / 12.9 | 0.9 / 25.5 | 216 | 14.4 % → 17.8 % |
+
+Errors are of 255, compared on the same voxels within each frame. The gate is
+better in all 8 and at the 90th percentile in 7 of 8, and still adds 8–647
+voxels a frame beyond `points` + `surface`. Most of what it adds is dropout:
+75 of room01's 81, 501 of NYU0284's 647 have *only* no-depth pixels. That is
+the stage's reason to exist — depth dropout and colour loss are not
+co-located, so the camera's colour survives in plenty of places its ranging
+does not.
+
+Stage 4, the pixels that test threw out, costs **3.0–27.3 of 255** (median,
+90th 30.5–93.5) by the same hold-out over room01/03/04/07 and
+NYU0015/0284/0515 — three to four times stage 3's error, and it adds another
+9–1372 voxels a frame. Together the two take coverage from 14.4–66.1 % to
+30.1–69.1 %.
+
+**`--hidden` defaults to `nearest` under `--visibility all`**, and only there.
+A mode whose point is to colour everything it can should not then paint half
+the scene flat, and what is left after all four stages is voxels no pixel ever
+reached — in room07, 4380 of 7888, mostly completion standing behind what the
+camera could see. `nearest` gives each the colour of the nearest coloured voxel
+*of its own class*, which over those 7 frames sits 2.0–7.3 voxels away (median)
+and held out costs 3.0–14.3 of 255. It takes room07 from 44.5 % carrying a
+photo colour to 79.8 %; the 1597 that stay flat belong to classes with no
+coloured member anywhere in the frame, so there is nothing to borrow. The
+readout still calls every one of them *hidden — colour inferred*, and
+`--hidden class` puts the flat colours back.
+
 Against `TRUE` = the voxels holding at least one measured point:
 
 | rule | says visible | misses | over-claims | colour error where both agree |
@@ -972,18 +1041,27 @@ Against `TRUE` = the voxels holding at least one measured point:
 | `zbuffer` | 1027 | 863 | 275 | 4.81 / 255 |
 | `surface` | 1984 | 1 | 369 | 2.24 / 255 |
 | `points` | 1615 | 0 | 0 | 0 (by definition) |
+| `all` | 2095 | 0 | 480 | 0 (by construction) |
 | room03 — TRUE = 2243 | | | | |
 | `zbuffer` | 1330 | 1147 | 234 | 9.21 / 255 |
 | `surface` | 2679 | 5 | 436 | 5.05 / 255 |
+| `all` | 2733 | 0 | 489 | 0 (by construction) |
 | NYU0015 — TRUE = 2230 | | | | |
 | `zbuffer` | 3974 | 242 | 1986 | 10.88 / 255 |
 | `surface` | 2779 | 8 | 549 | 2.81 / 255 |
+| `all` | 4414 | 0 | 2184 | 0 (by construction) |
 
 `surface`'s "over-claims" are not errors — they are voxels with real measured
 points just outside them, and the readout labels them *measured just outside it
-(within --reach)* rather than *measured inside this voxel*. (Those counts were
-taken with the earlier two-stage fill; the single-reach rule that replaced it
-lands within a few voxels of them — 2005 vs 1984 on room01.)
+(within --reach)* rather than *measured inside this voxel*. The same goes for
+`all`, which labels its three stages separately; its zero in the last column is
+not a measurement but the stacking order — a voxel with its own points keeps
+`points`' answer, so `all` carries `points`' exact core and `surface`'s fringe
+at once. (The `zbuffer` and `surface` counts were taken with the earlier
+two-stage fill; the single-reach rule that replaced it lands within a few dozen
+voxels of them — re-run against the code as it stands, room01 reads
+`zbuffer` 1009 / 881 / 275 and `surface` 2005 / 0 / 390. The `all` rows are
+from the current code.)
 
 One test that looked appealing and is worthless: rendering the coloured voxels
 back through the capture camera and scoring against the RGB frame. The
@@ -994,9 +1072,11 @@ on. It grades its own homework and wins.
 | flag | meaning |
 | --- | --- |
 | `--colour photo\|class` | the camera colour (default), or `display.py`'s flat class colours |
-| `--hidden class\|nearest` | how to paint the voxels the camera never saw |
-| `--visibility points\|surface\|zbuffer` | where a voxel's colour comes from — see above (default `points`, which never borrows) |
-| `--reach VOXELS` | `--visibility surface` only: half-width of the region a voxel collects points from (default 0.75) |
+| `--hidden class\|nearest` | how to paint the voxels the camera never saw (default `class`, but `nearest` under `--visibility all`) |
+| `--visibility points\|surface\|zbuffer\|all` | where a voxel's colour comes from — see above (default `points`, which never borrows) |
+| `--reach VOXELS` | `--visibility surface` and `all`: half-width of the region a voxel collects points from (default 0.75) |
+| `--agree METRES` | `--visibility all` only: how far the depth frame may disagree with a voxel's range before its photo pixel drops to stage 4 (default 0.08, one voxel) |
+| `--strict-photo` | `--visibility all` only: drop stage 4 — colour nothing from a pixel the depth frame contradicts |
 | `--flat` | no face shading |
 | `--no-cull` | keep the faces between adjacent voxels |
 | `--raw-axes` | don't correct the handedness — see `display.py` above |
@@ -1089,7 +1169,7 @@ python inference/display_overlay.py <ply> --show surface
 | button | |
 | --- | --- |
 | `layers` | solid → see-through cubes over the measurement → same, measurement dimmed |
-| `visibility` | the rule the voxels are coloured by: points → surface → zbuffer, recomputed live (~0.2 s) |
+| `visibility` | the rule the voxels are coloured by: points → surface → zbuffer → all, recomputed live (~0.2 s) |
 | `surface` | surface colouring: photo → label → match |
 | `voxels` | voxel colouring: photo → class |
 | `hide surface` / `hide voxels` | blank either layer outright |
