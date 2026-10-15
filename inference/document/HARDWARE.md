@@ -310,21 +310,45 @@ the model forward:
   the cost of the window running one frame behind. `--sync_display` turns it
   off. The window says what it got: `96 of it hidden behind inference`.
 
-Measured end to end, `--display --colour all`, same scene:
+The mechanism is worth 28%, measured with no window in the way — the same
+live camera, the paint inline against the paint on a worker:
 
-| | sync | overlapped |
-| --- | ---: | ---: |
-| bag replay, 60 frames | 2.32 fps | **2.99** |
-| live camera, 120 frames | 2.18 fps | **2.45** |
+| painter | encode | infer | wait | frame | fps |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| inline | 87 | 199 | 91 | 377 ms | 2.65 |
+| thread | 94 | 201 | **1** | 295 ms | **3.38** |
+| process | 86 | 203 | 1 | 289 ms | 3.46 |
 
-The bag gains 29%, the camera 12%, and the gap is worth knowing about: on
-the camera the forward pass itself measured 208 -> 250 ms with the painter
-running. Hiding 96 ms of painting cost ~42 ms of inference, because the
-painter competes for the GIL with the main thread's kernel launching, and a
-model that cannot issue its next kernel is a GPU going idle. It is still
-clearly worth it; it is not free. In `--colour class` the paint is a
-colormap lookup, so the overlap switches itself off rather than buy nothing
-for a frame of lag.
+`infer` is unchanged across all three and a **process is no better than a
+thread**, so the GIL is not a limit here and multiprocessing would buy
+nothing.
+
+With the window open, what the overlap buys is better stated as *the paint
+stopped costing anything*, because end-to-end fps is no longer governed by
+it. Interleaved runs, 60 frames each, live camera:
+
+| round | no display | `class` | `all` |
+| ---: | ---: | ---: | ---: |
+| 1 | 3.0 | 2.6 | **2.6** |
+| 2 | 2.9 | 2.6 | 2.2 |
+| 3 | 2.3 | 2.2 | 2.1 |
+
+In round 1, `--colour all` matches `--colour class` despite 96 ms more CPU
+work a frame. That is the whole point, and it is the cleanest evidence
+there is. What the rows below it show is the card: `infer` drifts 204 ->
+300 ms across the three rounds whatever the configuration, `nvidia-smi`
+reports SW power capping, and a 3050 Ti Laptop that boosts to 2100 MHz
+settles far lower under sustained load. **Thermal state moves these numbers
+by more than the optimisation does** — which is worth knowing before
+reading any single fps figure on this page as a constant.
+
+The window itself costs ~0.4 fps (3.0 -> 2.6 in a cool round), and the
+overlap cannot touch that: open3d's GL rendering wants the same card as the
+inference. On a bag replay, whose frame source is 4 ms against a camera's
+34, the same change reads 2.32 -> 2.99 fps.
+
+In `--colour class` the paint is a colormap lookup, so the overlap switches
+itself off rather than buy nothing for a frame of lag.
 
 That leaves the forward pass, now ~64% of the frame, untouched by any of
 this.

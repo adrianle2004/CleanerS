@@ -290,9 +290,13 @@ encodes and infers the *next* frame — the paint comes out of the frame budget
 almost entirely (`96 of it hidden behind inference`, says the exit line). The
 mesh and the camera panels are then drawn together from that same older
 frame, so the two halves of the window never disagree. `--sync_display` turns
-it off and draws each frame in its own iteration: no lag, 2.45 → 2.18 fps on
-a live camera with `--colour all`. In `--colour class` the paint is free
-anyway, so the overlap switches itself off.
+it off and draws each frame in its own iteration: no lag, and the painting
+back on the clock. In `--colour class` the paint is free anyway, so the
+overlap switches itself off.
+
+What it buys, concretely: with the window open and the card cool, `--colour
+all` now runs at the same fps as `--colour class` — 96 ms a frame of extra
+painting for nothing. Before, you paid all of it.
 
 ### Colour
 

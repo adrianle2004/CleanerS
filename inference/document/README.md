@@ -1131,16 +1131,20 @@ Same culled solid cubes, same baked face shading, same colour rules.
 **It draws one frame behind.** `update()` hands the frame it is given to a
 single worker thread and draws the *previous* one, so the painting — numpy,
 which releases the GIL — runs against the caller's next encode and forward
-pass. Measured `96 of 96 ms hidden`, **2.18 → 2.45 fps** on a live camera in
-`--colour all` and **2.32 → 2.99** replaying a bag. The mesh and the camera
-panels are deferred together, from the same frame, so the window's two halves
-never disagree. `--sync_display` draws each frame in its own iteration
-instead; `--colour class` paints for free, so the overlap switches itself
-off rather than spend a frame of lag on nothing.
+pass. The window reports what it got: `96 of 96 ms hidden`. The mesh and the
+camera panels are deferred together, from the same frame, so the window's two
+halves never disagree. `--sync_display` draws each frame in its own iteration
+instead; `--colour class` paints for free, so the overlap switches itself off
+rather than spend a frame of lag on nothing.
 
-Not free on a live camera: the forward pass measured 208 → 250 ms with the
-painter running, because it competes for the GIL with the main thread's
-kernel launching. Net +12% there, +29% on a bag.
+Worth 28% with no window in the way (377 → 295 ms a frame on a live camera),
+and a process painter measures the same as a thread, so the GIL is not a
+limit and multiprocessing would buy nothing. With the window open the honest
+statement is that **the paint stopped costing anything**: in a cool run
+`--colour all` matches `--colour class` despite 96 ms more work a frame. What
+governs the number after that is the window (~0.4 fps, GL sharing the card)
+and the card's thermal state, which moves `infer` 204 → 300 ms under
+sustained load. [HARDWARE.md](HARDWARE.md#parallelism) has the rounds.
 
 [VIEWERS.md](VIEWERS.md#live_viewpy) is the user-facing page — keys, colour
 modes, and the two things this window cannot do (pick a voxel, aim its own

@@ -109,8 +109,11 @@ screenshot.
 Painting is numpy, which releases the GIL, so `update()` hands the frame it
 is given to a worker thread and draws the PREVIOUS one. The paint then runs
 against the caller's next encode and forward pass and costs almost nothing:
-measured 96 of 96 ms hidden, 2.18 -> 2.45 fps on a live camera in `all` mode
-and 2.32 -> 2.99 replaying a bag.
+measured 96 of 96 ms hidden. With no window in the way that is 377 -> 295 ms
+a frame on a live camera, and a process painter measures the same as a
+thread, so the GIL is not the limit. With the window open the honest claim
+is that the paint stopped costing anything -- `all` now runs at `class`'s
+frame rate.
 
 What that buys is paid for in latency: the window is one frame behind the
 camera. The RGB/depth panels are deferred with the mesh, from the same frame,
@@ -118,9 +121,10 @@ because a window whose two halves disagree is a worse instrument than a slow
 one. `overlap=False` (`run_live --sync_display`) draws each frame in its own
 iteration instead.
 
-It is not free on a live camera: the forward pass measured 208 -> 250 ms with
-the painter running, since the painter competes for the GIL with the main
-thread's kernel launching. Net it is still 12% there and 29% on a bag.
+What governs the rate after that is the window itself (~0.4 fps, open3d's GL
+wanting the same card as the inference) and how hot the card is: `infer`
+drifts 204 -> 300 ms under sustained load on this laptop, which moves the
+number by more than any of this does.
 """
 
 import logging
