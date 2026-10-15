@@ -252,12 +252,46 @@ thing runs each time with nothing to reuse. That is 59% of the ~0.35 s budget
 (64% of the 0.32 s of compute) and not addressable here.
 
 So ~0.21 s is an **asymptote, not a target**: what would remain if the encode
-cost vanished, which it cannot, since encode and model want the same GPU.
-Pipelining improves utilisation, not totals. Reachable from ~0.35 s is ~0.32 s,
-by threading the 36 ms of CPU work. Past that needs TensorRT/ONNX, running the
-model every Nth frame while the viewer draws at camera rate, a faster card, or
-a world-fixed volume updating only what changed — and that last one needs the
-localisation `run_live.py` already flags as missing.
+cost vanished, which it cannot, since encode and model want the same GPU — see
+[parallelism](#parallelism) for the measurement that settles that. Past it
+needs TensorRT/ONNX, running the model every Nth frame while the viewer draws
+at camera rate, a faster card, or a world-fixed volume updating only what
+changed — and that last one needs the localisation `run_live.py` already flags
+as missing.
+
+## Parallelism
+
+Nothing in the pipeline overlaps anything: no threads, no CUDA streams, no
+`multiprocessing` anywhere in `inference/`. The loop is decode, encode, model,
+paint, draw, in that order, and the parallelism is all *inside* the GPU kernels
+— the 75 shifted minima of the transform, the 3D convolutions on tensor cores
+— plus torch's 14 intra-op threads, which only serve CPU tensors.
+
+What overlapping would buy, each stage measured alone, then issued alongside
+the model forward:
+
+| the model forward, 195 ms, plus | alone | serial | together |
+| --- | ---: | ---: | ---: |
+| encode, on a second CUDA stream | 108 | 303 | 301 |
+| the `mapping` tables, in a thread | 6 | 201 | 195 |
+| `--colour all` painting, in a thread | 103 | 298 | **195** |
+
+- **GPU against GPU is dead.** Two streams saved 2 ms of 108. The card is
+  already saturated by one stage at a time, which is also why ~0.21 s is a
+  floor rather than a target: there is no idle GPU for the encode to hide in.
+- **CPU against GPU works, and the GIL is not in the way** — numpy and cv2
+  release it, so a plain `threading.Thread` overlapped 92-100% of the CPU
+  work. The `mapping` tables are only worth 6 ms, though. The frame source
+  reads as ~28 ms here but on a live camera that is `wait_for_frames`
+  *waiting for the sensor*, not CPU work to hide: the sensor is already
+  producing the next frame while we work.
+- **The painting is the one real win left: 103 ms, entirely free.** With
+  `--display --colour all` that is ~24% of the frame. It is not done, because
+  the mesh would then be one frame behind the RGB/depth panels beside it, and
+  a viewer whose two halves disagree is a worse tool for judging a prediction
+  than a slower one. The cost is known and the door is open.
+
+That leaves the forward pass, 59% of the frame, untouched by any of this.
 
 ## Does it change the answer?
 

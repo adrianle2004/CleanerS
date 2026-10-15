@@ -1963,13 +1963,16 @@ piped straight into a document. ~12 min for all five sections on a 4 GB card.
 | `encode` | the encode stage alone, and its peak VRAM |
 | `agree` | whether the fast path answers the same thing |
 | `colour` | what the live window's colour modes cost |
+| `parallel` | what overlapping the stages would buy |
 | `vram` | the floor: one frame per allocator cap, until it OOMs |
 
 `encode` needs no checkpoint; every other section loads one. `frame` is the
-table the 4.2x comes from; `encode` splits the torch encoder by slab size and
-transform dtype; `agree` compares slabbed vs whole, fp16 vs fp32, torch vs
-numpy and AMP vs fp32; `vram` runs each cap in a child process, because an
-OOM is not survivable in the process that hits it.
+table the speed-up comes from; `encode` splits the torch encoder by slab size
+and transform dtype; `agree` compares slabbed vs whole, fp16 vs fp32, torch vs
+numpy and AMP vs fp32; `parallel` issues each stage alongside the model
+forward, on a CUDA stream or in a thread, to see whether it is free; `vram`
+runs each cap in a child process, because an OOM is not survivable in the
+process that hits it.
 
 | flag | default | does |
 | --- | --- | --- |

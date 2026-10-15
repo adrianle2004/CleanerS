@@ -11,6 +11,8 @@ per table:
     agree    whether the fast path answers the same thing: slabbed vs whole,
              fp16 vs fp32, torch vs numpy, AMP vs fp32.
     colour   what the live window's three colour modes cost to paint.
+    parallel what overlapping the stages would buy: GPU against GPU on two
+             CUDA streams, and CPU against GPU in a thread.
     vram     how small a card this fits on, by capping the allocator and
              running a frame in a child process until it OOMs.
 
@@ -70,7 +72,7 @@ except ImportError:
 
 log = logging.getLogger('benchmark')
 
-SECTIONS = ('frame', 'encode', 'agree', 'colour', 'vram')
+SECTIONS = ('frame', 'encode', 'agree', 'colour', 'parallel', 'vram')
 VRAM_CAPS = (None, 1536, 1280, 1152, 1024, 896, 768)   # MB, allocator cap
 # float32 carries ~7 digits, so a TSDF in [-1, 1] rounds at ~1e-7. Anything
 # at or below this is the two encoders agreeing, in different arithmetic.
@@ -499,6 +501,121 @@ def section_colour(args, frames, model, device):
               '...`).' % (md(builds), int(np.median(counts))))
 
 
+def section_parallel(args, frames, model, device):
+    """What is left to win by overlapping stages rather than speeding them up.
+
+    Three measurements, each the median of a few runs: the stage alone, and
+    the stage issued alongside the model forward. The question in every case
+    is whether the second thing is free.
+    """
+    import threading
+
+    if torch.device(device).type != 'cuda':
+        return ('## Parallelism\n\nCPU only: there are no stages to overlap '
+                'here, and torch already uses\n%d intra-op threads.'
+                % torch.get_num_threads())
+
+    frame = frames[0]
+    loader = make_loader(frame, 'torch', device)
+    sample = loader.build_tsdf_and_mapping()
+    data = model_mod._build_forward_kwargs(sample, device)
+    enc_args = (loader.depth, loader.cam_K, loader.cam_pose,
+                loader.vox_origin)
+
+    def gpu():
+        with torch.no_grad():
+            with torch.cuda.amp.autocast(enabled=True):
+                model(**data)
+        torch.cuda.synchronize()
+
+    def encode():
+        tsdf_torch.encode_low(*enc_args, drop_invalid_depth=True,
+                              device=device)
+        torch.cuda.synchronize()
+
+    # (1) two GPU stages on two CUDA streams
+    s1, s2 = torch.cuda.Stream(), torch.cuda.Stream()
+
+    def streams():
+        with torch.no_grad():
+            with torch.cuda.stream(s1):
+                with torch.cuda.amp.autocast(enabled=True):
+                    model(**data)
+            with torch.cuda.stream(s2):
+                tsdf_torch.encode_low(*enc_args, drop_invalid_depth=True,
+                                      device=device)
+        torch.cuda.synchronize()
+
+    # (2) the CPU half of a frame, in a thread, against the model
+    def cpu_half():
+        loader._build_low_res_mapping()
+
+    # (3) the live window's heaviest painting, in a thread, against the model
+    paint = None
+    try:
+        from . import display_solid as ds
+        from .live_view import occupied
+    except ImportError:
+        import display_solid as ds
+        from live_view import occupied
+    pred, _ = model_mod.predict(model, sample, device=device, amp='auto')
+    idx, cls = occupied(pred, build_mask(sample, 'surface'))
+    if len(idx) and frame.rgb is not None:
+        image = np.ascontiguousarray(
+            np.asarray(frame.rgb)[:, :, ::-1]).astype(np.uint8)
+        class_rgb = ds.DEFAULT_COLORMAP[cls]
+        view_idx = ds.to_view_index(idx)
+
+        def paint():                       # exactly live_view._paint, 'all'
+            photo, vis, _, _ = ds.photo_colours(
+                idx, loader.vox_origin, loader.cam_pose, loader.cam_K,
+                image, loader.depth, mode='all', reach=args.reach)
+            ds.fill_hidden(photo, vis, class_rgb, view_idx, 'nearest')
+            ds.build_cube_mesh(view_idx, class_rgb)
+
+    def timed(fn, n=8):
+        for _ in range(2):
+            fn()
+        ts = []
+        for _ in range(n):
+            t0 = time.time()
+            fn()
+            ts.append(time.time() - t0)
+        return md(ts)
+
+    def against_model(fn):
+        def run():
+            t = threading.Thread(target=fn)
+            t.start()
+            gpu()
+            t.join()
+        return run
+
+    rows = []
+    fwd = timed(gpu)
+    enc = timed(encode)
+    rows.append(('model + encode, 2 CUDA streams', '%.0f' % enc,
+                 '%.0f' % (fwd + enc), '%.0f' % timed(streams)))
+    cpu = timed(cpu_half)
+    rows.append(('model + `mapping` tables, thread', '%.0f' % cpu,
+                 '%.0f' % (fwd + cpu), '%.0f' % timed(against_model(cpu_half))))
+    if paint is not None:
+        pt = timed(paint)
+        rows.append(("model + `--colour all` paint, thread", '%.0f' % pt,
+                     '%.0f' % (fwd + pt),
+                     '%.0f' % timed(against_model(paint))))
+
+    return ('## Parallelism\n\n'
+            + table(('the model forward, %.0f ms, plus' % fwd, 'alone',
+                     'serial', 'together'), rows, '<>>>')
+            + '\n\nIf `together` matches `serial`, nothing overlapped. If it '
+              'matches the\nmodel alone, the second stage was free. Nothing '
+              'in the pipeline does any\nof this today: there are no threads, '
+              'no CUDA streams and no\nmultiprocessing in inference/, and '
+              'torch\'s %d intra-op threads only\nserve CPU tensors.'
+            % torch.get_num_threads())
+
+
 def section_vram(args):
     """How small a card this fits on. Runs one frame in a child process with
     the allocator capped, because an OOM is not survivable in-process."""
@@ -602,7 +719,7 @@ def main():
     frames = collect_frames(args, args.frames + args.warmup)
 
     model = None
-    if {'frame', 'agree', 'colour'} & set(want):
+    if {'frame', 'agree', 'colour', 'parallel'} & set(want):
         cfg = load_cfg(args, [])
         model = model_mod.load_model(cfg, device=device)
 
@@ -620,6 +737,8 @@ def main():
             blocks.append(section_agree(args, frames, model, device))
         elif w == 'colour':
             blocks.append(section_colour(args, frames, model, device))
+        elif w == 'parallel':
+            blocks.append(section_parallel(args, frames, model, device))
         elif w == 'vram':
             # the children need the card. A parent still holding the model,
             # and the allocator still holding every block it cached for the
