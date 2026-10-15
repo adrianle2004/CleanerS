@@ -271,7 +271,12 @@ class FrameLoader:
         `floor` and `ceiling` are the first predictions to collapse.
 
         camera_height: metres above the floor. NYU's own frames sit at
-            1.18-1.32 m, so the 1.25 default is mid-range; measure yours.
+            1.18-1.32 m, so the 1.25 default is mid-range; measure yours. It
+            is the only thing that says where the floor is -- vox_origin is
+            fixed, so this moves the measured scene inside a 2.88 m-tall
+            volume, not the volume. 15 cm out changes ~14% of predicted
+            voxels; 30 cm out clips 5% of the observed ones away and loses a
+            third of `ceiling`. document/README.md has the table.
         yaw: rotation about the vertical axis, radians. Only matters if you
             want the volume aligned to walls rather than to the camera.
 

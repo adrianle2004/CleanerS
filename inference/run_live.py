@@ -257,6 +257,7 @@ def main():
     n = skipped = 0
     t_start = t_window = time.time()
     enc_s = inf_s = 0.0
+    said_height = False        # the 1.25 m fallback is worth saying out loud
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov, imu=args.imu,
@@ -291,6 +292,17 @@ def main():
                     height = frame.camera_height
                 if height is None:
                     height = 1.25
+                    if not said_height:
+                        said_height = True
+                        # world Z=0 is the floor and the volume is only
+                        # 2.88 m tall, so this number is the only thing
+                        # saying where the floor is. 15 cm out moves ~14%
+                        # of predicted voxels -- document/HARDWARE.md
+                        log.warning('no camera height given and the source '
+                                    'has none: ASSUMING %.2f m. Measure it '
+                                    'and pass --camera_height; 15 cm out '
+                                    'changes about 14%% of the prediction.',
+                                    height)
                 yaw = args.yaw
                 if yaw is None:
                     yaw = frame.yaw

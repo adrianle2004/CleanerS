@@ -616,6 +616,23 @@ An identity `cam_pose` sends world Z along the viewing direction instead,
 producing a 4.8 m-tall × 2.88 m-deep box and handing the network a scene
 rotated 90°. `floor` and `ceiling` are the first predictions to collapse.
 
+**`camera_height` is the only thing that says where the floor is.** `vox_origin`
+is fixed, so the number does not move the box — it moves the measured scene
+inside it, in a volume 2.88 m tall that starts 5 cm below the floor. Measured
+on two room07 frames against its floor-plane fit of 1.0858 m, changing nothing
+else:
+
+| height error | voxels changing class |
+| ---: | ---: |
+| 15 cm | **14%** |
+| 16 cm (the 1.25 default here) | 15% |
+| 30 cm | 20% |
+
+Too low and the floor is pushed under `vox_origin[2]` and clipped away —
+observed voxels fall 5% at 30 cm. Too high and the ceiling band leaves the
+volume: `ceiling` predictions drop 29%. `run_live` warns once if it has to
+assume 1.25 m.
+
 #### `_load_bin_header(bin_path)` (static)
 
 Unpacks `3f` `vox_origin` then `16f` `cam_pose` reshaped to 4×4.
@@ -981,10 +998,10 @@ and closes the sensor cleanly.
 | --- | --- | --- |
 | `--source` | `realsense` | `realsense[:WxH@FPS]` \| `nyu:/path` \| `folder:/path` |
 | `--fov {nyu,native}` | `nyu` | |
-| `--camera_height` | `None` | → capture's meta.json → 1.25 |
+| `--camera_height` | `None` | → capture's meta.json → 1.25 **and warns**; see below |
 | `--yaw` | `None` | → meta.json → 0.0 |
 | `--rgb_dir`, `--loop`, `--fps` | | replay sources only |
-| `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 83 ms of a 320 ms frame |
+| `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 82 ms of a 320 ms frame |
 | `--out_dir` | `./outputs/live_session` | `prediction/` and `ply/` under it, created only when written to |
 | `--zoom` | 2.0 | how much of the window the volume fills |
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
