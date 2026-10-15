@@ -91,6 +91,23 @@ baseline bit-identical to `custom_visual_pred/` on 654/654:
 | torch encode + fp32 | 47.7288 | 74.9528 |
 | torch encode + AMP | 47.7285 | 74.9530 |
 
+## The live window
+
+`--display` draws the prediction as it runs, in the same loop, so its cost is
+simply added to the frame. Measured on the same replay, 12 frames:
+
+| `--colour` | what it paints with | +ms | fps |
+| --- | --- | ---: | ---: |
+| *no window* | | 0 | 2.88 |
+| `class` | the semantic colour | 4 | 2.54 |
+| `zbuffer` | the photo pixel each voxel is front-most on | 15 | 2.65 |
+| `all` | the three photo rules stacked | 110 | 2.10 |
+
+`all` cost 424 ms before this, which would have made it 1.3 fps. Its distance
+query is now a scatter over the voxel lattice rather than a KD-tree search --
+bit-identical, 4.3x faster -- which is what moved it into the budget. The mesh
+itself is never the problem: 9,029 voxels build in 5 ms and recolour in 0.8.
+
 ## The ceiling
 
 The 0.32 s of compute is four pieces, plus ~28 ms the source costs on top

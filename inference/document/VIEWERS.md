@@ -1,7 +1,8 @@
 # Viewers — every button and every mode
 
-Four files show the same 60×36×60 prediction. They differ in what they draw and
-what they draw it *against*.
+Five files show the same 60×36×60 prediction. They differ in what they draw,
+what they draw it *against*, and whether the thing on screen is a file or a
+camera.
 
 | file | draws | use it to |
 | --- | --- | --- |
@@ -9,9 +10,14 @@ what they draw it *against*.
 | [`display_solid.py`](#display_solidpy) | voxels as solid 8 cm cubes | look at the prediction |
 | [`reconstruct.py`](#reconstructpy) | the measured depth surface, photo-textured | look at what the camera actually got |
 | [`display_overlay.py`](#display_overlaypy) | both, cubes made see-through | compare the two |
+| [`live_view.py`](#live_viewpy) | the solid cubes, replaced every frame | watch the camera as it runs |
 
-All three of the newer ones use **buttons, not key bindings**. That is not a
-style choice — see [Why buttons](#why-buttons-and-not-keys).
+The first four open a **file**. `live_view.py` is the odd one out: it is not a
+command, it is the window `run_live --display` drives from its own loop.
+
+All four of the file viewers use **buttons, not key bindings**. That is not a
+style choice — see [Why buttons](#why-buttons-and-not-keys). The live window
+is the exception, and the reason is in that section too.
 
 ```bash
 python inference/display_solid.py    outputs/room03/ply/live_000000.ply
@@ -257,6 +263,70 @@ default `both`), plus everything `reconstruct.py` and `display_solid.py` take.
 
 ---
 
+## `live_view.py`
+
+The live window. Not a command of its own:
+
+```bash
+python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
+    --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
+    --source realsense --display --colour zbuffer
+```
+
+Same solid cubes as `display_solid.py` — it imports that file's
+`build_cube_mesh`, `photo_colours` and `fill_hidden` rather than reimplementing
+them — but the geometry is **replaced in place** every frame instead of loaded
+once, and the renderer is open3d's legacy `Visualizer` rather than the `gui`
+toolkit, so it is driven from `run_live`'s loop with no second thread.
+
+### Colour
+
+`--colour`, or `c` in the window to cycle. Per frame, on the dev box:
+
+| | ms | |
+| --- | ---: | --- |
+| `class` | ~0 | the semantic colour. What the model *says* |
+| `zbuffer` | 11-17 | the photo pixel each voxel is front-most on |
+| `all` | ~100 | the three photo rules stacked, best evidence first |
+
+These are `display_solid`'s own `--visibility` rules, and mean exactly what
+they mean there. `all` additionally fills the voxels no rule reached with the
+nearest visible sibling of the same class (`--hidden nearest`), because at that
+coverage borrowing reads better than dimming; `zbuffer` misses too many voxels
+for that to be anything but a smear, so those stay dimmed class colour.
+
+`all` cost 424 ms before this window existed. It is ~100 ms now because its
+distance query was rewritten as a scatter — see
+[`points_in_cubes`](README.md#display_solidpy--solid-voxel-viewer). That is the
+difference between 1.3 fps and 2.1 fps end to end.
+
+### Keys and mouse
+
+| | |
+| --- | --- |
+| mouse | orbit, pan, zoom — and the viewpoint survives every frame update |
+| `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
+| `s` | screenshot into `--out_dir` |
+| close the window | stops the run |
+
+### What it does not do
+
+**No picking and no legend.** The legacy window has no mouse-position
+callback, so naming the voxel under the cursor is not a matter of effort — it
+is not available. Open the saved `.ply` in `display_solid.py` for that.
+
+**No programmatic framing.** Where the window first points is open3d's own fit,
+which frames the bounding sphere and so backs off about twice as far as it
+needs to: the room lands at ~40% of the window and you scroll once. In open3d
+0.17 `Visualizer.get_view_control()` returns a **copy**, so `set_zoom`,
+`set_lookat` and `set_front` change an object the window does not own. They
+report success and the readback through the same handle agrees; the rendered
+pixels are byte-identical at zoom 0.3 and 0.9. `display_solid` aims its camera
+with `widget3d.look_at`, which works — but that is the `gui` toolkit, and it
+owns the main thread.
+
+---
+
 ## `display.py`
 
 The original point-cloud viewer, left working and unchanged. Voxels as
@@ -286,6 +356,13 @@ real window fails on the first keystroke.
 `SceneWidget.set_on_mouse` is a *widget* callback and does take an
 `EventCallbackResult`; that is why hovering and Ctrl+click still work.
 
+**None of this applies to `live_view.py`**, which is the legacy
+`VisualizerWithKeyCallback`, not the `gui` toolkit.
+`register_key_callback(ord('C'), fn)` there takes a plain callable and the
+return value is a bool, so there is nothing to cast and `c` and `s` are
+ordinary keys. The trade is the other way round: that window has keys but no
+widgets at all, hence no buttons, no legend and no readout bar.
+
 ---
 
 ## Two shared conventions
@@ -296,5 +373,8 @@ expects the OpenGL convention; without it the scene renders inside-out, with
 the eye behind the far wall. Left/right is already correct and is unchanged by
 the reflection. `--raw-axes` turns it off to show the difference.
 
-**Framing.** Every viewer frames on the *prediction's* extent, so the same
-frame is the same size in all of them and they can be compared directly.
+**Framing.** Every *file* viewer frames on the prediction's extent, so the
+same frame is the same size in all of them and they can be compared directly.
+`live_view.py` cannot (see above), and should not anyway: re-framing on the
+occupied extent every frame would re-aim the camera each time the model changed
+its mind. It takes open3d's fit once and then leaves the camera to you.

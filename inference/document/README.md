@@ -37,6 +37,7 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
   - [`visualize.py`](#visualizepy--voxels--ply)
   - [`run_inference.py`](#run_inferencepy--batch--single-frame-runner)
   - [`run_live.py`](#run_livepy--streaming-runner)
+  - [`live_view.py`](#live_viewpy--the-live-window)
   - [`utils.py`](#utilspy--shared-helpers)
   - [`display.py`](#displaypy--standalone-viewer)
   - [`display_solid.py`](#display_solidpy--solid-voxel-viewer)
@@ -889,6 +890,8 @@ and closes the sensor cleanly.
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
 | `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
 | `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
+| `--display` | off | open the live window, [`live_view.py`](#live_viewpy--the-live-window) |
+| `--colour {class,zbuffer,all}` | `zbuffer` | what that window paints the voxels with |
 | `--max_frames` | 0 (unlimited) | |
 | `--log_every` | 30 | |
 
@@ -919,6 +922,71 @@ Encode and inference time are accumulated separately and reported as
 `encode N ms | infer N ms`, which is how the encode bottleneck was identified.
 Both stages end in a `.cpu()` copy, which synchronises, so the split is honest
 and not an artefact of CUDA's asynchrony.
+
+---
+
+### `live_view.py` — the live window
+
+`run_live --display`. One open3d window whose voxels are replaced every frame,
+driven from the inference loop — no second thread, no marshalling. The
+geometry and the colouring are `display_solid`'s functions, imported:
+`build_cube_mesh`, `paint_mesh`, `photo_colours`, `fill_hidden`. Same culled
+solid cubes, same baked face shading, same colour rules.
+
+[VIEWERS.md](VIEWERS.md#live_viewpy) is the user-facing page — keys, colour
+modes, and the two things this window cannot do (pick a voxel, aim its own
+camera). What follows is the code.
+
+#### `LiveView(colour='zbuffer', reach=0.75, width=1280, height=800, out_dir=None, title=...)`
+
+Imports open3d and `display_solid` lazily, inside `__init__`, so `run_live`
+without `--display` neither needs open3d nor pays to import it.
+
+Pins `display_solid.FIXED_PIVOT = GRID[2] - 1` on construction. `to_view_index`
+reflects the depth axis about a pivot taken from the frame's own voxel bounds,
+which **moves as the scene changes** — the room would jump between frames.
+`display_overlay.py` pins it for the same reason, to put two files in one
+coordinate system.
+
+The renderer is unlit (`light_on = False`): the face shading is already baked
+into the vertex colours by `build_cube_mesh`'s `FACES` table, and real lighting
+on top would tone-map the class colours away from the legend.
+
+#### `update(pred_label, mask, loader, rgb=None) -> bool`
+
+The whole API. Takes what `run_live` already hands `save_prediction_ply`, plus
+the loader (for `cam_K` / `cam_pose` / `vox_origin` / `depth`) and the colour
+frame. Returns **False once the user closes the window**, which stops the run.
+
+| stage | ms |
+| --- | ---: |
+| colour, `class` | ~0 |
+| colour, `zbuffer` | 11-17 |
+| colour, `all` | ~100 |
+| `build_cube_mesh` + draw | 4-9 |
+
+#### `occupied(pred_label, mask) -> (idx, cls)`
+
+The voxels the `.ply` would hold, and their classes — the same selection
+`visualize.save_prediction_ply` makes: zero what the mask excludes, keep what
+is left occupied. The `(x, y, z)` order of `np.nonzero` matches `get_xyz`'s
+meshgrid, so these are the indices `display_solid`'s ply reader would produce.
+
+#### `_swap(mesh)`
+
+One geometry object, its arrays reassigned:
+
+```python
+self.geom.vertices = mesh.vertices
+self.geom.triangles = mesh.triangles
+self.geom.vertex_colors = mesh.vertex_colors
+self.vis.update_geometry(self.geom)
+```
+
+`update_geometry` handles the changing vertex count (verified: 8,387 → 4,634 →
+9,736 voxels across three frames, each drawn correctly). `remove_geometry` +
+`add_geometry` would work too and would **refit the camera**, throwing away the
+viewpoint the user set — which is the whole reason the swap is done this way.
 
 ---
 
@@ -1039,6 +1107,34 @@ wrong object. Voxels the camera could not see get `--hidden`: their class
 colour dimmed to 0.55 (default, and it reads as "unseen"), or the colour of the
 nearest visible voxel of the same class (`--hidden nearest`, for a continuous
 surface). The readout says which of the two a voxel is.
+
+**How the query is answered — `points_in_cubes`.** Every rule below that
+starts from the measured points asks the same thing: which points lie inside
+this voxel's cube, grown to `reach`? That is
+`cKDTree(pts).query_ball_point(idx, r, p=inf)` — Chebyshev, so the region is a
+cube and not a sphere, which would clip the corners at reach 0.5 and stop being
+"inside the voxel".
+
+It is now a **scatter rather than a search**. A point reaches a voxel iff
+`|i_a - p_a| <= r` on every axis, which on each axis means the integers
+`ceil(p-r) .. floor(p+r)` — at most two of them while `r < 1`. So each point
+touches at most 2³ = 8 lattice sites, and the whole query is a bounded scatter
+over the grid: no tree to build, and no per-voxel Python list to unpack
+afterwards. `photo_from_points_multi` runs several reaches through one
+unprojection and one lattice lookup, which is most of the second call's cost.
+
+Measured on NYU0001 (265 k depth points, 9,029 voxels), and **bit-identical**
+to the tree across 5 frames × 4 modes × 4 reaches:
+
+| `photo_colours(mode=…)` | before | after |
+| --- | ---: | ---: |
+| `points` | 138 ms | **34 ms** |
+| `surface` | 215 ms | **85 ms** |
+| `all` | 424 ms | **98 ms** |
+
+That is what makes `--colour all` usable in the live window. Reaches past 1.5
+voxels fall back to the tree (`_points_in_cubes_tree`) rather than loop over a
+neighbourhood that is growing cubically.
 
 **Where a voxel's colour comes from — `--visibility`.** The question is which
 measured pixels belong to a given cube, and there are three answers here

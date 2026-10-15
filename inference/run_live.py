@@ -128,6 +128,19 @@ def parse_args():
                         'for 1 voxel in 500 and the fourth decimal of the NYU '
                         "score. 'auto' is on whenever the model is on a GPU.")
 
+    p.add_argument('--display', action='store_true',
+                   help='open a live 3D window (inference/live_view.py) and '
+                        'replace the voxels in it every frame. Orbit and zoom '
+                        'with the mouse; the viewpoint survives the updates. '
+                        'Closing the window stops the run.')
+    p.add_argument('--colour', '--color', dest='colour', default='zbuffer',
+                   choices=['class', 'zbuffer', 'all'],
+                   help="what --display paints the voxels with: 'class' the "
+                        "semantic colour (free), 'zbuffer' the photo pixel "
+                        'each voxel is front-most on (17 ms), '
+                        "'all' the three photo rules stacked, best evidence "
+                        'first (98 ms). `c` in the window cycles them.')
+
     p.add_argument('--out_dir', default='./outputs')
     p.add_argument('--save', default='ply', choices=['ply', 'npy', 'both', 'none'],
                    help="'none' still reports throughput; use it to benchmark")
@@ -179,6 +192,14 @@ def main():
     ply_dir = ensure_dir(os.path.join(args.out_dir, 'ply'))
     pred_dir = ensure_dir(os.path.join(args.out_dir, 'prediction'))
 
+    view = None
+    if args.display:
+        try:
+            from .live_view import LiveView
+        except ImportError:
+            from live_view import LiveView
+        view = LiveView(colour=args.colour, out_dir=args.out_dir)
+
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)
     _restore_log_levels()
@@ -189,9 +210,10 @@ def main():
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov) as src:
-        log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s',
+        log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
-                 'on' if model_mod.use_amp(device, args.amp) else 'off')
+                 'on' if model_mod.use_amp(device, args.amp) else 'off',
+                 ' | display colour=%s' % args.colour if view else '')
         for frame in src.frames():
             if _STOP:
                 break
@@ -236,11 +258,19 @@ def main():
             enc_s += t1 - t0
             inf_s += t2 - t1
 
+            mask = None
+            if view is not None or args.save in ('ply', 'both'):
+                mask = build_mask(sample, args.mask)
             if args.save in ('npy', 'both'):
                 np.save(os.path.join(pred_dir, '%s.npy' % frame.name), pred_label)
             if args.save in ('ply', 'both'):
-                save_prediction_ply(pred_label, build_mask(sample, args.mask),
+                save_prediction_ply(pred_label, mask,
                                     os.path.join(ply_dir, '%s.ply' % frame.name))
+            if view is not None and not view.update(pred_label, mask, loader,
+                                                   frame.rgb):
+                log.info('display window closed; stopping')
+                n += 1
+                break
 
             n += 1
             if args.log_every and n % args.log_every == 0:
@@ -253,6 +283,9 @@ def main():
                 break
 
     total = time.time() - t_start
+    if view is not None:
+        log.info('%s', view.report())
+        view.close()
     if n:
         log.info('done: %d frames in %.1fs (%.2f fps) | encode %.0f ms/frame | '
                  'infer %.0f ms/frame%s', n, total, n / total,
