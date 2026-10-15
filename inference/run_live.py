@@ -174,6 +174,12 @@ def parse_args():
                    help='width of the colour/depth window beside it. It is '
                         'resizable -- this only sets where it starts. 420 + '
                         "the 3D window's 1280 fits a 1728-wide desktop.")
+    p.add_argument('--sync_display', action='store_true',
+                   help='draw each frame in its own iteration instead of one '
+                        'behind. Costs the ~75-130 ms of painting that would '
+                        'otherwise hide behind the next frame\'s inference '
+                        '(~20%% with --colour all), and buys back a frame of '
+                        'display lag.')
     p.add_argument('--no_panels', dest='panels', action='store_false',
                    help='--display only: drop the second window showing the '
                         'colour and depth the model was given')
@@ -338,7 +344,8 @@ def main():
                              % args.window)
         view = LiveView(colour=args.colour, out_dir=args.out_dir,
                         panels=args.panels, zoom=args.zoom,
-                        width=w3d, height=h3d, panel_width=args.panel_width)
+                        width=w3d, height=h3d, panel_width=args.panel_width,
+                        overlap=not args.sync_display)
 
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)
@@ -356,7 +363,10 @@ def main():
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
                  'on' if model_mod.use_amp(device, args.amp) else 'off',
-                 ' | display colour=%s' % args.colour if view else '')
+                 ' | display colour=%s%s' % (
+                     args.colour,
+                     '' if args.sync_display or args.colour == 'class'
+                     else ', one frame behind') if view else '')
         for frame in src.frames():
             if _STOP:
                 break

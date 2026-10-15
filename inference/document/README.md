@@ -1073,9 +1073,10 @@ and closes the sensor cleanly.
 | `--camera_height M\|auto` | `None` | → capture's meta.json → 1.25 **and warns**. `auto` measures it; see below |
 | `--yaw` | `None` | → meta.json → 0.0 |
 | `--rgb_dir`, `--loop`, `--fps` | | replay sources only |
-| `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 82 ms of a 320 ms frame |
+| `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 89 ms of a 320 ms frame |
 | `--out_dir` | `./outputs/live_session` | `prediction/` and `ply/` under it, created only when written to |
 | `--zoom` | 2.0 | how much of the window the volume fills |
+| `--sync_display` | off | draw each frame in its own iteration; see below |
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
 | `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
 | `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
@@ -1122,19 +1123,41 @@ and not an artefact of CUDA's asynchrony.
 ### `live_view.py` — the live window
 
 `run_live --display`. One open3d window whose voxels are replaced every frame,
-driven from the inference loop — no second thread, no marshalling. The
-geometry and the colouring are `display_solid`'s functions, imported:
-`build_cube_mesh`, `paint_mesh`, `photo_colours`, `fill_hidden`. Same culled
-solid cubes, same baked face shading, same colour rules.
+driven from the inference loop — every window call is made from that loop's
+own thread. The geometry and the colouring are `display_solid`'s functions,
+imported: `build_cube_mesh`, `paint_mesh`, `photo_colours`, `fill_hidden`.
+Same culled solid cubes, same baked face shading, same colour rules.
+
+**It draws one frame behind.** `update()` hands the frame it is given to a
+single worker thread and draws the *previous* one, so the painting — numpy,
+which releases the GIL — runs against the caller's next encode and forward
+pass. Measured `96 of 96 ms hidden`, **2.18 → 2.45 fps** on a live camera in
+`--colour all` and **2.32 → 2.99** replaying a bag. The mesh and the camera
+panels are deferred together, from the same frame, so the window's two halves
+never disagree. `--sync_display` draws each frame in its own iteration
+instead; `--colour class` paints for free, so the overlap switches itself
+off rather than spend a frame of lag on nothing.
+
+Not free on a live camera: the forward pass measured 208 → 250 ms with the
+painter running, because it competes for the GIL with the main thread's
+kernel launching. Net +12% there, +29% on a bag.
 
 [VIEWERS.md](VIEWERS.md#live_viewpy) is the user-facing page — keys, colour
 modes, and the two things this window cannot do (pick a voxel, aim its own
 camera). What follows is the code.
 
-#### `LiveView(colour='zbuffer', reach=0.75, width=1280, height=800, out_dir=None, title=...)`
+#### `LiveView(colour='zbuffer', reach=0.75, width=1280, height=800, out_dir=None, title=..., overlap=True)`
 
 Imports open3d and `display_solid` lazily, inside `__init__`, so `run_live`
 without `--display` neither needs open3d nor pays to import it.
+
+`overlap` owns the one-frame-behind behaviour above. The worker is a
+single-slot `ThreadPoolExecutor`; `_drain()` joins it before anything else
+touches the geometry, which is what makes the key handlers safe — `c`, `+`,
+`-`, `0` and `s` all fire with a paint in flight and all call `_repaint()`.
+A frame whose paint is still running at `close()` is drained and not drawn,
+which is why the exit line usually reports one fewer frame than the run
+processed.
 
 Pins `display_solid.FIXED_PIVOT = GRID[2] - 1` on construction. `to_view_index`
 reflects the depth axis about a pivot taken from the frame's own voxel bounds,

@@ -282,7 +282,17 @@ Same solid cubes as `display_solid.py` — it imports that file's
 `build_cube_mesh`, `photo_colours` and `fill_hidden` rather than reimplementing
 them — but the geometry is **replaced in place** every frame instead of loaded
 once, and the renderer is open3d's legacy `Visualizer` rather than the `gui`
-toolkit, so it is driven from `run_live`'s loop with no second thread.
+toolkit, so every window call is made from `run_live`'s own loop.
+
+**The window runs one frame behind, on purpose.** Painting a frame is numpy,
+which releases the GIL, so it runs on a worker thread while the main thread
+encodes and infers the *next* frame — the paint comes out of the frame budget
+almost entirely (`96 of it hidden behind inference`, says the exit line). The
+mesh and the camera panels are then drawn together from that same older
+frame, so the two halves of the window never disagree. `--sync_display` turns
+it off and draws each frame in its own iteration: no lag, 2.45 → 2.18 fps on
+a live camera with `--colour all`. In `--colour class` the paint is free
+anyway, so the overlap switches itself off.
 
 ### Colour
 

@@ -103,11 +103,30 @@ you. It is a WINDOW_NORMAL, so drag it to whatever size suits.
 
 Press `c` in the 3D window to cycle the colour modes, `s` to drop a
 screenshot.
+
+*** ONE FRAME BEHIND ***
+
+Painting is numpy, which releases the GIL, so `update()` hands the frame it
+is given to a worker thread and draws the PREVIOUS one. The paint then runs
+against the caller's next encode and forward pass and costs almost nothing:
+measured 96 of 96 ms hidden, 2.18 -> 2.45 fps on a live camera in `all` mode
+and 2.32 -> 2.99 replaying a bag.
+
+What that buys is paid for in latency: the window is one frame behind the
+camera. The RGB/depth panels are deferred with the mesh, from the same frame,
+because a window whose two halves disagree is a worse instrument than a slow
+one. `overlap=False` (`run_live --sync_display`) draws each frame in its own
+iteration instead.
+
+It is not free on a live camera: the forward pass measured 208 -> 250 ms with
+the painter running, since the painter competes for the GIL with the main
+thread's kernel launching. Net it is still 12% there and 29% on a bag.
 """
 
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
@@ -126,7 +145,7 @@ class LiveView:
 
     def __init__(self, colour='zbuffer', reach=0.75, width=1280, height=800,
                  out_dir=None, title='CleanerS live', panels=True,
-                 panel_width=420, zoom=2.0):
+                 panel_width=420, zoom=2.0, overlap=True):
         if colour not in MODES:
             raise ValueError('colour must be one of %s, not %r'
                              % (', '.join(MODES), colour))
@@ -153,9 +172,19 @@ class LiveView:
         self.frames = 0
         self.colour_ms = 0.0
         self.draw_ms = 0.0
+        self.wait_ms = 0.0
         self.closed = False
         self.geom = None
         self._last = None          # (idx, cls, loader, rgb), to recolour
+
+        # Painting a frame is pure numpy and releases the GIL, so it can run
+        # while the GPU encodes and infers the NEXT frame -- measured 103 of
+        # 103 ms hidden behind a 195 ms forward pass. The cost is that what
+        # is on screen is one frame behind the camera; the panels are drawn
+        # from the same frame as the mesh, so the two halves always agree.
+        self.overlap = bool(overlap)
+        self._pool = ThreadPoolExecutor(max_workers=1) if overlap else None
+        self._job = None
 
         self.panels = panels
         self.panel_w = panel_width
@@ -206,35 +235,101 @@ class LiveView:
         loader: the FrameLoader, for cam_K / cam_pose / vox_origin / depth.
         rgb: the frame's colour image, BGR as the loader got it.
         name/fps: for the panel footer only.
+
+        With `overlap` on (the default, except in `class` mode where there is
+        nothing to hide), this DRAWS the previous frame and then starts
+        painting this one, so the painting runs against the caller's next
+        encode and forward pass. The window is therefore one frame behind.
         """
         if self.closed:
             return False
-        if self.panels:
-            self._draw_panels(loader.depth, rgb, name, fps)
+        job = self._job_for(pred_label, mask, loader, rgb, name, fps)
+
+        if not self._overlapping():
+            self._drain()                     # mode may have just changed
+            if job is None:
+                return self._draw()
+            job['colours'] = self._paint_timed(job)
+            return self._present(job)
+
+        alive = True
+        if self._job is not None:             # the frame painted last round
+            done, self._job = self._job, None
+            t0 = time.time()
+            done['colours'] = done['future'].result()
+            self.wait_ms += 1000 * (time.time() - t0)
+            alive = self._present(done)
+        if not alive:
+            return False
+        if job is None:
+            return self._draw()
+        job['future'] = self._pool.submit(self._paint_timed, job)
+        self._job = job
+        return True
+
+    def _overlapping(self):
+        # `class` paint is a colormap lookup -- overlapping it would buy
+        # nothing and still cost a frame of lag
+        return self.overlap and self.colour != 'class'
+
+    def _job_for(self, pred_label, mask, loader, rgb, name, fps):
+        """Everything one frame needs, or None when there is nothing to draw."""
         idx, cls = occupied(pred_label, mask)
-        if len(idx) == 0:                     # nothing predicted: keep the
-            return self._draw()               # last picture rather than crash
-        self._last = (idx, cls, loader, rgb)
+        if len(idx) == 0:
+            return None
+        # the painter reads these one iteration later, so they must not be
+        # views into a buffer the frame source is about to recycle. Every
+        # run_live path already hands over owned arrays (astype and
+        # cv2.remap both copy); this is the guard, not the assumption.
+        if rgb is not None and rgb.base is not None:
+            rgb = rgb.copy()
+        return {'idx': idx, 'cls': cls, 'loader': loader, 'rgb': rgb,
+                'depth': loader.depth, 'name': name, 'fps': fps,
+                'colours': None, 'future': None}
+
+    def _paint_timed(self, job):
+        """Runs on the worker thread when overlapping, inline when not."""
         t0 = time.time()
-        colours = self._paint(idx, cls, loader, rgb)
-        t1 = time.time()
-        mesh = self._build(idx, colours)
-        self._swap(mesh)
+        out = self._paint(job['idx'], job['cls'], job['loader'], job['rgb'])
+        self.colour_ms += 1000 * (time.time() - t0)
+        return out
+
+    def _present(self, job):
+        """Put one painted frame on screen: panels and mesh from the SAME
+        frame, which is the point of deferring both together."""
+        t0 = time.time()
+        if self.panels:
+            self._draw_panels(job['depth'], job['rgb'], job['name'],
+                              job['fps'])
+        self._swap(self._build(job['idx'], job['colours']))
         alive = self._draw()
+        self._last = (job['idx'], job['cls'], job['loader'], job['rgb'])
         self.frames += 1
-        self.colour_ms += 1000 * (t1 - t0)
-        self.draw_ms += 1000 * (time.time() - t1)
+        self.draw_ms += 1000 * (time.time() - t0)
         return alive
+
+    def _drain(self):
+        """Finish any in-flight paint without drawing it. Called before
+        anything that touches the geometry from this thread."""
+        if self._job is not None:
+            job, self._job = self._job, None
+            try:
+                job['future'].result()
+            except Exception as e:            # a paint bug must not be lost
+                log.warning('discarding a failed paint: %s', e)
 
     def close(self):
         if not self.closed:
+            self.closed = True               # before draining: no re-entry
+            self._drain()
+            if self._pool is not None:
+                self._pool.shutdown(wait=True)
             self.vis.destroy_window()
             if self.panels:
                 try:
                     self._cv.destroyWindow(self.panel_window)
                 except Exception:        # already gone, or no GUI backend
                     pass
-            self.closed = True
 
     # ---- the camera panels ----
     def _draw_panels(self, depth, rgb, name, fps):
@@ -280,9 +375,14 @@ class LiveView:
     def report(self):
         if not self.frames:
             return 'display: no frames drawn'
-        return ('display: %d frames | colour %.0f ms | mesh+draw %.0f ms '
-                '| mode %s' % (self.frames, self.colour_ms / self.frames,
-                               self.draw_ms / self.frames, self.colour))
+        bits = ['%d frames' % self.frames,
+                'colour %.0f ms' % (self.colour_ms / self.frames),
+                'mesh+draw %.0f ms' % (self.draw_ms / self.frames)]
+        if self._overlapping():
+            hidden = max(0.0, self.colour_ms - self.wait_ms) / self.frames
+            bits.append('%.0f of it hidden behind inference' % hidden)
+        bits.append('mode %s' % self.colour)
+        return 'display: ' + ' | '.join(bits)
 
     # ---- colour ----
     def _paint(self, idx, cls, loader, rgb):
@@ -367,6 +467,7 @@ class LiveView:
     def _repaint(self):
         """Redraw the frame on screen with the current settings, rather than
         making the user wait for the next one."""
+        self._drain()            # never build geometry alongside the painter
         if self._last is None:
             return
         idx, cls, loader, rgb = self._last

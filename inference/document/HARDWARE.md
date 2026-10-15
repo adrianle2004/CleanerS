@@ -303,13 +303,31 @@ the model forward:
   reads as ~28 ms here but on a live camera that is `wait_for_frames`
   *waiting for the sensor*, not CPU work to hide: the sensor is already
   producing the next frame while we work.
-- **The painting is the one real win left: 115 of 135 ms, nearly free.** With
-  `--display --colour all` that is ~24% of the frame. It is not done, because
-  the mesh would then be one frame behind the RGB/depth panels beside it, and
-  a viewer whose two halves disagree is a worse tool for judging a prediction
-  than a slower one. The cost is known and the door is open.
+- **The painting is the one real win, and it is now taken.** `live_view`
+  paints frame N-1 on a worker thread while the main thread encodes and
+  infers frame N, then draws the mesh and the camera panels together from
+  that same older frame — so the two halves of the window always agree, at
+  the cost of the window running one frame behind. `--sync_display` turns it
+  off. The window says what it got: `96 of it hidden behind inference`.
 
-That leaves the forward pass, 59% of the frame, untouched by any of this.
+Measured end to end, `--display --colour all`, same scene:
+
+| | sync | overlapped |
+| --- | ---: | ---: |
+| bag replay, 60 frames | 2.32 fps | **2.99** |
+| live camera, 120 frames | 2.18 fps | **2.45** |
+
+The bag gains 29%, the camera 12%, and the gap is worth knowing about: on
+the camera the forward pass itself measured 208 -> 250 ms with the painter
+running. Hiding 96 ms of painting cost ~42 ms of inference, because the
+painter competes for the GIL with the main thread's kernel launching, and a
+model that cannot issue its next kernel is a GPU going idle. It is still
+clearly worth it; it is not free. In `--colour class` the paint is a
+colormap lookup, so the overlap switches itself off rather than buy nothing
+for a frame of lag.
+
+That leaves the forward pass, now ~64% of the frame, untouched by any of
+this.
 
 ## Does it change the answer?
 
