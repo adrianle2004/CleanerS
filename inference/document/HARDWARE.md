@@ -4,10 +4,13 @@ Measured on one machine, the dev box in [SETUP.md](../../SETUP.md): RTX 3050 Ti
 Laptop (**4 GB**, sm_86, ~192 GB/s), i7-12700H (14c/20t), driver 595,
 torch 1.10.1+cu111. Figures from a second machine are welcome here.
 
-Every number comes from replaying `captures/room07` through the live path at
+Most numbers come from replaying `captures/room07` through the live path at
 640x480, one frame at a time, model loaded once, median of 20 frames after 3
 warm-up -- the script's defaults. NYU replay reads and resizes PNGs on top of
 that and runs ~10% slower.
+[Speed by hardware condition](#speed-by-hardware-condition) is the exception:
+those rows are a D455 on this desk, measured through `run_live` rather than
+staged, because that is the question that row answers.
 
 [CONCEPTS.md](CONCEPTS.md) explains the terms this page leans on — the 12-voxel
 truncation, the 1-D passes, slabbing, projection, fp16, AMP — from the code.
@@ -203,21 +206,45 @@ card actually has to clear is in [hardware gates](#hardware-gates).
 
 ## Speed, by hardware condition
 
-| condition | per frame | fps |
+A D455 on this box, `run_live` end to end, 60 frames a row, started from a
+cold card:
+
+| live camera | per frame | fps |
 | --- | ---: | ---: |
-| *the old path, any machine* | *1.26 s* | *0.79* |
-| no CUDA card | 2.32 s | 0.43 |
-| CUDA, under 4 GB | 0.29 s | 3.4 |
-| CUDA, 4 GB *(this box)* | **0.29-0.33 s** | **3.0-3.4** |
-| ... plus the `.ply` write | 0.41 s | 2.42 |
+| *the old path, `--encoder numpy --amp off`* | *1.70 s* | *0.59* |
+| **the defaults** | **0.35 s** | **2.87** |
+| ... the same run, card now hot | 0.38 s | 2.65 |
+| ... with the window, `--colour all` | 0.41 s | 2.41 |
+| ... plus a `.ply` every frame | 0.48 s | 2.08 |
+
+**4.9x**, and on the camera rather than a replay: the numpy encode costs
+1268 ms a frame there against the fast path's 90.
+
+Then what the hardware itself is worth:
+
+| other conditions | per frame | fps |
+| --- | ---: | ---: |
+| no CUDA card (`--device cpu`, staged) | 2.32 s | 0.43 |
+| CUDA, capped to 1.0-1.5 GB (staged) | 0.29 s | 3.4 |
+| replaying from disk, not a camera | 0.30 s | 3.28 |
 | CUDA, faster than this box | >= 0.21 s | <= 4.8 |
 
-Measured, except the last row. The under-4 GB row is this card with its
-allocator capped, so it *fits* by measurement but runs at this card's speed
-and bandwidth; read it as an upper bound. It no longer carries a time penalty
-at all — the encoder's 67 MB peak leaves the allocator enough room to stop
-churning, where at 96 MB a 1 GB cap cost 2.1x. The last row is arithmetic, not
-a benchmark: see [the ceiling](#the-ceiling).
+Only the last row is arithmetic rather than a benchmark — see
+[the ceiling](#the-ceiling). Three things to read with it:
+
+- **A camera costs ~45 ms a frame over a replay**, which is why the same code
+  does 3.28 fps from disk and 2.87 from the sensor: 34 ms of frame source
+  against 4, plus align and undistort on a 1280x720 stream.
+- **The capped-VRAM row is a fresh-process, single-frame figure on a replay**,
+  so it is not comparable to the live rows above it. What it says is that
+  being near the memory floor no longer costs time — the encoder's 67 MB peak
+  leaves the allocator enough room to stop churning, where at 96 MB a 1 GB cap
+  cost 2.1x.
+- **Read every figure here as +-15%.** Cold, this card runs the defaults at
+  2.87 fps; hot, 2.65; after an hour of sustained benchmarking, 2.1-2.3. Its
+  clocks fall from 1725 to 1035 MHz of a possible 2100 and `nvidia-smi`
+  reports SW power capping. A laptop GPU moves these numbers by more than
+  most of the work on this page did.
 
 **A card is still what buys most of it.** On CPU the model costs ~2.0 s
 against 0.21, so even an encode stage that went 939 -> 363 ms there only moves
