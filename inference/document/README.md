@@ -295,7 +295,7 @@ sensor frame in native pixel coordinates).
 
 **`close()`** — stops the pipeline, swallowing errors.
 
-#### `BagSource(path, fov='nyu', loop=False, fps=None, imu=True, ...)`
+#### `BagSource(path, fov='nyu', loop=False, fps=None, imu=True, realtime=False, ...)`
 
 Replays a RealSense `.bag`. **Subclasses `RealSenseSource`** and replaces only
 how the pipeline is opened: `_setup_from_profile` and `_process` are the
@@ -308,7 +308,8 @@ Three things differ from the device:
 - **`set_real_time(False)`.** librealsense waits for us instead of dropping
   frames we were too slow to collect, so every recorded frame is seen however
   long inference takes. `--fps` throttles if you want to watch it at a sane
-  speed instead.
+  speed instead. `realtime=True` (`--realtime`) hands that back and makes the
+  file behave like a camera — see [pacing](#pacing-a-live-source) below.
 - **Colour is `rgb8`.** A recording replays the format it was made with, and
   capture.py's scans are rgb8 where the live stream is requested as bgr8. The
   profile is read and the channels swapped (`_color_swap`), so `Frame.rgb` is
@@ -350,6 +351,29 @@ What it buys, over 40 frames of that sweep:
 
 The phantom ceiling is the tilt, hanging in mid-air. `--no_imu` turns the
 whole thing off, which is the only way to see it.
+
+#### Pacing a live source
+
+A camera does not wait. `pipeline.wait_for_frames()` returns the **newest**
+frameset and librealsense discards what arrived while we were busy, which is
+the right behaviour here: each frame is an independent single-shot completion,
+so a stale one is worth nothing. The cost is latency, not correctness — the
+frame on screen is one sensor period plus one inference old.
+
+A recording is the opposite by default, because a replay that silently skipped
+most of a scan would be useless for comparing runs. `--realtime` switches a
+`.bag` to the camera's behaviour, which is how to see the live pacing with no
+camera attached. Measured on room07 (recorded at 15 Hz, ~0.39 s of work a
+frame):
+
+```
+pacing=wait for us   808 of 808 frames processed, frame number steps by 1
+pacing=real time      30 of 159 processed, 129 skipped, steps by 2 to 6
+```
+
+`CameraSource.report()` is how that line reaches the log — one sentence about
+what the source did, printed at the end of a run however the run ended, since
+a count that only prints on reaching EOF is the count you never see.
 
 #### `NYUSource(path, rgb_dir=None, loop=False, fps=None)`
 
@@ -963,8 +987,10 @@ and closes the sensor cleanly.
 | `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
 | `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
 | `--no_imu` | off | `bag:` only — ignore the recorded gravity and assume level |
+| `--realtime` | off | `bag:` only — play at the recorded rate and drop what we miss, as a camera does |
 | `--display` | off | open the live window, [`live_view.py`](#live_viewpy--the-live-window) |
 | `--colour {class,zbuffer,all}` | `zbuffer` | what that window paints the voxels with |
+| `--no_panels` | off | `--display` only — drop the colour/depth window beside it |
 | `--max_frames` | 0 (unlimited) | |
 | `--log_every` | 30 | |
 
@@ -1025,11 +1051,12 @@ The renderer is unlit (`light_on = False`): the face shading is already baked
 into the vertex colours by `build_cube_mesh`'s `FACES` table, and real lighting
 on top would tone-map the class colours away from the legend.
 
-#### `update(pred_label, mask, loader, rgb=None) -> bool`
+#### `update(pred_label, mask, loader, rgb=None, name='', fps=None) -> bool`
 
 The whole API. Takes what `run_live` already hands `save_prediction_ply`, plus
 the loader (for `cam_K` / `cam_pose` / `vox_origin` / `depth`) and the colour
-frame. Returns **False once the user closes the window**, which stops the run.
+frame; `name` and `fps` are for the panel footer only. Returns **False once
+the user closes the window**, which stops the run.
 
 | stage | ms |
 | --- | ---: |
@@ -1037,6 +1064,26 @@ frame. Returns **False once the user closes the window**, which stops the run.
 | colour, `zbuffer` | 11-17 |
 | colour, `all` | ~100 |
 | `build_cube_mesh` + draw | 4-9 |
+| the camera panels | ~15 |
+
+#### `_draw_panels(depth, rgb, name, fps)`
+
+The second window: the colour frame over the depth frame, colourised with
+`colorize_depth.colorize` — the RealSense Viewer's own rs-jet ramp with
+per-frame histogram equalisation, the same call `capture.py`'s `--preview`
+makes, so the three agree.
+
+It draws the frame **after** `match_nyu_fov`, not the sensor's native one:
+640×480 with NYU's intrinsics is what the network sees and therefore what is
+worth judging. Equalising per frame means the colours are a shape readout and
+not a measurement — they are not comparable between frames — so the footer
+carries the numbers instead: the frame name, the fraction of depth pixels the
+sensor actually measured, the median range, and the instantaneous rate.
+
+A separate OpenCV window because the open3d one cannot hold widgets at all
+(see [VIEWERS.md](VIEWERS.md#why-buttons-and-not-keys)); the two are
+positioned side by side at startup, the 3D one at the origin and this one
+just past its right edge.
 
 #### `occupied(pred_label, mask) -> (idx, cls)`
 

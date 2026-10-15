@@ -126,6 +126,11 @@ def parse_args():
     p.add_argument('--rgb_dir', default=None, help='replay sources only')
     p.add_argument('--loop', action='store_true', help='replay sources only')
     p.add_argument('--fps', type=float, default=None, help='throttle replay')
+    p.add_argument('--realtime', action='store_true',
+                   help='bag replay: play at the recorded rate and DROP the '
+                        'frames we are too slow to take, which is what a live '
+                        'camera does. Without it a recording waits for us and '
+                        'every frame is processed.')
 
     p.add_argument('--encoder', default='auto',
                    choices=['auto', 'torch', 'numpy', 'cuda'],
@@ -143,6 +148,9 @@ def parse_args():
                         'replace the voxels in it every frame. Orbit and zoom '
                         'with the mouse; the viewpoint survives the updates. '
                         'Closing the window stops the run.')
+    p.add_argument('--no_panels', dest='panels', action='store_false',
+                   help='--display only: drop the second window showing the '
+                        'colour and depth the model was given')
     p.add_argument('--colour', '--color', dest='colour', default='zbuffer',
                    choices=['class', 'zbuffer', 'all'],
                    help="what --display paints the voxels with: 'class' the "
@@ -208,7 +216,8 @@ def main():
             from .live_view import LiveView
         except ImportError:
             from live_view import LiveView
-        view = LiveView(colour=args.colour, out_dir=args.out_dir)
+        view = LiveView(colour=args.colour, out_dir=args.out_dir,
+                        panels=args.panels)
 
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)
@@ -219,7 +228,8 @@ def main():
     enc_s = inf_s = 0.0
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
-                     fps=args.fps, fov=args.fov, imu=args.imu) as src:
+                     fps=args.fps, fov=args.fov, imu=args.imu,
+                     realtime=args.realtime) as src:
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
                  'on' if model_mod.use_amp(device, args.amp) else 'off',
@@ -280,8 +290,9 @@ def main():
             if args.save in ('ply', 'both'):
                 save_prediction_ply(pred_label, mask,
                                     os.path.join(ply_dir, '%s.ply' % frame.name))
-            if view is not None and not view.update(pred_label, mask, loader,
-                                                   frame.rgb):
+            if view is not None and not view.update(
+                    pred_label, mask, loader, frame.rgb, name=frame.name,
+                    fps=1.0 / max(1e-6, time.time() - t0)):
                 log.info('display window closed; stopping')
                 n += 1
                 break
@@ -297,6 +308,9 @@ def main():
                 break
 
     total = time.time() - t_start
+    said = src.report()
+    if said:
+        log.info('%s', said)
     if view is not None:
         log.info('%s', view.report())
         view.close()

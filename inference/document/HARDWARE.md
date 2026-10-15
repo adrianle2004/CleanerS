@@ -103,6 +103,9 @@ simply added to the frame. Measured on the same replay, 12 frames:
 | `zbuffer` | the photo pixel each voxel is front-most on | 15 | 2.65 |
 | `all` | the three photo rules stacked | 110 | 2.10 |
 
+The colour/depth panels beside it (`--no_panels` to drop them) cost a further
+~15 ms, 2.75 -> 2.64 fps.
+
 `all` cost 424 ms before this, which would have made it 1.3 fps. Its distance
 query is now a scatter over the voxel lattice rather than a KD-tree search --
 bit-identical, 4.3x faster -- which is what moved it into the budget. The mesh

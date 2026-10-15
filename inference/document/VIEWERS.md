@@ -305,6 +305,23 @@ distance query was rewritten as a scatter — see
 [`points_in_cubes`](README.md#display_solidpy--solid-voxel-viewer). That is the
 difference between 1.3 fps and 2.1 fps end to end.
 
+### The camera panels
+
+A second window, beside the 3D one, holding what the model was actually given:
+the colour frame over the depth frame. `--no_panels` turns it off; it costs
+about 15 ms a frame.
+
+The depth ramp is `colorize_depth`'s rs-jet with per-frame histogram
+equalisation — the same function `capture.py --preview` uses, so framing a
+shot and watching the result look alike. Per-frame equalisation means the
+colours are a **shape readout, not a measurement**: they are not comparable
+between frames. The footer carries the numbers that are — frame name, the
+fraction of depth pixels the sensor measured, the median range, and the rate.
+
+Both panes show the frame **after** the FOV match, 640×480 with NYU's
+intrinsics, because that is what the network sees. A thin prediction is
+usually explained by the depth pane before it is explained by the voxels.
+
 ### Keys and mouse
 
 | | |
@@ -313,6 +330,26 @@ difference between 1.3 fps and 2.1 fps end to end.
 | `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
+
+### Pacing
+
+A camera does not wait for us. librealsense hands back the newest frameset and
+drops what arrived while the model was busy — which is right, because every
+frame here is an independent completion and a stale one is worth nothing. The
+window therefore shows the most recent frame the pipeline could give, about
+one sensor period plus one inference behind reality.
+
+A `.bag` is the opposite by default: it waits, so a replay processes every
+recorded frame and two runs are comparable. `--realtime` makes the file behave
+like the camera — recorded rate, frames dropped — which is how to see the live
+pacing with no camera attached. On room07, recorded at 15 Hz:
+
+```
+default     808 of 808 frames processed
+--realtime   30 of 159 processed, 129 skipped to keep pace
+```
+
+Either way the run prints which it did.
 
 ### What it does not do
 

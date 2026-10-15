@@ -86,6 +86,12 @@ class CameraSource:
     def frames(self) -> Iterator[Frame]:
         raise NotImplementedError
 
+    def report(self):
+        """One line about what the source did, or None. Logged at the end of
+        a run however it ended -- a count that only prints on reaching EOF is
+        the count you never see."""
+        return None
+
     def close(self):
         pass
 
@@ -465,6 +471,14 @@ class BagSource(RealSenseSource):
     long inference takes. And `--fps` throttles, for watching it at a sane
     speed rather than as fast as the GPU will go.
 
+    `realtime=True` gives the first of those back, and is the point of the
+    option: the file then plays at its recorded rate and drops whatever we
+    were too slow to collect, which is exactly what a camera does. It is how
+    to see the live pacing without a camera attached. Measured on room07 with
+    0.35 s of work a frame: real time off, the frame number steps by 1 and
+    nothing is lost; real time on, it steps by 2 to 6 and the run keeps pace
+    with the wall clock instead of with us.
+
     *** THE ACCELEROMETER ***
     A scan.bag carries the D455's accel stream, and a handheld sweep is never
     level -- which matters, because from_live_camera builds the voxel grid
@@ -505,8 +519,9 @@ class BagSource(RealSenseSource):
     MAG_TOL = 0.08                 # fraction of that reference
 
     def __init__(self, path, fov='nyu', loop=False, fps=None, imu=True,
-                 align_to_color=True, filters=False, hole_fill=False,
-                 keep_native=False, undistort=True, timeout_ms=5000):
+                 realtime=False, align_to_color=True, filters=False,
+                 hole_fill=False, keep_native=False, undistort=True,
+                 timeout_ms=5000):
         try:
             import pyrealsense2 as rs
         except ImportError as e:
@@ -525,6 +540,8 @@ class BagSource(RealSenseSource):
         self.period = (1.0 / fps) if fps else 0.0
         self._up = None                        # smoothed gravity, camera frame
         self._mag = None
+        self._dropped = 0
+        self._first_num = self._last_num = None
         self._imu_seen = self._imu_used = 0
 
         cfg = rs.config()
@@ -533,9 +550,11 @@ class BagSource(RealSenseSource):
         self.profile = self.pipeline.start(cfg)
         playback = self.profile.get_device().as_playback()
         # the whole point of replaying a file: never drop a frame because the
-        # consumer was slow. With real time on, librealsense keeps wall-clock
-        # pace and silently discards whatever we did not collect in time.
-        playback.set_real_time(False)
+        # consumer was slow. With real time ON, librealsense keeps wall-clock
+        # pace and discards whatever we did not collect in time -- which is a
+        # camera's behaviour, and why the option exists.
+        playback.set_real_time(bool(realtime))
+        self.realtime = bool(realtime)
         self.align = rs.align(rs.stream.color) if align_to_color else None
 
         secs = playback.get_duration().total_seconds()
@@ -545,8 +564,10 @@ class BagSource(RealSenseSource):
             log.warning('%s has no accel stream; falling back to assuming the '
                         'camera was level', path)
             self.imu = False
-        log.info('BagSource: %s  %.1f s  loop=%s  imu=%s', path, secs, loop,
-                 'on' if self.imu else 'off')
+        log.info('BagSource: %s  %.1f s  loop=%s  imu=%s  pacing=%s', path,
+                 secs, loop, 'on' if self.imu else 'off',
+                 'real time (drops frames, like a camera)' if realtime
+                 else 'wait for us (every frame)')
 
         self._setup_from_profile(
             fov=fov, keep_native=keep_native, undistort=undistort,
@@ -565,6 +586,30 @@ class BagSource(RealSenseSource):
             log.info('BagSource: %s -> camera_height=%s yaw=%s',
                      os.path.join(root, 'meta.json'), self.camera_height,
                      self.yaw)
+
+    def report(self):
+        bits = []
+        if self.realtime:
+            seen = (self._last_num or 0) - (self._first_num or 0) + 1
+            bits.append('%d of %d recorded frames skipped to keep pace'
+                        % (self._dropped, seen))
+        if self._imu_seen:
+            bits.append('accel %d of %d samples used'
+                        % (self._imu_used, self._imu_seen))
+        return ('bag: ' + ' | '.join(bits)) if bits else None
+
+    def _count_drops(self, fs):
+        """Recorded frames that went by while we were busy.
+
+        Only meaningful under real-time pacing; it is what a live camera does
+        silently, and the number is worth printing rather than guessing at.
+        """
+        num = fs.get_frame_number()
+        if self._first_num is None:
+            self._first_num = num
+        elif num > self._last_num + 1:
+            self._dropped += num - self._last_num - 1
+        self._last_num = num
 
     def _gravity(self, fs):
         """The smoothed accel vector, or None until one is trustworthy."""
@@ -596,12 +641,11 @@ class BagSource(RealSenseSource):
             t0 = time.time()
             ok, fs = self.pipeline.try_wait_for_frames(self.timeout_ms)
             if not ok:
-                log.info('end of %s after %d frames%s', self.path, i,
-                         ' | accel: %d of %d samples used'
-                         % (self._imu_used, self._imu_seen)
-                         if self._imu_seen else '')
+                log.info('end of %s after %d frames', self.path, i)
                 return
             up = self._gravity(fs) if self.imu else None
+            if self.realtime:
+                self._count_drops(fs)
             fr = self._process(fs, i, where=self.path)
             if fr is None:
                 continue
@@ -773,7 +817,7 @@ class FolderSource(CameraSource):
 
 # ---------------------------------------------------------------------------
 def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu',
-                imu=True):
+                imu=True, realtime=False):
     """Build a CameraSource from a spec string. See the module docstring."""
     kind, _, arg = spec.partition(':')
     kind = kind.strip().lower()
@@ -789,7 +833,8 @@ def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu',
         return RealSenseSource(width=w, height=h, fps=f, fov=fov)
 
     if kind == 'bag':
-        return BagSource(arg, fov=fov, loop=loop, fps=fps, imu=imu)
+        return BagSource(arg, fov=fov, loop=loop, fps=fps, imu=imu,
+                         realtime=realtime)
 
     if kind == 'nyu':
         return NYUSource(arg, rgb_dir=rgb_dir, loop=loop, fps=fps)
