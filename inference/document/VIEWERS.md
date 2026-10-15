@@ -271,6 +271,11 @@ The live window. Not a command of its own:
 python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
     --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
     --source realsense --display --colour zbuffer
+
+# or without a camera, from a recorded sweep of the room
+python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
+    --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
+    --source bag:captures/room07/scan/scan.bag --display --colour all
 ```
 
 Same solid cubes as `display_solid.py` — it imports that file's

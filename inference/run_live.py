@@ -9,7 +9,11 @@ Single process, model loaded once, one frame at a time.
         --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
         --source realsense --camera_height 1.25
 
-Test without hardware (this reproduces reference-comparable output):
+Test without hardware -- a recording of the real sensor:
+
+    python -m inference.run_live ... --source bag:captures/room07/scan/scan.bag
+
+or NYU frames, which reproduce reference-comparable output:
 
     python -m inference.run_live ... --source nyu:/data/NYU/depth \
         --rgb_dir /data/NYU/test/RGB --max_frames 20
@@ -28,12 +32,12 @@ Two limits remain:
    independent single-shot completion, not an accumulating reconstruction.
    Fusing across frames needs real localisation (SLAM/ICP) driving cam_pose.
 
-2. `--camera_height` and level mounting are assumed. A handheld camera
-   pitched down presents the scene tilted relative to the grid, and floor /
-   ceiling degrade first. The D455 has a built-in IMU, so the principled fix
-   is to read its accelerometer, derive the gravity vector, and build the
-   rotation from that instead of assuming level. That is the single highest
-   -value improvement to this path and is NOT implemented here.
+2. `--camera_height` is assumed; level mounting no longer is, IF the source
+   supplies gravity. A .bag carries the D455's accelerometer, so `--source
+   bag:` reads it per frame and builds the rotation around measured up
+   (`--no_imu` to compare against assuming level). A live camera still does
+   not: RealSenseSource requests depth and colour only, and wiring the accel
+   stream into it is the remaining half of this.
 """
 
 import argparse
@@ -100,7 +104,8 @@ def parse_args():
     p.add_argument('--pretrained_path', required=True)
 
     p.add_argument('--source', default='realsense',
-                   help='realsense[:WxH@FPS] | nyu:/path | folder:/path')
+                   help='realsense[:WxH@FPS] | bag:/path/scan.bag | '
+                        'nyu:/path | folder:/path')
     p.add_argument('--fov', default='nyu', choices=['nyu', 'native'],
                    help="'nyu' resizes+crops to NYU's 63x49 deg intrinsics "
                         '(recommended: the checkpoint was trained there). '
@@ -113,6 +118,11 @@ def parse_args():
     p.add_argument('--yaw', type=float, default=None,
                    help='radians about the vertical axis; defaults to '
                         "meta.json's value, otherwise 0")
+    p.add_argument('--no_imu', dest='imu', action='store_false',
+                   help='bag replay: ignore the recorded accelerometer and '
+                        'assume the camera was level, as every other source '
+                        'has to. Only for comparing against it -- a handheld '
+                        'sweep is not level, and the grid is built around up.')
     p.add_argument('--rgb_dir', default=None, help='replay sources only')
     p.add_argument('--loop', action='store_true', help='replay sources only')
     p.add_argument('--fps', type=float, default=None, help='throttle replay')
@@ -209,7 +219,7 @@ def main():
     enc_s = inf_s = 0.0
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
-                     fps=args.fps, fov=args.fov) as src:
+                     fps=args.fps, fov=args.fov, imu=args.imu) as src:
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
                  'on' if model_mod.use_amp(device, args.amp) else 'off',
@@ -245,10 +255,14 @@ def main():
                     yaw = frame.yaw
                 if yaw is None:
                     yaw = 0.0
+                # measured gravity when the source has it (a .bag carries the
+                # accel stream); without it the grid assumes a level camera,
+                # and a pitched one puts a surface 3 m away 21 cm from where
+                # the grid draws it
                 loader = FrameLoader.from_live_camera(
                     frame.depth, rgb=frame.rgb, cam_K=frame.cam_K,
-                    camera_height=height, yaw=yaw, encoder=encoder,
-                    device=device)
+                    camera_height=height, yaw=yaw, up_camera=frame.up_camera,
+                    encoder=encoder, device=device)
             sample = loader.build_tsdf_and_mapping()
             t1 = time.time()
 

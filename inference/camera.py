@@ -6,6 +6,8 @@ D455, with two hardware-free replay sources for testing without hardware.
 
     realsense                 D455 (or any D4xx) over USB
     realsense:1280x720@30     ... with an explicit stream profile
+    bag:/path/to/scan.bag     replay a RealSense recording -- the same
+                              pipeline as the camera, hardware not required
     nyu:/path/to/depth        replay NYU .bin/.png pairs (real vox_origin/pose)
     folder:/path/to/pngs      replay plain 16-bit depth PNGs in millimetres
 
@@ -68,6 +70,11 @@ class Frame:
     # the single-frame result instead of falling back to CLI defaults.
     camera_height: Optional[float] = None
     yaw: Optional[float] = None
+    # Gravity in CAMERA coordinates, from an accelerometer that was recorded
+    # alongside the frames (BagSource). None everywhere else, and
+    # from_live_camera then assumes the camera was level -- which NYU's own
+    # frames are not, and a handheld sweep certainly is not.
+    up_camera: Optional[np.ndarray] = None
     depth_native: Optional[np.ndarray] = None
     rgb_native: Optional[np.ndarray] = None
     cam_K_native: Optional[np.ndarray] = None
@@ -214,20 +221,41 @@ class RealSenseSource(CameraSource):
         self.align = rs.align(rs.stream.color) if align_to_color else None
 
         depth_sensor = self.profile.get_device().first_depth_sensor()
-        self.depth_scale = depth_sensor.get_depth_scale()
         if depth_sensor.supports(rs.option.emitter_enabled):
             depth_sensor.set_option(rs.option.emitter_enabled, 1 if emitter else 0)
 
-        intr = (self.profile.get_stream(rs.stream.color)
-                .as_video_stream_profile().get_intrinsics())
+        self._setup_from_profile(fov=fov, keep_native=keep_native,
+                                 undistort=undistort, filters=filters,
+                                 hole_fill=hole_fill, warmup=warmup,
+                                 label='stream %dx%d@%d' % (width, height, fps))
+
+    def _setup_from_profile(self, fov, keep_native, undistort, filters,
+                            hole_fill, warmup, label):
+        """Everything that follows pipeline.start(), for a device or a file.
+
+        Intrinsics, the FOV decision, the undistort tables and the filter
+        chain all come off the profile, so a .bag replay reaches them by the
+        same path as the camera -- which is the point: BagSource exercises
+        this code, and the device-specific part above it is the only thing
+        that needs hardware to test.
+        """
+        rs = self._rs
+        self.fov = fov
+        self.depth_scale = self.profile.get_device().first_depth_sensor() \
+            .get_depth_scale()
+        colour = self.profile.get_stream(rs.stream.color)
+        # a recording replays the format it was made with, and capture.py's
+        # scans are rgb8 while the live stream is requested as bgr8
+        self._color_swap = colour.format() == rs.format.rgb8
+        intr = colour.as_video_stream_profile().get_intrinsics()
         self.cam_K = np.array([[intr.fx, 0, intr.ppx],
                                [0, intr.fy, intr.ppy],
                                [0, 0, 1]], dtype=np.float32)
 
         hfov = 2 * np.degrees(np.arctan(intr.width / (2 * intr.fx)))
         vfov = 2 * np.degrees(np.arctan(intr.height / (2 * intr.fy)))
-        log.info('stream %dx%d@%d  depth_scale=%.6f', width, height, fps,
-                 self.depth_scale)
+        log.info('%s  depth_scale=%.6f%s', label, self.depth_scale,
+                 '  colour rgb8 -> BGR' if self._color_swap else '')
         log.info('device intrinsics fx=%.2f fy=%.2f cx=%.2f cy=%.2f  '
                  '(FOV %.1f x %.1f deg)', intr.fx, intr.fy, intr.ppx, intr.ppy,
                  hfov, vfov)
@@ -360,44 +388,57 @@ class RealSenseSource(CameraSource):
                    "on the current link: %s" % _fmt(None))
         raise RuntimeError('\n  '.join(msg))
 
+    def _process(self, fs, i, where='realsense'):
+        """A frameset -> a Frame. None when the set is incomplete.
+
+        Shared with BagSource: align, filter, scale to metres, undistort,
+        match the FOV. A recording goes through exactly what the live stream
+        goes through, which is the only way a replay is worth anything.
+        """
+        if self.align is not None:
+            fs = self.align.process(fs)
+        d, c = fs.get_depth_frame(), fs.get_color_frame()
+        if not d or not c:
+            return None
+        if self._filters is not None:
+            for f in self._filters:
+                d = f.process(d)
+
+        depth = np.asanyarray(d.get_data()).astype(np.float32) * self.depth_scale
+        rgb = np.asanyarray(c.get_data())
+        if self._color_swap:
+            rgb = rgb[:, :, ::-1]
+
+        if self._umap is not None:
+            mx, my = self._umap
+            # NEAREST for depth: interpolating across a depth
+            # discontinuity invents a surface halfway between the
+            # foreground and the background, and the TSDF encoder cannot
+            # tell that from a real observation.
+            depth = cv2.remap(depth, mx, my, cv2.INTER_NEAREST,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+            rgb = cv2.remap(rgb, mx, my, cv2.INTER_LINEAR,
+                            borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+
+        depth_n, rgb_n = (depth.copy(), rgb.copy()) if self.keep_native \
+            else (None, None)
+
+        if self.fov == 'nyu':
+            depth, rgb, K = match_nyu_fov(depth, rgb, self.cam_K)
+        else:
+            K = self.cam_K
+        return Frame(depth=_require_shape(depth, where), rgb=rgb,
+                     cam_K=K, name='live_{:06d}'.format(i),
+                     depth_native=depth_n, rgb_native=rgb_n,
+                     cam_K_native=self.cam_K if self.keep_native else None)
+
     def frames(self):
         i = 0
         while True:
-            fs = self.pipeline.wait_for_frames()
-            if self.align is not None:
-                fs = self.align.process(fs)
-            d, c = fs.get_depth_frame(), fs.get_color_frame()
-            if not d or not c:
+            fr = self._process(self.pipeline.wait_for_frames(), i)
+            if fr is None:
                 continue
-            if self._filters is not None:
-                for f in self._filters:
-                    d = f.process(d)
-
-            depth = np.asanyarray(d.get_data()).astype(np.float32) * self.depth_scale
-            rgb = np.asanyarray(c.get_data())
-
-            if self._umap is not None:
-                mx, my = self._umap
-                # NEAREST for depth: interpolating across a depth
-                # discontinuity invents a surface halfway between the
-                # foreground and the background, and the TSDF encoder cannot
-                # tell that from a real observation.
-                depth = cv2.remap(depth, mx, my, cv2.INTER_NEAREST,
-                                  borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                rgb = cv2.remap(rgb, mx, my, cv2.INTER_LINEAR,
-                                borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-
-            depth_n, rgb_n = (depth.copy(), rgb.copy()) if self.keep_native \
-                else (None, None)
-
-            if self.fov == 'nyu':
-                depth, rgb, K = match_nyu_fov(depth, rgb, self.cam_K)
-            else:
-                K = self.cam_K
-            yield Frame(depth=_require_shape(depth, 'realsense'), rgb=rgb,
-                        cam_K=K, name='live_{:06d}'.format(i),
-                        depth_native=depth_n, rgb_native=rgb_n,
-                        cam_K_native=self.cam_K if self.keep_native else None)
+            yield fr
             i += 1
 
     def close(self):
@@ -405,6 +446,173 @@ class RealSenseSource(CameraSource):
             self.pipeline.stop()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+class BagSource(RealSenseSource):
+    """Replay a RealSense .bag recording -- `captures/*/scan/scan.bag`.
+
+    The hardware-free source that is still the real sensor: the same
+    librealsense pipeline, the same align-to-colour, the same depth scale,
+    undistortion and FOV match, because it inherits `_process` from
+    RealSenseSource and only replaces how the pipeline is opened. What it
+    replays is whatever was recorded -- room07's scan is 848x480 at 15 Hz with
+    an accelerometer, where the live default is 1280x720 at 30.
+
+    Two things a file does that a camera cannot. Playback runs with
+    `set_real_time(False)`, so librealsense waits for us instead of dropping
+    frames we were too slow to take: every recorded frame is seen, however
+    long inference takes. And `--fps` throttles, for watching it at a sane
+    speed rather than as fast as the GPU will go.
+
+    *** THE ACCELEROMETER ***
+    A scan.bag carries the D455's accel stream, and a handheld sweep is never
+    level -- which matters, because from_live_camera builds the voxel grid
+    around the up direction, and assuming "level" tilts the whole room against
+    the grid. `floor` and `ceiling` are the first predictions to go.
+
+    So the gravity direction is read per frame and passed through
+    Frame.up_camera. The magnitude is NOT trusted and does not need to be:
+    live_cam_pose normalises it, and this unit reads 9.02 m/s^2 at rest, 8%
+    low (captures/room07/scan/imu_check.json). The DIRECTION is what is good --
+    0.108 deg of noise at rest, measured over the same sweep. Under motion
+    linear acceleration adds to gravity, so samples whose magnitude has
+    wandered from the resting one are dropped and the rest are smoothed;
+    `imu=False` falls back to assuming level, as every other source must.
+
+    On room07's own sweep the gate barely fires -- that scan is a slow pan and
+    its magnitude stays inside 8.71-9.39 against a 9.02 rest mean, so 99% of
+    samples are kept and the estimate jitters 0.18 deg frame to frame. It is
+    there for a rougher one.
+
+    Worth it: over 40 frames of that sweep (median tilt 5.2 deg, max 16.1),
+    measured up against assumed level gives 1706 floor voxels a frame rather
+    than 1482. On the 15 frames tilted past 8 deg it is 1882 against 1472, and
+    the phantom `ceiling` the tilt produces -- 14 voxels a frame, hanging in
+    mid-air -- disappears entirely. Exactly the failure run_live's docstring
+    predicts: floor and ceiling go first.
+    """
+
+    name = 'bag'
+
+    # At 15 Hz a 0.25 weight is a ~0.2 s time constant on the DIRECTION: long
+    # enough to average out a footstep, short enough to follow a turn. The
+    # magnitude reference is deliberately much slower -- it is meant to be the
+    # sensor's magnitude AT REST, and an average that chases the motion it is
+    # supposed to reject would be no gate at all.
+    EMA_UP = 0.25
+    EMA_MAG = 0.02                 # ~3 s, so the reference stays near rest
+    MAG_TOL = 0.08                 # fraction of that reference
+
+    def __init__(self, path, fov='nyu', loop=False, fps=None, imu=True,
+                 align_to_color=True, filters=False, hole_fill=False,
+                 keep_native=False, undistort=True, timeout_ms=5000):
+        try:
+            import pyrealsense2 as rs
+        except ImportError as e:
+            raise RuntimeError(
+                'pyrealsense2 not installed: `pip install pyrealsense2`. It '
+                'is needed to read a .bag even with no camera attached.') from e
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                '%r does not exist. The scans are git-ignored and come down '
+                'with the data: `python3 tools/hf_data.py pull`.' % path)
+        self._rs = rs
+        self.path = path
+        self.loop = loop
+        self.imu = imu
+        self.timeout_ms = timeout_ms
+        self.period = (1.0 / fps) if fps else 0.0
+        self._up = None                        # smoothed gravity, camera frame
+        self._mag = None
+        self._imu_seen = self._imu_used = 0
+
+        cfg = rs.config()
+        rs.config.enable_device_from_file(cfg, path, repeat_playback=loop)
+        self.pipeline = rs.pipeline()
+        self.profile = self.pipeline.start(cfg)
+        playback = self.profile.get_device().as_playback()
+        # the whole point of replaying a file: never drop a frame because the
+        # consumer was slow. With real time on, librealsense keeps wall-clock
+        # pace and silently discards whatever we did not collect in time.
+        playback.set_real_time(False)
+        self.align = rs.align(rs.stream.color) if align_to_color else None
+
+        secs = playback.get_duration().total_seconds()
+        has_accel = any(st.stream_type() == rs.stream.accel
+                        for st in self.profile.get_streams())
+        if imu and not has_accel:
+            log.warning('%s has no accel stream; falling back to assuming the '
+                        'camera was level', path)
+            self.imu = False
+        log.info('BagSource: %s  %.1f s  loop=%s  imu=%s', path, secs, loop,
+                 'on' if self.imu else 'off')
+
+        self._setup_from_profile(
+            fov=fov, keep_native=keep_native, undistort=undistort,
+            filters=filters, hole_fill=hole_fill, warmup=0,
+            label='recorded %.1f s' % secs)
+
+        # the capture's measured rig height, if this bag sits in one. The
+        # intrinsics in that meta.json describe capture.py's OWN stream and
+        # are not this recording's, so only the height and yaw are taken.
+        self.camera_height = self.yaw = None
+        meta, root = FolderSource._find_meta(
+            os.path.dirname(os.path.dirname(os.path.abspath(path))))
+        if meta is not None:
+            self.camera_height = meta.get('camera_height')
+            self.yaw = meta.get('yaw')
+            log.info('BagSource: %s -> camera_height=%s yaw=%s',
+                     os.path.join(root, 'meta.json'), self.camera_height,
+                     self.yaw)
+
+    def _gravity(self, fs):
+        """The smoothed accel vector, or None until one is trustworthy."""
+        rs = self._rs
+        a = fs.first_or_default(rs.stream.accel)
+        if not a:
+            return self._up
+        self._imu_seen += 1
+        m = a.as_motion_frame().get_motion_data()
+        v = np.array([m.x, m.y, m.z], dtype=np.float64)
+        mag = float(np.linalg.norm(v))
+        if mag < 1e-3:
+            return self._up
+        if self._mag is None:
+            self._mag, self._up = mag, v
+            self._imu_used += 1
+            return self._up
+        # under motion the reading is gravity PLUS linear acceleration; a
+        # magnitude that has wandered says this sample is not gravity alone
+        if abs(mag - self._mag) <= self.MAG_TOL * self._mag:
+            self._up = (1 - self.EMA_UP) * self._up + self.EMA_UP * v
+            self._mag = (1 - self.EMA_MAG) * self._mag + self.EMA_MAG * mag
+            self._imu_used += 1
+        return self._up
+
+    def frames(self):
+        i = 0
+        while True:
+            t0 = time.time()
+            ok, fs = self.pipeline.try_wait_for_frames(self.timeout_ms)
+            if not ok:
+                log.info('end of %s after %d frames%s', self.path, i,
+                         ' | accel: %d of %d samples used'
+                         % (self._imu_used, self._imu_seen)
+                         if self._imu_seen else '')
+                return
+            up = self._gravity(fs) if self.imu else None
+            fr = self._process(fs, i, where=self.path)
+            if fr is None:
+                continue
+            fr.camera_height = self.camera_height
+            fr.yaw = self.yaw
+            if up is not None:
+                fr.up_camera = up / np.linalg.norm(up)
+            yield fr
+            i += 1
+            if self.period:
+                time.sleep(max(0.0, self.period - (time.time() - t0)))
 
 
 # ---------------------------------------------------------------------------
@@ -564,7 +772,8 @@ class FolderSource(CameraSource):
 
 
 # ---------------------------------------------------------------------------
-def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu'):
+def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu',
+                imu=True):
     """Build a CameraSource from a spec string. See the module docstring."""
     kind, _, arg = spec.partition(':')
     kind = kind.strip().lower()
@@ -579,6 +788,9 @@ def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu'):
                 f = int(rate)
         return RealSenseSource(width=w, height=h, fps=f, fov=fov)
 
+    if kind == 'bag':
+        return BagSource(arg, fov=fov, loop=loop, fps=fps, imu=imu)
+
     if kind == 'nyu':
         return NYUSource(arg, rgb_dir=rgb_dir, loop=loop, fps=fps)
 
@@ -586,5 +798,5 @@ def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu'):
         return FolderSource(arg, rgb_dir=rgb_dir, loop=loop, fps=fps, fov=fov)
 
     raise ValueError(
-        'unknown source %r. Expected realsense[:WxH@FPS], nyu:/path, or '
-        'folder:/path' % spec)
+        'unknown source %r. Expected realsense[:WxH@FPS], bag:/path.bag, '
+        'nyu:/path, or folder:/path' % spec)

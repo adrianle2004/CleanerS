@@ -136,7 +136,20 @@ python -m inference.run_inference \
 python -m inference.run_live \
     --cfg ./cfgs/NYU/voxelSSC.yaml \
     --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
-    --source realsense --camera_height 1.42
+    --source realsense --camera_height 1.42 --display
+```
+
+### Stream without a camera
+
+A `.bag` is the real sensor, recorded. Same pipeline, same alignment, same
+intrinsics — and `captures/*/scan/scan.bag` already holds a 54–71 s sweep of
+each room.
+
+```bash
+python -m inference.run_live \
+    --cfg ./cfgs/NYU/voxelSSC.yaml \
+    --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
+    --source bag:captures/room07/scan/scan.bag --display --colour all
 ```
 
 ### Verify without hardware
@@ -180,6 +193,8 @@ Source specs, parsed by `open_source`:
 ```
 realsense                 D455 (or any D4xx) over USB
 realsense:1280x720@30     ... with an explicit stream profile
+bag:/path/to/scan.bag     a RealSense recording — the same pipeline as the
+                          camera, hardware not required
 nyu:/path/to/depth        NYU .bin/.png pairs (real vox_origin/cam_pose)
 folder:/path/to/pngs      plain 16-bit depth PNGs in millimetres
 ```
@@ -198,6 +213,7 @@ source kind, only on which optional fields are populated.
 | `vox_origin` | (3,) | NYU replay only — dataset grid placement |
 | `cam_pose` | 4×4 | NYU replay only |
 | `camera_height` | float | from `meta.json`; live sources only |
+| `up_camera` | (3,) | measured gravity in camera coords; `bag:` only |
 | `yaw` | float | from `meta.json` |
 | `depth_native` | (H,W) float32 | pre-crop frame, when `keep_native=True` |
 | `rgb_native` | (H,W,3) uint8 | pre-crop frame |
@@ -278,6 +294,62 @@ distortion) and **before** the crop (the coefficients are defined over the full
 sensor frame in native pixel coordinates).
 
 **`close()`** — stops the pipeline, swallowing errors.
+
+#### `BagSource(path, fov='nyu', loop=False, fps=None, imu=True, ...)`
+
+Replays a RealSense `.bag`. **Subclasses `RealSenseSource`** and replaces only
+how the pipeline is opened: `_setup_from_profile` and `_process` are the
+camera's own, so a recording is aligned, scaled, undistorted and FOV-matched by
+exactly the code the live stream uses. That is also why the refactor is safe to
+make without hardware — the shared half is the half a bag exercises.
+
+Three things differ from the device:
+
+- **`set_real_time(False)`.** librealsense waits for us instead of dropping
+  frames we were too slow to collect, so every recorded frame is seen however
+  long inference takes. `--fps` throttles if you want to watch it at a sane
+  speed instead.
+- **Colour is `rgb8`.** A recording replays the format it was made with, and
+  capture.py's scans are rgb8 where the live stream is requested as bgr8. The
+  profile is read and the channels swapped (`_color_swap`), so `Frame.rgb` is
+  BGR either way.
+- **It carries an accelerometer.** See below.
+
+`camera_height` and `yaw` come from the capture's `meta.json` two directories
+up (`captures/room07/` for `captures/room07/scan/scan.bag`). The `cam_K` in
+that file is deliberately **not** used: it describes capture.py's own
+1280×720 stream, while room07's scan was recorded at 848×480. The recording's
+intrinsics are read from its own profile.
+
+#### `BagSource._gravity(fs)` — why the IMU is read
+
+`from_live_camera` builds the voxel grid around the up direction, and a
+handheld sweep is never level. Over room07's scan the median tilt is **5.2°**
+and the maximum 16.1°, which puts a surface 3 m away 29 cm from where a level
+grid draws it.
+
+So the accel vector is read per frame and passed through `Frame.up_camera`.
+The magnitude is not trusted and does not need to be — `live_cam_pose`
+normalises it, and this unit reads 9.02 m/s² at rest, 8% low. The *direction*
+is the good part: 0.108° of noise at rest
+(`captures/room07/scan/imu_check.json`). Under motion linear acceleration adds
+to gravity, so a sample whose magnitude has wandered from the resting one is
+dropped, and the rest are smoothed — `EMA_UP = 0.25` on the direction (~0.2 s,
+follows a turn), `EMA_MAG = 0.02` on the magnitude reference, because a
+reference that chased the motion it is meant to reject would be no gate at all.
+
+What it buys, over 40 frames of that sweep:
+
+| | measured up | assumed level |
+| --- | ---: | ---: |
+| floor voxels / frame | **1706** | 1482 |
+| ceiling voxels / frame | 12 | 20 |
+| …over the 15 frames tilted past 8° | | |
+| floor | **1882** | 1472 |
+| ceiling | **0** | 14 |
+
+The phantom ceiling is the tilt, hanging in mid-air. `--no_imu` turns the
+whole thing off, which is the only way to see it.
 
 #### `NYUSource(path, rgb_dir=None, loop=False, fps=None)`
 
@@ -890,6 +962,7 @@ and closes the sensor cleanly.
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
 | `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
 | `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
+| `--no_imu` | off | `bag:` only — ignore the recorded gravity and assume level |
 | `--display` | off | open the live window, [`live_view.py`](#live_viewpy--the-live-window) |
 | `--colour {class,zbuffer,all}` | `zbuffer` | what that window paints the voxels with |
 | `--max_frames` | 0 (unlimited) | |

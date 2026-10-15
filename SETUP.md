@@ -135,6 +135,16 @@ https://github.com/IntelRealSense/librealsense into `/etc/udev/rules.d/`, then
 ./reconstruction_GT/1_check_camera.sh      # USB 3? IMU?
 ```
 
+**No camera?** Every room's sweep is recorded, and a `.bag` replays through the
+same pipeline the live stream uses -- same alignment, same intrinsics, same
+depth scale, plus the accelerometer it was recorded with:
+
+```bash
+python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
+    --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
+    --source bag:captures/room07/scan/scan.bag --display --colour all
+```
+
 Results from the two rooms already captured:
 [reconstruction_GT/document/FINDINGS.md](reconstruction_GT/document/FINDINGS.md).
 
