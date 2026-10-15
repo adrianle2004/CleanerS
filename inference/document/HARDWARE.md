@@ -224,22 +224,29 @@ Then what the hardware itself is worth:
 
 | other conditions | per frame | fps |
 | --- | ---: | ---: |
-| no CUDA card (`--device cpu`, staged) | 2.32 s | 0.43 |
-| CUDA, capped to 1.0-1.5 GB (staged) | 0.29 s | 3.4 |
-| replaying from disk, not a camera | 0.30 s | 3.28 |
+| no CUDA card, `--device cpu` | 2.32 s | 0.43 |
+| **CUDA, 4 GB — this card** | **0.28 s** | **3.55** |
+| ... the same card, `--amp off` | 0.42 s | 2.37 |
+| ... the same card, capped to 1.0-1.5 GB | 0.29 s | 3.4 |
 | CUDA, faster than this box | >= 0.21 s | <= 4.8 |
+| *(for scale: replaying from disk, `run_live`)* | *0.30 s* | *3.28* |
 
-Only the last row is arithmetic rather than a benchmark — see
-[the ceiling](#the-ceiling). Three things to read with it:
+These four are **staged**: encode plus forward pass on one frame in a fresh
+process, no camera and no window, which is what makes them comparable to each
+other and *not* to the live rows above. Only `faster than this box` is
+arithmetic rather than a benchmark — see [the ceiling](#the-ceiling). The
+italic row is `run_live` on a replay, there to bridge the two tables.
+
+Three things to read with them:
 
 - **A camera costs ~45 ms a frame over a replay**, which is why the same code
   does 3.28 fps from disk and 2.87 from the sensor: 34 ms of frame source
   against 4, plus align and undistort on a 1280x720 stream.
-- **The capped-VRAM row is a fresh-process, single-frame figure on a replay**,
-  so it is not comparable to the live rows above it. What it says is that
-  being near the memory floor no longer costs time — the encoder's 67 MB peak
-  leaves the allocator enough room to stop churning, where at 96 MB a 1 GB cap
-  cost 2.1x.
+- **Capping the card to 1 GB costs nothing**: 0.29 s against 0.28 uncapped,
+  inside the run-to-run spread. The encoder's 67 MB peak leaves the allocator
+  enough room to stop churning, where at 96 MB the same 1 GB cap cost 2.1x.
+  What a small card still costs you is fp32 — under ~1.3 GB it OOMs and AMP
+  stops being a speed flag and becomes the thing that makes it fit.
 - **Read every figure here as +-15%.** Cold, this card runs the defaults at
   2.87 fps; hot, 2.65; after an hour of sustained benchmarking, 2.1-2.3. Its
   clocks fall from 1725 to 1035 MHz of a possible 2100 and `nvidia-smi`
