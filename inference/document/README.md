@@ -993,6 +993,8 @@ and closes the sensor cleanly.
 | `--display` | off | open the live window, [`live_view.py`](#live_viewpy--the-live-window) |
 | `--colour {class,zbuffer,all}` | `zbuffer` | what that window paints the voxels with |
 | `--no_panels` | off | `--display` only — drop the colour/depth window beside it |
+| `--window WxH` | `1280x800` | size of the 3D window |
+| `--panel_width` | 420 | where the colour/depth window starts; it is resizable |
 | `--max_frames` | 0 (unlimited) | |
 | `--log_every` | 30 | |
 
@@ -1107,6 +1109,15 @@ A separate OpenCV window because the open3d one cannot hold widgets at all
 (see [VIEWERS.md](VIEWERS.md#why-buttons-and-not-keys)); the two are
 positioned side by side at startup, the 3D one at the origin and this one
 just past its right edge.
+
+It is a `WINDOW_NORMAL`, **not** `WINDOW_AUTOSIZE`. AUTOSIZE pins the window
+to the image and refuses to be resized, so a panel taller than the screen
+cannot be shrunk or even fully seen. NORMAL lets it be dragged to any size and
+scales the image into it.
+
+`--panel_width` sets where it starts, 420 by default: 420 plus the 3D window's
+1280 is 1720 wide and 800 tall, which fits the 1728×1080 desktop a 3456×2160
+panel gives at 2×. At 640 the pair wanted 1940×1028 and hung off the edge.
 
 #### `occupied(pred_label, mask) -> (idx, cls)`
 

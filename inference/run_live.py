@@ -154,6 +154,12 @@ def parse_args():
                         'and so sits about twice as far back as it needs to; '
                         '1.7 fills roughly 90%% of the height. Applied to the '
                         'geometry, not the camera -- see live_view.py.')
+    p.add_argument('--window', default='1280x800', metavar='WxH',
+                   help='size of the 3D window (default 1280x800)')
+    p.add_argument('--panel_width', type=int, default=420,
+                   help='width of the colour/depth window beside it. It is '
+                        'resizable -- this only sets where it starts. 420 + '
+                        "the 3D window's 1280 fits a 1728-wide desktop.")
     p.add_argument('--no_panels', dest='panels', action='store_false',
                    help='--display only: drop the second window showing the '
                         'colour and depth the model was given')
@@ -233,8 +239,14 @@ def main():
             from .live_view import LiveView
         except ImportError:
             from live_view import LiveView
+        try:
+            w3d, h3d = (int(v) for v in args.window.lower().split('x'))
+        except ValueError:
+            raise SystemExit('--window wants WxH, e.g. 1280x800, not %r'
+                             % args.window)
         view = LiveView(colour=args.colour, out_dir=args.out_dir,
-                        panels=args.panels, zoom=args.zoom)
+                        panels=args.panels, zoom=args.zoom,
+                        width=w3d, height=h3d, panel_width=args.panel_width)
 
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)

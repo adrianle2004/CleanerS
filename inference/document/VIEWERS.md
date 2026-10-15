@@ -311,6 +311,12 @@ A second window, beside the 3D one, holding what the model was actually given:
 the colour frame over the depth frame. `--no_panels` turns it off; it costs
 about 15 ms a frame.
 
+**It is resizable** — drag it to any size and the image scales into it. The
+starting size is `--panel_width` (420), chosen so that 420 + the 3D window's
+1280 comes to 1720 × 800: that fits the 1728 × 1080 desktop a 3456 × 2160
+panel gives at 2× scaling. `--window WxH` resizes the 3D one to match
+whatever screen you are on.
+
 The depth ramp is `colorize_depth`'s rs-jet with per-frame histogram
 equalisation — the same function `capture.py --preview` uses, so framing a
 shot and watching the result look alike. Per-frame equalisation means the

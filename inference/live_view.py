@@ -83,7 +83,7 @@ same viewpoint display_solid opens with.
 to reach the window, and the CLI's `--zoom` is the path that cannot fail.
 
 *** THE CAMERA PANELS ***
-Beside the 3D window, a second one holds what the model was actually given:
+Beside the 3D window, a resizable second one holds what the model was given:
 the colour frame on top, the depth below it, colourised with
 `colorize_depth.colorize` -- the RealSense Viewer's own rs-jet ramp with
 per-frame histogram equalisation, the same function capture.py's `--preview`
@@ -96,7 +96,10 @@ fraction of depth pixels the sensor actually measured -- the number that
 explains a thin prediction faster than the prediction does.
 
 It is a separate OpenCV window because the 3D one cannot hold widgets (see
-VIEWERS.md); the two are positioned side by side at startup.
+VIEWERS.md). The two are placed side by side at startup, and `panel_width`
+(`--panel_width`) sets how wide this one starts: 420 plus the 3D window's
+1280 fits a 1728-wide desktop, which is what a 3456x2160 panel at 2x gives
+you. It is a WINDOW_NORMAL, so drag it to whatever size suits.
 
 Press `c` in the 3D window to cycle the colour modes, `s` to drop a
 screenshot.
@@ -123,7 +126,7 @@ class LiveView:
 
     def __init__(self, colour='zbuffer', reach=0.75, width=1280, height=800,
                  out_dir=None, title='CleanerS live', panels=True,
-                 panel_width=640, zoom=2.0):
+                 panel_width=420, zoom=2.0):
         if colour not in MODES:
             raise ValueError('colour must be one of %s, not %r'
                              % (', '.join(MODES), colour))
@@ -186,7 +189,13 @@ class LiveView:
             self.vis.register_key_callback(ord(key), self._zoom_out)
         self.vis.register_key_callback(ord('0'), self._zoom_reset)
         if panels:
-            self._cv.namedWindow(self.panel_window, self._cv.WINDOW_AUTOSIZE)
+            # NORMAL, not AUTOSIZE: AUTOSIZE pins the window to the image and
+            # refuses to be resized, so a panel taller than the screen cannot
+            # be shrunk or fully seen. NORMAL lets it be dragged to any size
+            # and scales the image into it.
+            self._cv.namedWindow(self.panel_window, self._cv.WINDOW_NORMAL)
+            self._cv.resizeWindow(self.panel_window, panel_width,
+                                  2 * int(round(panel_width * 3 / 4.0)) + 68)
             self._cv.moveWindow(self.panel_window, width + 20, 0)
 
     # ---- the frame loop calls this ----
