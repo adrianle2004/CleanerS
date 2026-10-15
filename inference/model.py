@@ -113,7 +113,7 @@ def use_amp(device, amp=False):
 
     `amp` is False/None/'off' (the default -- OFF), True/'on', or 'auto',
     which means on whenever the model is on a GPU. AMP halves the forward
-    pass (346 -> 201 ms on an RTX 3050 Ti) for about 1 voxel in 500: over all
+    pass (~350 -> ~205 ms on an RTX 3050 Ti) for about 1 voxel in 500: over all
     654 NYU test frames it moves SSC mIoU 47.7288 -> 47.7285 and SC 74.9528 ->
     74.9530, i.e. the fourth decimal.
 

@@ -20,10 +20,13 @@ That replaces, per voxel:
 with 75 whole-array shifted minima -- the shape of work a GPU saturates.
 Measured on an RTX 3050 Ti laptop, 240x144x240 = 8.29 M voxels per frame:
 
-    numpy + scipy (encoder='numpy')          1026 ms
-    DataProcess   (encoder='cuda')           1101 ms
-    this module, fp32                         153 ms
-    this module, fp16 EDT                     110 ms
+    numpy + scipy (encoder='numpy')          ~1.0 s
+    DataProcess   (encoder='cuda')           ~1.1 s
+    this module, fp32                         ~150 ms
+    this module, fp16 EDT                     ~110 ms
+
+Exact, re-measurable figures: `python -m inference.benchmark --what encode`,
+which is where every number in document/HARDWARE.md comes from.
 
 Validated on all 654 NYU test frames: SSC mIoU 47.7285 / SC 74.9528 with the
 numpy encoder (bit-identical to the on-disk reference predictions, 654/654)

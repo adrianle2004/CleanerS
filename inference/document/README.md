@@ -46,6 +46,7 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
   - [`colorize_depth.py`](#colorize_depthpy--depth-pngs--realsense-colour)
   - [`evaluate.py`](#evaluatepy--per-class-metrics)
   - [`nyu_occlusion_sweep.py`](#nyu_occlusion_sweeppy--visible-vs-occluded-recall)
+  - [`benchmark.py`](#benchmarkpy--regenerate-hardwaremd)
   - [`run_scannet.py`](#run_scannetpy--occ-scannet-runner)
   - [`evaluate_scannet.py`](#evaluate_scannetpy--occ-scannet-metrics)
   - [`export_scannet_ply.py`](#export_scannet_plypy--best-and-worst-frames-as-ply)
@@ -557,9 +558,9 @@ by an order of magnitude in speed. Per frame on the dev box:
 
 | `encoder` | ms | what it is |
 | --- | ---: | --- |
-| `'numpy'` | 1026 | scipy's exact transform on the CPU — **the default** |
-| `'cuda'` | 1101 | SSCNet's `datautil.cu` kernels; raises if unimportable |
-| `'torch'` | **116** | [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) |
+| `'numpy'` | ~1000 | scipy's exact transform on the CPU — **the default** |
+| `'cuda'` | ~1130 | SSCNet's `datautil.cu` kernels; raises if unimportable |
+| `'torch'` | **~120** | [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) |
 | `'auto'` | | `'torch'` with a CUDA card, else `'numpy'` |
 
 `device` is for `'torch'` only. Numpy stays the constructor default so the
@@ -650,7 +651,7 @@ low-res pair, `weight_mean` still unthresholded so the caller applies the same
 **The reference encoder, and the slow one: ~1.0 s of a 1.33 s frame.** It is
 kept as the default and as the thing every other encoder is checked against;
 [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) is the same steps in
-torch at 110 ms. Steps:
+torch at ~110 ms. Steps:
 
 1. Unproject every pixel to camera coordinates, transform to world by
    `point_cam @ R.T + t`, and stamp an occupancy grid. Axis assignment is
@@ -695,9 +696,10 @@ voxel; numpy keeps the last write, which matches the reference.
 ### `tsdf_torch.py` — the fast TSDF encode
 
 `FrameLoader(encoder='torch')`. The same geometry as `_build_high_res_tsdf`,
-line for line; only the arithmetic moves. 116 ms against numpy's 1026 and the
-CUDA extension's 1101 — 110 ms of it the encode proper, 9 ms the two mapping
-tables, which stay in numpy on both paths.
+line for line; only the arithmetic moves. ~120 ms against numpy's ~1.0 s and
+the CUDA extension's ~1.13 s — ~110 ms of it the encode proper, ~8 ms the two
+mapping tables, which stay in numpy on both paths. Exact figures, and how to
+re-measure them: [HARDWARE.md](HARDWARE.md).
 
 #### Why it is faster than both
 
@@ -829,7 +831,7 @@ Decorated `@torch.no_grad()`. Calls `pred_3d, _, _, _ = model(**data)` inside
 `weight` is returned from `sample`, **not** from the model — same as
 `test_NYU.py` pulling `label_weight` from the data dict rather than the output.
 
-AMP halves the forward pass, 346 → 201 ms, and moves the NYU score in the
+AMP halves the forward pass, ~350 → ~205 ms, and moves the NYU score in the
 fourth decimal (47.7288 → 47.7285 SSC mIoU). It has to be `autocast` and not
 `model.half()`: `unet3d.py:177` does `(segres == 0).float()`, which forces fp32
 back into the middle of a half graph, and the next convolution dies with
@@ -1882,6 +1884,65 @@ planar structure loses it, which is why a bed gets extruded through the wall
 behind it. Full write-up, including the room03 capture that raised it, in
 [OCCLUSION.md](OCCLUSION.md).
 
+### `benchmark.py` — regenerate HARDWARE.md
+
+Diagnostic, not part of the pipeline. Every table in
+[HARDWARE.md](HARDWARE.md) is this script's output, so none of that page has
+to be taken on trust and all of it can be redone on another machine.
+
+```bash
+python -m inference.benchmark --pretrained_path ./checkpoint/CleanerS_ckpt.pth
+python -m inference.benchmark --pretrained_path ... --what encode,agree
+```
+
+It prints markdown on stdout and progress on stderr, so the output can be
+piped straight into a document. ~12 min for all five sections on a 4 GB card.
+
+| `--what` | regenerates |
+| --- | --- |
+| `frame` | the end-to-end table, per `(--encoder, --amp)` pair |
+| `encode` | the encode stage alone, and its peak VRAM |
+| `agree` | whether the fast path answers the same thing |
+| `colour` | what the live window's colour modes cost |
+| `vram` | the floor: one frame per allocator cap, until it OOMs |
+
+`encode` needs no checkpoint; every other section loads one. `frame` is the
+table the 4.2x comes from; `encode` splits the torch encoder by slab size and
+transform dtype; `agree` compares slabbed vs whole, fp16 vs fp32, torch vs
+numpy and AMP vs fp32; `vram` runs each cap in a child process, because an
+OOM is not survivable in the process that hits it.
+
+| flag | default | does |
+| --- | --- | --- |
+| `--what` | `all` | comma-separated section list |
+| `--source` | `folder:captures/room07/depth` | any `run_live` source spec |
+| `--rgb_dir` | — | for `nyu:` sources, which carry no colour frame |
+| `--frames` / `--warmup` | 20 / 3 | timings are the **median** after warm-up |
+| `--colour_frames` | 12 | the colour section is slower per frame |
+| `--no_loop` | off | stop at the end of the source instead of cycling it |
+| `--device {cuda,cpu}` | cuda if there is one | for the CPU-only row |
+| `--out FILE` | — | write the markdown here as well as to stdout |
+
+The default source is the **five depth frames tracked in git**, cycled. Cost
+per frame does not depend on the scene — fixed grid, fixed model, a distance
+transform over the whole volume either way — so five frames measure what five
+hundred would. Voxel counts do depend on it, which is why the colour section
+prints the count it painted.
+
+What it deliberately does not do is the NYU 654-frame scores: those need the
+dataset and `run_inference.py` + `evaluate.py`, and HARDWARE.md names the
+three runs.
+
+Two things worth knowing about the numbers it produces:
+
+- **Agreement is reported twice.** About 4% of low-res voxels differ between
+  the numpy and torch encoders *in the last bit of a float32*, which is what
+  float32-vs-float64 arithmetic does and means nothing. Differences above
+  1e-6 are the ones worth quoting, and there are about **3 per frame**.
+- **A laptop GPU throttles.** Re-running moves absolute times by 10-15%; the
+  ratios between rows are the stable part. The `vram` section's uncapped row
+  is the cleanest single-frame figure, since each cap runs in a fresh process.
+
 ### `run_scannet.py` — Occ-ScanNet runner
 
 Runs the checkpoint on Occ-ScanNet frames. Inputs live under
@@ -2188,12 +2249,13 @@ trusts them in the meantime.
 ## Open items
 
 - ~~Encoding costs 915 ms/frame~~ **done.** `FrameLoader(encoder='torch')`
-  does it in 116 ms and `run_live` defaults to it on any machine with a CUDA
-  card: 0.75 → 3.16 fps for the whole pipeline. The `'cuda'` extension turned
-  out **not** to be the fast path (1101 ms, not the 285 recorded here — that
-  figure does not reproduce). `run_inference` still defaults to numpy on
-  purpose. See [HARDWARE.md](HARDWARE.md).
-- **The model forward is now the floor**, 201 ms of a 317 ms frame, and it is
+  does it in ~120 ms and `run_live` defaults to it on any machine with a CUDA
+  card: 0.79 → 3.10 fps for the whole pipeline. The `'cuda'` extension turned
+  out **not** to be the fast path (~1.13 s, not the 285 ms recorded here —
+  that figure does not reproduce). `run_inference` still defaults to numpy on
+  purpose. See [HARDWARE.md](HARDWARE.md), which
+  [`benchmark.py`](#benchmarkpy--regenerate-hardwaremd) regenerates.
+- **The model forward is now the floor**, ~205 ms of a ~320 ms frame, and it is
   not addressable here: fixed-size 3D convolutions, nothing reusable between
   independent single-shot completions. Past ~0.29 s needs TensorRT/ONNX, a
   faster card, or a world-fixed volume — which needs the localisation below.

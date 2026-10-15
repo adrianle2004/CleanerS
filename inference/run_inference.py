@@ -117,7 +117,7 @@ def parse_args():
                          "the NYU score in the fourth decimal; run_live uses "
                          "that pair by default instead.")
     p.add_argument('--amp', type=str, default='off', choices=['auto', 'on', 'off'],
-                    help='mixed precision on the forward pass: 346 -> 201 ms '
+                    help='mixed precision on the forward pass: ~350 -> 205 ms '
                          'per frame, for 1 voxel in 500. Off by default here '
                          'for the same reason as --encoder.')
     p.add_argument('--out_dir', type=str, default='./outputs')

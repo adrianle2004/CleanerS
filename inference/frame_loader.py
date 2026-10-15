@@ -178,19 +178,22 @@ class FrameLoader:
         a handful of boundary voxels; they differ by an order of magnitude in
         speed. Measured per frame on an RTX 3050 Ti laptop:
 
-            'numpy'  1026 ms  scipy's exact transform on the CPU. The path
+            'numpy'  ~1.0 s   scipy's exact transform on the CPU. The path
                               validated against the NYU reference, and the
                               default -- nothing that reproduces a published
                               number changes unless it is asked to.
-            'cuda'   1101 ms  SSCNet's own datautil.cu kernels. Raises if
+            'cuda'   ~1.1 s   SSCNet's own datautil.cu kernels. Raises if
                               DataProcess is not importable. NOT the fast
                               path: its transform brute-forces ~15,600
                               candidates per voxel.
-            'torch'    110 ms  inference/tsdf_torch.py -- the same transform
+            'torch'  ~120 ms  inference/tsdf_torch.py -- the same transform
                               done separably, 3 x 25 whole-array passes.
                               Needs torch; uses the GPU when there is one.
             'auto'             'torch' when a CUDA GPU is visible, else
                               'numpy'.
+
+        `python -m inference.benchmark --what encode,agree` re-measures all
+        of this; document/HARDWARE.md is its output.
 
         On ScanNet frames 'cuda' differs from 'numpy' on 0-247 of 8.29 M
         high-res voxels -- surface voxels on a voxel boundary, float32 vs
@@ -514,7 +517,7 @@ class FrameLoader:
         return tsdf.reshape(shape), weight.reshape(shape)
 
     def _build_low_res_tsdf_torch(self):
-        """_build_high_res_tsdf + the block mean, in torch. 116 ms vs 1026.
+        """_build_high_res_tsdf + the block mean, in torch. ~120 ms vs ~1.0 s.
 
         Returns the low-res pair directly, because the two stages are fused:
         the projection runs a z-slab at a time and each slab is reduced on the

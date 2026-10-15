@@ -208,7 +208,7 @@ dies with *Input type (torch.cuda.FloatTensor) and weight type
 (torch.cuda.HalfTensor) should be the same*. `autocast` handles that mismatch
 by design, so the cast is a no-op rather than a crash.
 
-Measured: the forward pass goes **346 -> 201 ms**, and about 1 voxel in 500
+Measured: the forward pass goes **~350 -> ~205 ms**, and about 1 voxel in 500
 changes class — on all 654 NYU test frames, SSC mIoU 47.7288 -> 47.7285 and
 SC 74.9528 -> 74.9530, the fourth decimal.
 

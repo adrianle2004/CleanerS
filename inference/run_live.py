@@ -135,13 +135,15 @@ def parse_args():
     p.add_argument('--encoder', default='auto',
                    choices=['auto', 'torch', 'numpy', 'cuda'],
                    help="which arithmetic builds the TSDF, the stage that "
-                        "dominates a frame: 'torch' 116 ms, 'cuda' (SSCNet's "
-                        "kernels) 1101, 'numpy' 1026. 'auto' is torch when a "
-                        'GPU is visible, else numpy. See FrameLoader.')
+                        "dominates a frame: 'torch' ~120 ms, 'cuda' "
+                        "(SSCNet's kernels) ~1.1 s, 'numpy' ~1.0 s. 'auto' is "
+                        'torch when a GPU is visible, else numpy. See '
+                        'FrameLoader and document/HARDWARE.md.')
     p.add_argument('--amp', default='auto', choices=['auto', 'on', 'off'],
-                   help='mixed precision on the forward pass: 346 -> 201 ms, '
-                        'for 1 voxel in 500 and the fourth decimal of the NYU '
-                        "score. 'auto' is on whenever the model is on a GPU.")
+                   help='mixed precision on the forward pass: ~350 -> '
+                        '~205 ms, for 1 voxel in 500 and the fourth decimal '
+                        "of the NYU score. 'auto' is on whenever the model is "
+                        'on a GPU.')
 
     p.add_argument('--display', action='store_true',
                    help='open a live 3D window (inference/live_view.py) and '

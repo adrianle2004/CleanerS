@@ -91,14 +91,14 @@ directory (`cleaner/utils/paths.py`).
 ## 5. Optional: the CUDA TSDF encoder
 
 **You probably do not need this.** The fast encoder is
-`FrameLoader(encoder='torch')` -- 116 ms/frame against numpy's 1026 -- and it
+`FrameLoader(encoder='torch')` -- ~120 ms/frame against numpy's ~1.0 s -- and it
 needs nothing beyond torch, so it works on any machine with an NVIDIA card.
 `run_live` already uses it by default; see
 [inference/document/HARDWARE.md](inference/document/HARDWARE.md).
 
 This section is about SSCNet's own `datautil.cu` kernels,
 `FrameLoader(encoder='cuda')`, which are kept for comparison and measure
-**1101 ms/frame** here -- slower than scipy, because the transform brute-forces
+**~1.13 s/frame** here -- slower than scipy, because the transform brute-forces
 ~15,600 candidates per voxel. (An earlier note in this file claimed 285 ms;
 that does not reproduce.) The prebuilt `data/utils/DataProcess*.so` and
 `data/utils/build/libdatautil.so` come down with the data and work as-is on a
