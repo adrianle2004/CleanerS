@@ -90,6 +90,12 @@ def _edt1d(f, axis, big=None):
     n = f.shape[axis]
     shifted = torch.empty_like(f)
     for d in range(1, SR + 1):
+        if d >= n:
+            # no cell is that far along this axis. `roll` used to wrap here
+            # and the sentinel blanking swallowed it; a view cannot, and
+            # narrow() would raise. Only reachable on an axis shorter than
+            # the 12-voxel truncation, which the 240x144x240 grid never is.
+            break
         torch.add(f, float(d * d), out=shifted)
         a = out.narrow(axis, d, n - d)                  # f[i-d] + d^2
         torch.minimum(a, shifted.narrow(axis, 0, n - d), out=a)
