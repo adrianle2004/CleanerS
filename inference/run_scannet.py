@@ -83,7 +83,7 @@ def parse_args():
                    help='default: ./outputs/scannet')
     p.add_argument('--encoder', default='auto',
                    choices=['auto', 'torch', 'cuda', 'numpy'],
-                   help="TSDF encoder (see FrameLoader): 'torch' ~120 ms a "
+                   help="TSDF encoder (see FrameLoader): 'torch' ~90 ms a "
                         "frame, 'cuda' (SSCNet's kernels) ~1.1 s, 'numpy' "
                         "~1.0 s. NOTE "
                         "'auto' now resolves to torch, not to the kernels; "

@@ -147,7 +147,7 @@ def parse_args():
     p.add_argument('--encoder', default='auto',
                    choices=['auto', 'torch', 'numpy', 'cuda'],
                    help="which arithmetic builds the TSDF, the stage that "
-                        "dominates a frame: 'torch' ~120 ms, 'cuda' "
+                        "dominates a frame: 'torch' ~90 ms, 'cuda' "
                         "(SSCNet's kernels) ~1.1 s, 'numpy' ~1.0 s. 'auto' is "
                         'torch when a GPU is visible, else numpy. See '
                         'FrameLoader and document/HARDWARE.md.')

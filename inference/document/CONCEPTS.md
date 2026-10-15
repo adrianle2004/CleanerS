@@ -79,12 +79,22 @@ then x, give the exact 3D answer.
 
 **75 shifted comparisons per voxel instead of 15,600 lookups**, each one a
 whole-array shift and minimum, which is the shape of work a GPU saturates.
-`_edt1d` in `tsdf_torch.py` is one pass: 25 `torch.roll`s and a running
-`torch.minimum`.
+`_edt1d` in `tsdf_torch.py` is one pass: 24 shifted minima and the array
+itself.
 
-(The one subtlety: `roll` wraps, so the cells that come round from the far face
-are blanked to the sentinel. Without that the grid would be a torus and a
-surface at z=0 would cast distance into z=239.)
+Each of those minima is parallel over all 8.29 M voxels at once — that is the
+whole point, and it is why the pass is memory-bound rather than
+arithmetic-bound. The three passes are **not** parallel with each other and
+cannot be: the y pass reads what the z pass wrote. Separability works by
+applying them in sequence.
+
+So the only thing that makes a pass faster is moving fewer bytes. The shift
+is a `narrow` **view** rather than a `torch.roll` for exactly that reason:
+roll copies the whole array and wraps, so the cells that come round from the
+far face had to be blanked to the sentinel, or the grid would be a torus and
+a surface at z=0 would cast distance into z=239. A view never writes the
+cells a shift cannot reach, which is the same answer for half the traffic —
+**60 -> 29 ms** for the three passes, bit-identical.
 
 ---
 
@@ -102,13 +112,13 @@ volume never exists.
 | | peak |
 | --- | ---: |
 | full resolution, nothing fused | 779 MB |
-| slab 24, fp32 | 192 MB |
-| slab 24, fp16 *(the default)* | **97 MB** |
+| slab 24, fp32 | 96 MB |
+| slab 24, fp16 *(the default)* | **67 MB** |
 
 It works because **each voxel's projection does not depend on any other
 voxel** — no neighbours, so chunk boundaries cannot matter and the result is
 bit-identical. The distance transform is the opposite: it reaches +-12 voxels,
-across slab boundaries, so it keeps one full array. That is why 97 MB is the
+across slab boundaries, so it keeps one full array. That is why 67 MB is the
 floor and not less.
 
 ---

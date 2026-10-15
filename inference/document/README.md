@@ -570,7 +570,7 @@ by an order of magnitude in speed. Per frame on the dev box:
 | --- | ---: | --- |
 | `'numpy'` | ~1000 | scipy's exact transform on the CPU — **the default** |
 | `'cuda'` | ~1130 | SSCNet's `datautil.cu` kernels; raises if unimportable |
-| `'torch'` | **~120** | [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) |
+| `'torch'` | **~90** | [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) |
 | `'auto'` | | `'torch'` with a CUDA card, else `'numpy'` |
 
 `device` is for `'torch'` only. Numpy stays the constructor default so the
@@ -695,7 +695,7 @@ thresholds the weight at 0.5, builds the low-res mapping, and inverts that
 mapping into `mapping2d`.
 
 With `encoder='torch'` the first two steps are fused — `_build_low_res_tsdf_torch`
-returns 60×36×60 directly, because the slabbing that keeps its peak at 97 MB
+returns 60×36×60 directly, because the slabbing that keeps its peak at 67 MB
 reduces each z-slab on the spot. The `>= 0.5` weight threshold and everything
 downstream are identical either way.
 
@@ -710,7 +710,7 @@ low-res pair, `weight_mean` still unthresholded so the caller applies the same
 **The reference encoder, and the slow one: ~1.0 s of a 1.33 s frame.** It is
 kept as the default and as the thing every other encoder is checked against;
 [`tsdf_torch.py`](#tsdf_torchpy--the-fast-tsdf-encode) is the same steps in
-torch at ~110 ms. Steps:
+torch at ~90 ms. Steps:
 
 1. Unproject every pixel to camera coordinates, transform to world by
    `point_cam @ R.T + t`, and stamp an occupancy grid. Axis assignment is
@@ -755,8 +755,8 @@ voxel; numpy keeps the last write, which matches the reference.
 ### `tsdf_torch.py` — the fast TSDF encode
 
 `FrameLoader(encoder='torch')`. The same geometry as `_build_high_res_tsdf`,
-line for line; only the arithmetic moves. ~120 ms against numpy's ~1.0 s and
-the CUDA extension's ~1.13 s — ~110 ms of it the encode proper, ~8 ms the two
+line for line; only the arithmetic moves. ~90 ms against numpy's ~1.0 s and
+the CUDA extension's ~1.15 s — ~80 ms of it the encode proper, ~10 ms the two
 mapping tables, which stay in numpy on both paths. Exact figures, and how to
 re-measure them: [HARDWARE.md](HARDWARE.md).
 
@@ -778,7 +778,8 @@ one pass     0    1    4    9          each cell: min over d of (f[i-d] + d²)
 
 75 whole-array shifted minima replace, per voxel, either SSCNet's brute force
 over all ~15,600 candidates in that same box, or scipy's exact unbounded
-transform on the CPU. The result is exact, not an approximation.
+transform on the CPU. The result is exact, not an approximation — and each
+minimum is itself parallel over every voxel, which is what a GPU is for.
 
 #### `encode_low(depth, cam_K, cam_pose, vox_origin, drop_invalid_depth=True, device=None, slab=24, edt_dtype=None)`
 
@@ -790,7 +791,7 @@ it matters: unobserved voxels are zeroed at **high** resolution, before the
 
 | argument | default | |
 | --- | --- | --- |
-| `device` | cuda if available | the encoder runs on CPU too, ~1.2× numpy |
+| `device` | cuda if available | the encoder runs on CPU too, ~2.6× numpy |
 | `slab` | 24 | z-layers per projection pass; must divide by 4 |
 | `edt_dtype` | fp16 on cuda, fp32 on cpu | the transform's precision |
 
@@ -798,8 +799,8 @@ it matters: unobserved voxels are zeroed at **high** resolution, before the
 at a time and each slab is block-meaned straight into the result. The high-res
 TSDF is never held whole. Only the distance field must be, since the transform
 reaches ±12 voxels across slab boundaries: that is the floor, one
-240×144×240 array plus one 1-D pass's temporaries. Peak 779 → 97 MB
-(measured with nothing else resident), bit-identical, same speed.
+240×144×240 array plus one 1-D pass's temporaries. Peak 779 → 67 MB
+(measured above whatever is already resident), bit-identical, same speed.
 
 **`edt_dtype`** — fp16 is **exact** here, not a trade. Every value in the
 transform is a whole number ≤ 3·12² = 432, and fp16 holds every integer to 2048
@@ -807,12 +808,25 @@ exactly; verified bit-identical over the NYU test set. Only the sentinel
 changes, since 1e9 overflows half — `BIG_F16 = 60000.0`, still unreachable by
 any real squared distance. fp32 on CPU because there are no half kernels there.
 
-#### `_edt1d(f, axis, big)`
+#### `_edt1d(f, axis, big=None)`
 
-One 1-D pass: 25 `torch.roll` shifts and a running `minimum`. `roll` wraps, so
-the `d` cells that came round from the far face are blanked to the sentinel —
-without that the grid would be a torus and a surface at `z=0` would cast
-distance into `z=239`.
+One 1-D pass: 24 shifted minima and the array itself,
+`out[i] = min over |d| ≤ 12 of (f[i-d] + d²)`.
+
+Each minimum is parallel over all 8.29 M voxels; the three passes are not
+parallel with each other and cannot be, since the y pass reads what the z
+pass wrote. So the only lever is bytes moved, and the shift is a `narrow`
+**view** rather than a `torch.roll` for that reason: roll copies the whole
+array and wraps, which also meant blanking the `d` cells that came round from
+the far face, or the grid would be a torus and a surface at `z=0` would cast
+distance into `z=239`. A view never writes what a shift cannot reach — same
+answer, half the traffic. `d²` is added to the whole array once per `d` rather
+than to each of the two slices, which is one kernel launch fewer and measurably
+faster than either alternative.
+
+**60 → 29 ms** for the three passes on this GPU, **415 → 184 ms** on its CPU,
+bit-identical to the roll version on every room07 and NYU frame tried. `big` is
+accepted and ignored; nothing needs blanking any more.
 
 #### `available()`
 
@@ -2311,13 +2325,13 @@ trusts them in the meantime.
 ## Open items
 
 - ~~Encoding costs 915 ms/frame~~ **done.** `FrameLoader(encoder='torch')`
-  does it in ~120 ms and `run_live` defaults to it on any machine with a CUDA
-  card: 0.79 → 3.10 fps for the whole pipeline. The `'cuda'` extension turned
+  does it in ~90 ms and `run_live` defaults to it on any machine with a CUDA
+  card: 0.79 → 3.0-3.4 fps for the whole pipeline. The `'cuda'` extension turned
   out **not** to be the fast path (~1.13 s, not the 285 ms recorded here —
   that figure does not reproduce). `run_inference` still defaults to numpy on
   purpose. See [HARDWARE.md](HARDWARE.md), which
   [`benchmark.py`](#benchmarkpy--regenerate-hardwaremd) regenerates.
-- **The model forward is now the floor**, ~205 ms of a ~320 ms frame, and it is
+- **The model forward is now the floor**, ~205 ms of a ~290 ms frame, and it is
   not addressable here: fixed-size 3D convolutions, nothing reusable between
   independent single-shot completions. Past ~0.29 s needs TensorRT/ONNX, a
   faster card, or a world-fixed volume — which needs the localisation below.

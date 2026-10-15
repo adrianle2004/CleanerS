@@ -262,7 +262,7 @@ class FrameLoader:
                               DataProcess is not importable. NOT the fast
                               path: its transform brute-forces ~15,600
                               candidates per voxel.
-            'torch'  ~120 ms  inference/tsdf_torch.py -- the same transform
+            'torch'   ~90 ms  inference/tsdf_torch.py -- the same transform
                               done separably, 3 x 25 whole-array passes.
                               Needs torch; uses the GPU when there is one.
             'auto'             'torch' when a CUDA GPU is visible, else
@@ -598,11 +598,11 @@ class FrameLoader:
         return tsdf.reshape(shape), weight.reshape(shape)
 
     def _build_low_res_tsdf_torch(self):
-        """_build_high_res_tsdf + the block mean, in torch. ~120 ms vs ~1.0 s.
+        """_build_high_res_tsdf + the block mean, in torch. ~90 ms vs ~1.0 s.
 
         Returns the low-res pair directly, because the two stages are fused:
         the projection runs a z-slab at a time and each slab is reduced on the
-        spot, which is what keeps the peak at 97 MB instead of 779. The
+        spot, which is what keeps the peak at 67 MB instead of 779. The
         transform is the same truncated squared EDT, computed separably --
         inference/tsdf_torch.py explains why that is exact."""
         try:

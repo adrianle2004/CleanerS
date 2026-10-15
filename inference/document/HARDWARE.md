@@ -52,7 +52,7 @@ slower anywhere. The batch tools (`run_inference.py`) default the other way —
 
 ## Where the time went
 
-A frame cost **1264 ms**, and **73% of it was the TSDF encode**: 926 ms of
+A frame cost **1262 ms**, and **73% of it was the TSDF encode**: 921 ms of
 numpy and scipy on the CPU, never once touching the GPU. That is why no card at
 all (0.35 fps) and a 4 GB card (0.79 fps) came out within a factor of two and a
 bit of each other — the card sat idle for three quarters of every frame.
@@ -65,9 +65,9 @@ card, then shrink whatever is left over.
 | part | before | now | runs on |
 | --- | ---: | ---: | --- |
 | depth + RGB decode | ~28 ms | ~28 ms | CPU |
-| TSDF encode | 926 ms | **118 ms** | CPU -> GPU |
-| model forward | 348 ms | **205 ms** | GPU |
-| `.ply` write | 82 ms | **0** | CPU |
+| TSDF encode | 921 ms | **90 ms** | CPU -> GPU |
+| model forward | 341 ms | **205 ms** | GPU |
+| `.ply` write | 89 ms | **0** | CPU |
 
 ### Depth + RGB decode — ~28 ms, unchanged
 
@@ -76,7 +76,7 @@ to the 640x480 NYU field of view (`match_nyu_fov`). Pure CPU, pure I/O and
 memcpy. It is small, and it is the one part to overlap with the GPU work rather
 than make faster — see [the ceiling](#the-ceiling).
 
-### The TSDF encode — 926 -> 118 ms, the whole story
+### The TSDF encode — 921 -> 90 ms, the whole story
 
 This part turns one depth image into the model's input: a 60x36x60 grid where
 each cell holds the truncated signed distance to the nearest surface. Getting
@@ -84,12 +84,12 @@ there means building a 240x144x240 high-res grid (8.29 M voxels), finding for
 every voxel its distance to the nearest occupied voxel, then block-meaning the
 result down by 4 in each axis.
 
-Nearly all of the cost is that distance search. Three things fixed it. The
-figures in the three headings below are the encode stage timed on its own,
-where the numpy reference measures 979 ms; the 926 ms above is the same work
+Nearly all of the cost is that distance search. Four things fixed it. The
+figures in the four headings below are the encode stage timed on its own,
+where the numpy reference measures 975 ms; the 921 ms above is the same work
 inside the end-to-end loop, on a CPU the loop has already warmed up.
 
-**1. Do the transform in torch, not scipy — 979 -> 153 ms.** The distance
+**1. Do the transform in torch, not scipy — 975 -> 110 ms.** The distance
 transform is *truncated* at 12 voxels (`VOX_MARGIN/VOX_UNIT_HI`), so only the
 +-12 box around a voxel can ever matter. And squared Euclidean distance over a
 bounded box is **separable**: `dx^2 + dy^2 + dz^2` is a sum of independent
@@ -108,32 +108,44 @@ lets the encoder run on a 4 GB card while the model is also resident. (An
 early version that fused nothing peaked at 779 MB. It is not in the tree, so
 the script cannot reproduce that one.)
 
-**3. Run the transform in fp16 — 153 -> 110 ms, and 191 -> 96 MB.** Every value
+**3. Run the transform in fp16 — 110 -> 80 ms, and 96 -> 67 MB.** Every value
 in a truncated squared-distance field is a whole number no larger than
 3 * 12^2 = 432, and fp16 represents every integer up to 2048 exactly. So half
 precision here is not a trade-off, it is free: the result is bit-identical to
 fp32. The only thing that had to change is the sentinel for "nothing found
 yet" — 1e9 overflows half, 60000 does not.
 
-The 118 ms of the encode stage is 110 ms of transform and projection on the
-GPU plus ~8 ms of the two mapping tables, `mapping` and `mapping2d`, which
+**4. Shift with a view, not `torch.roll` — 60 -> 29 ms for the three passes.**
+`roll` copies the whole array and wraps, so the 12 cells that come round from
+the far face had to be blanked to a sentinel or the grid would be a torus and
+a surface at z=0 would cast distance into z=239. A `narrow` view never writes
+the cells a shift cannot reach, which is the same answer for half the traffic;
+and `d^2` is added to the whole array once per `d` rather than to each of the
+two slices, one kernel launch fewer. **Bit-identical** — 10 of 10 room07
+volumes byte-for-byte, through both encoders. It is also what took the
+encoder's peak from 96 to 67 MB, since roll's full-array temporaries are gone.
+On CPU the same change is worth more: the three passes go 415 -> 184 ms, and
+the whole CPU encode stage 776 -> 363.
+
+The 90 ms of the encode stage is 80 ms of transform and projection on the
+GPU plus ~10 ms of the two mapping tables, `mapping` and `mapping2d`, which
 record for every voxel which camera pixel it fell on. Those stay in numpy:
-they are index bookkeeping rather than arithmetic, and 8 ms of CPU work is not
+they are index bookkeeping rather than arithmetic, and 10 ms of CPU work is not
 worth moving — it is also work that could be overlapped instead.
 
 #### Why the prebuilt CUDA extension is not the fast path
 
 | encoder | needs | ms |
 | --- | --- | ---: |
-| numpy | scipy | 979 |
-| `cuda` (`datautil.cu`) | a prebuilt `libdatautil.so` | 1133 |
-| torch | nothing beyond torch | **118** |
+| numpy | scipy | 975 |
+| `cuda` (`datautil.cu`) | a prebuilt `libdatautil.so` | 1153 |
+| torch | nothing beyond torch | **90** |
 
 The repo ships SSCNet's own CUDA kernels, and they were the obvious first
 candidate. They are **slower than scipy**:
 `SquaredDistanceTransform__` brute-forces the same +-12 box, ~15,600 candidates
 per voxel, 8.29 M times, while scipy's exact O(N) transform does it on a CPU in
-less. End to end the extension gives 1438 ms a frame, worse than numpy's 1264.
+less. End to end the extension gives 1446 ms a frame, worse than numpy's 1262.
 (An earlier note in `SETUP.md` claimed 285 ms for this path; it does not
 reproduce, and the note is corrected.)
 
@@ -142,7 +154,7 @@ extension needs a system CUDA toolkit and gcc-12 hardcoded in its
 `CMakeLists.txt`, whereas anyone with an NVIDIA card gets the fast path from
 torch alone.
 
-### The model forward — 348 -> 205 ms, with AMP
+### The model forward — 341 -> 205 ms, with AMP
 
 TSDFNet plus Unet3d, 14.3 M parameters of 3D convolution over the fixed
 60x36x60 grid. `--amp auto` wraps the forward in `torch.cuda.amp.autocast`, so
@@ -159,7 +171,7 @@ comes out differently, and the benchmark score does not move — see
 
 ### Writing the result — 83 ms, now opt-in
 
-A `.ply` per frame cost 82 ms, a fifth of the frame, for a file nobody reads
+A `.ply` per frame cost 89 ms, a fifth of the frame, for a file nobody reads
 during a live run. `--save` now defaults to `none` and `ply/` and
 `prediction/` are created on first write, so a run that saves nothing leaves no
 directories behind. `--save ply|npy|both` and `--out_dir` bring it back.
@@ -170,16 +182,20 @@ One harness, 20 frames, each change added to the one above it:
 
 | configuration | encode | infer | frame | fps |
 | --- | ---: | ---: | ---: | ---: |
-| `numpy` / `amp off` | 926 | 339 | 1264 ms | 0.79 |
-| `cuda` / `amp off` | 1094 | 344 | 1438 ms | 0.70 |
-| `torch` / `amp off` | 118 | 348 | 466 ms | 2.15 |
-| `torch` / `amp auto` | **118** | **205** | **322 ms** | **3.10** |
-| ... plus a `.ply` | 116 | 205 | 403 ms | 2.48 |
+| `numpy` / `amp off` | 921 | 341 | 1262 ms | 0.79 |
+| `cuda` / `amp off` | 1100 | 346 | 1446 ms | 0.69 |
+| `torch` / `amp off` | 89 | 390 | 479 ms | 2.09 |
+| `torch` / `amp auto` | **90** | **231** | **331 ms** | **3.02** |
+| ... plus a `.ply` | 88 | 236 | 413 ms | 2.42 |
 
-**1264 -> 322 ms, 3.9x.** The encoder is 2.7x of that and AMP the remaining
-1.5x. Three runs of this table on this machine gave 3.7x, 3.8x and 3.9x, and
-an earlier one 4.2x; the numpy encode is the variable part, being the row that
-depends on how hot the CPU already is.
+**1262 -> 331 ms, 3.8x**, of which the encoder is 2.6x and AMP 1.4x.
+
+Read the frame column with the model's drift in mind: the forward pass
+measures **195-231 ms** across runs on this laptop, and the rows of this table
+are timed in sequence in one process, so the later ones run on a hotter card.
+Timed on its own with warm-up it is ~205 ms, and the cleanest whole-frame
+figure is the uncapped row of [hardware gates](#hardware-gates), which gets a
+fresh process: **291 ms**, against 321 ms before the encoder's fourth change.
 
 Peak VRAM while doing it, model included: **930 MB** allocated on the fast
 path against **1114 MB** on fp32 — the model dominates either way, and what a
@@ -190,21 +206,23 @@ card actually has to clear is in [hardware gates](#hardware-gates).
 | condition | per frame | fps |
 | --- | ---: | ---: |
 | *the old path, any machine* | *1.26 s* | *0.79* |
-| no CUDA card | 2.76 s | 0.36 |
-| CUDA, under 4 GB | 0.32-0.67 s | 1.5-3.1 |
-| CUDA, 4 GB *(this box)* | **0.32 s** | **3.10** |
-| ... plus the `.ply` write | 0.40 s | 2.48 |
+| no CUDA card | 2.32 s | 0.43 |
+| CUDA, under 4 GB | 0.29 s | 3.4 |
+| CUDA, 4 GB *(this box)* | **0.29-0.33 s** | **3.0-3.4** |
+| ... plus the `.ply` write | 0.41 s | 2.42 |
 | CUDA, faster than this box | >= 0.21 s | <= 4.8 |
 
 Measured, except the last row. The under-4 GB row is this card with its
-allocator capped, so it *fits* by measurement but runs at this card's speed and
-bandwidth; read it as an upper bound, and note the 0.67 s end of it is what
-being at the memory floor costs. The last row is arithmetic, not a benchmark:
-see [the ceiling](#the-ceiling).
+allocator capped, so it *fits* by measurement but runs at this card's speed
+and bandwidth; read it as an upper bound. It no longer carries a time penalty
+at all — the encoder's 67 MB peak leaves the allocator enough room to stop
+churning, where at 96 MB a 1 GB cap cost 2.1x. The last row is arithmetic, not
+a benchmark: see [the ceiling](#the-ceiling).
 
-**A card is what buys the ~4x, not the code.** On CPU the model costs 1.95 s
-against 0.21, so the faster encoder barely registers there — 0.35 to 0.36 fps —
-and there is no live display without a card either.
+**A card is still what buys most of it.** On CPU the model costs ~2.0 s
+against 0.21, so even an encode stage that went 939 -> 363 ms there only moves
+the frame 3.12 s -> 2.32 s, 0.32 to 0.43 fps — and there is no live display
+without a card either.
 
 ## The live window
 
@@ -214,8 +232,8 @@ simply added to the frame. Measured on the same replay, 12 frames:
 | `--colour` | what it paints with | paint |
 | --- | --- | ---: |
 | `class` | the semantic colour | ~0 ms |
-| `zbuffer` | the photo pixel each voxel is front-most on | 8 ms |
-| `all` | the three photo rules stacked | 106 ms |
+| `zbuffer` | the photo pixel each voxel is front-most on | 10 ms |
+| `all` | the three photo rules stacked | 129 ms |
 
 Painting is what differs between the modes; `class` is a colormap lookup and
 costs nothing. On top of it every mode pays the same mesh build — 2 ms for a
@@ -242,14 +260,14 @@ The 0.32 s of compute is four pieces, plus ~28 ms the source costs on top
 | piece | ms | shrinkable |
 | --- | ---: | --- |
 | depth + RGB decode | ~28 | overlappable |
-| TSDF transform + projection | 110 | yes |
-| `mapping` + `mapping2d` | ~8 | overlappable |
+| TSDF transform + projection | 80 | yes |
+| `mapping` + `mapping2d` | ~10 | overlappable |
 | model forward | **205** | **no** |
 
 The forward pass is 3D convolutions over a fixed grid, cost independent of the
 scene, and every frame is an independent single-shot completion, so the whole
-thing runs each time with nothing to reuse. That is 59% of the ~0.35 s budget
-(64% of the 0.32 s of compute) and not addressable here.
+thing runs each time with nothing to reuse. That is 64% of the ~0.32 s budget
+(69% of the 0.29 s of compute) and not addressable here.
 
 So ~0.21 s is an **asymptote, not a target**: what would remain if the encode
 cost vanished, which it cannot, since encode and model want the same GPU — see
@@ -270,13 +288,13 @@ paint, draw, in that order, and the parallelism is all *inside* the GPU kernels
 What overlapping would buy, each stage measured alone, then issued alongside
 the model forward:
 
-| the model forward, 195 ms, plus | alone | serial | together |
+| the model forward, 203 ms, plus | alone | serial | together |
 | --- | ---: | ---: | ---: |
-| encode, on a second CUDA stream | 108 | 303 | 301 |
-| the `mapping` tables, in a thread | 6 | 201 | 195 |
-| `--colour all` painting, in a thread | 103 | 298 | **195** |
+| encode, on a second CUDA stream | 79 | 282 | 280 |
+| the `mapping` tables, in a thread | 7 | 209 | 205 |
+| `--colour all` painting, in a thread | 135 | 338 | **223** |
 
-- **GPU against GPU is dead.** Two streams saved 2 ms of 108. The card is
+- **GPU against GPU is dead.** Two streams saved 2 ms of 79. The card is
   already saturated by one stage at a time, which is also why ~0.21 s is a
   floor rather than a target: there is no idle GPU for the encode to hide in.
 - **CPU against GPU works, and the GIL is not in the way** — numpy and cv2
@@ -285,7 +303,7 @@ the model forward:
   reads as ~28 ms here but on a live camera that is `wait_for_frames`
   *waiting for the sensor*, not CPU work to hide: the sensor is already
   producing the next frame while we work.
-- **The painting is the one real win left: 103 ms, entirely free.** With
+- **The painting is the one real win left: 115 of 135 ms, nearly free.** With
   `--display --colour all` that is ~24% of the frame. It is not done, because
   the mesh would then be one frame behind the RGB/depth panels beside it, and
   a viewer whose two halves disagree is a worse tool for judging a prediction
@@ -339,10 +357,10 @@ allocates above whatever is already resident:
 
 | encoder configuration | ms | peak |
 | --- | ---: | ---: |
-| slab 24, fp16 *(the default)* | 110 | **96 MB** |
-| slab 24, fp32 | 153 | 191 MB |
-| whole volume, fp16 | 107 | 357 MB |
-| whole volume, fp32 | 150 | 357 MB |
+| slab 24, fp16 *(the default)* | 80 | **67 MB** |
+| slab 24, fp32 | 110 | 96 MB |
+| whole volume, fp16 | 77 | 357 MB |
+| whole volume, fp32 | 104 | 357 MB |
 
 Unslabbed, both dtypes land on the same 357 MB: the projection buffers are
 fp32 either way and they are then what dominates. The whole pipeline, model
@@ -354,20 +372,19 @@ each in a process of its own:
 
 | usable VRAM | AMP | fp32 |
 | ---: | --- | --- |
-| uncapped (3772 MB) | OK, 321 ms | OK, 464 ms |
-| 1536 MB | OK, 320 ms | OK, 462 ms |
-| 1280 MB | OK, 320 ms | OK, 463 ms |
-| 1152 MB | OK, 319 ms | **OOM** |
-| 1024 MB | OK, 670 ms | **OOM** |
+| uncapped (3772 MB) | OK, 291 ms | OK, 431 ms |
+| 1536 MB | OK, 290 ms | OK, 432 ms |
+| 1280 MB | OK, 289 ms | OK, 434 ms |
+| 1152 MB | OK, 289 ms | **OOM** |
+| 1024 MB | OK, 291 ms | **OOM** |
 | 896 MB | **OOM** | **OOM** |
 | 768 MB | **OOM** | **OOM** |
 
-Floors ~**1.0 GB** with AMP, ~**1.3 GB** without. Above the floor the cap costs
-nothing at all — 320 ms at 4 GB and at 1280 MB alike. At the floor it costs
-**2.1x** (670 ms), all of it allocator churn: same code, same GPU, only how
-much it may cache changed. So on a small card AMP is not a speed flag, it is
-what makes it fit — and a card that merely clears the floor will not run at
-these speeds.
+Floors ~**1.0 GB** with AMP, ~**1.3 GB** without, and the cap now costs
+nothing anywhere above them — 291 ms at 4 GB and at 1 GB alike. It used to
+cost **2.1x** at 1 GB, all of it allocator churn; dropping the encoder's peak
+from 96 to 67 MB left enough room that it stopped churning. So on a small card
+AMP is not a speed flag, it is what makes it fit.
 
 **Architecture.** `get_arch_list()` is `sm_37 50 60 61 70 75 80 86 compute_37`.
 
@@ -386,13 +403,14 @@ torch, which means re-pinning mmcv-full 1.5.0 and mmseg as well.
 Driver >= 450.80.02 for cu111; the conda build bundles its runtime, so no
 system CUDA toolkit is needed to run.
 
-**No CUDA.** The torch encoder is one function with a `device` argument, and on
-CPU it is still 1.2x faster than numpy (776 vs 941 ms for the stage). AMP is
-CUDA-only (`torch.cpu.amp` bf16 hits the same `unet3d.py:177`), and the model
-is ~1.95 s on CPU against 0.21, so the frame goes 2.90 s -> 2.76 s — 0.35 to
-0.36 fps — and the display stays out of reach. `--what frame --device cpu`
-measures this row. Apple Silicon and AMD fall here too: torch 1.10 predates
-MPS.
+**No CUDA.** The torch encoder is one function with a `device` argument, and
+on CPU it is now **2.6x** faster than numpy for the stage (363 vs 935 ms) —
+the view change is worth more there than on the GPU, because a CPU pays full
+price for every byte `roll` copied. AMP is CUDA-only (`torch.cpu.amp` bf16
+hits the same `unet3d.py:177`), and the model is ~2.0 s on CPU against 0.21,
+so the frame goes 3.12 s -> 2.32 s, 0.32 to 0.43 fps, and the display stays
+out of reach. `--what frame --device cpu` measures this row. Apple Silicon and
+AMD fall here too: torch 1.10 predates MPS.
 
 **Resolution order**, so no machine ends up slower than before:
 
@@ -402,14 +420,15 @@ MPS.
 --encoder torch  -> torch on whatever device there is; on CPU it uses an
                     fp32 transform, since there are no half kernels there
 --encoder numpy  -> the reference encoder: what to check against
---encoder cuda   -> datautil.cu; kept for comparison, 1133 ms
+--encoder cuda   -> datautil.cu; kept for comparison, 1153 ms
 --amp auto       -> on when the model is on a CUDA device, off otherwise
 ```
 
-`auto` stops at numpy on a CPU-only box rather than taking torch's 1.2x,
-because that gain does not justify moving anyone off the validated path by
-default, and it buys 6% of a 3-second frame; `--encoder torch` is there for
-whoever wants it.
+`auto` stopped at numpy on a CPU-only box because torch's 1.2x there did not
+justify moving anyone off the validated path by default. That reasoning is now
+weaker — the stage is 2.6x faster on CPU and the frame 26% — but the rule
+stands until someone wants it changed, and `--encoder torch` is there
+meanwhile.
 
 ## Status
 
@@ -438,10 +457,10 @@ python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
 it the run stops at five, well short of `--max_frames`.
 
 It logs the resolved `encoder=` and `amp=` on the first line, then prints
-encode and infer separately. On this box: **0.76 fps** with `--encoder numpy
---amp off` (encode 956, infer 360) against **2.88** on the defaults (encode
-136, infer 203). The gap to the staged tables above is the frame source those
-leave out.
+encode and infer separately. On this box: **0.75 fps** with `--encoder numpy
+--amp off` (encode 964, infer 362) against **3.13** on the defaults (encode
+106, infer 205), and 3.24 replaying the bag. The gap to the staged tables
+above is the frame source those leave out.
 
 The NYU scores are the three runs of `run_inference.py` named in
 [does it change the answer](#does-it-change-the-answer), scored with

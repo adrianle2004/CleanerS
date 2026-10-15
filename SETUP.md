@@ -91,7 +91,7 @@ directory (`cleaner/utils/paths.py`).
 ## 5. Optional: the CUDA TSDF encoder
 
 **You probably do not need this.** The fast encoder is
-`FrameLoader(encoder='torch')` -- ~120 ms/frame against numpy's ~1.0 s -- and it
+`FrameLoader(encoder='torch')` -- ~90 ms/frame against numpy's ~1.0 s -- and it
 needs nothing beyond torch, so it works on any machine with an NVIDIA card.
 `run_live` already uses it by default; see
 [inference/document/HARDWARE.md](inference/document/HARDWARE.md).
