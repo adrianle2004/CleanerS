@@ -85,6 +85,82 @@ def torch_cuda_available():
         return False
 
 
+FLOOR_MIN_DROP = 0.40      # a desk at 0.3 m must not pass for the floor
+FLOOR_MAX_DROP = 2.50
+FLOOR_MAX_TILT = 3.0       # degrees off gravity before it is not a floor
+FLOOR_MIN_INLIERS = 3000   # of 307,200 pixels
+
+
+def camera_height_from_depth(depth, cam_K=None, up_camera=None,
+                             min_drop=FLOOR_MIN_DROP,
+                             max_drop=FLOOR_MAX_DROP,
+                             max_tilt=FLOOR_MAX_TILT,
+                             min_inliers=FLOOR_MIN_INLIERS):
+    """Measure the lens height above the floor from ONE depth frame.
+
+    -> (height_m, info) on success, or (None, info) when this frame cannot
+    answer -- the floor out of view, too few points, the best plane not level.
+    `info['error']` says which. Never raises for an ordinary failure, because
+    the caller is a live loop that should try the next frame instead.
+
+    The fit is reconstruction_GT.measure_floor.fit_floor -- unproject every
+    valid pixel, take each point's drop below the lens along gravity, pick a
+    histogram peak in [min_drop, max_drop], refine it with two least-squares
+    plane passes. That is the measurement room07's own `camera_height` came
+    from, checked against a tape.
+
+    It is asked for the LOWEST well-supported peak, not the largest. The
+    largest is what that tool wants from a frame aimed at the floor; from an
+    ordinary frame it finds the biggest level surface, which in room07 is the
+    bed -- 0.537 m, 41k inliers, 3.3 deg of tilt, entirely believable and
+    half a metre wrong. The floor is the lowest level thing in a room.
+
+    So this answers "the lowest level surface this frame can see", which is
+    the floor only when the floor is in view. A level camera at desk height
+    often cannot see it -- hence `min_inliers` and `max_tilt`, and hence
+    run_live keeping the lowest surface found across frames rather than
+    trusting the first.
+
+    up_camera: measured gravity in camera coordinates (a .bag carries it).
+    With it, the plane's tilt against gravity is a real check and anything
+    over `max_tilt` is rejected as furniture. Without it the camera is assumed
+    level, exactly as live_cam_pose assumes, and the tilt figure then measures
+    the camera as much as the floor -- so it is reported, not enforced.
+    """
+    try:
+        from reconstruction_GT.measure_floor import fit_floor, FloorNotVisible
+    except ImportError as e:                    # reconstruction_GT not present
+        return None, {'error': 'cannot import the floor fit: %s' % e}
+
+    if up_camera is None:
+        up, up_measured = np.array([0.0, -1.0, 0.0]), False
+    else:
+        up = np.asarray(up_camera, np.float64)
+        n = np.linalg.norm(up)
+        if n < 1e-6:
+            return None, {'error': 'up_camera is a zero vector'}
+        up, up_measured = up / n, True
+
+    K = np.asarray(cam_K if cam_K is not None else CAM_K, np.float64)
+    try:
+        info = fit_floor(np.asarray(depth, np.float64), K, up,
+                         min_drop, max_drop, prefer='lowest')
+    except FloorNotVisible as e:
+        return None, {'error': str(e), 'up_measured': up_measured}
+    info['up_measured'] = up_measured
+
+    tilt = info['plane_tilt_vs_gravity_deg']
+    if up_measured and tilt > max_tilt:
+        info['error'] = ('the lowest plane is %.1f deg off level, so it is '
+                         'furniture rather than the floor' % tilt)
+        return None, info
+    if info['inliers'] < min_inliers:
+        info['error'] = ('the lowest plane holds only %d points, too few to '
+                         'call a floor' % info['inliers'])
+        return None, info
+    return float(info['lens_height_m']), info
+
+
 def live_cam_pose(camera_height, yaw=0.0, up_camera=None):
     """Camera-to-world in NYU's gravity-aligned, floor-anchored convention.
 

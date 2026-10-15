@@ -170,10 +170,20 @@ class RealSenseSource(CameraSource):
 
     name = 'realsense'
 
+    # Gravity smoothing, shared with BagSource. At 15-30 Hz a 0.25 weight is
+    # a ~0.2 s time constant on the DIRECTION: long enough to average out a
+    # footstep, short enough to follow a turn. The magnitude reference is
+    # deliberately much slower -- it is meant to be the sensor's magnitude AT
+    # REST, and an average that chases the motion it is supposed to reject
+    # would be no gate at all.
+    EMA_UP = 0.25
+    EMA_MAG = 0.02                 # ~3 s, so the reference stays near rest
+    MAG_TOL = 0.08                 # fraction of that reference
+
     def __init__(self, width=1280, height=720, fps=30, fov='nyu',
                  emitter=True, align_to_color=True, warmup=30,
                  filters=False, hole_fill=False, keep_native=False,
-                 undistort=True):
+                 undistort=True, imu=True):
         """warmup: frames to pull and discard before yielding. A D4xx opens
             with auto-exposure and white-balance unconverged -- the first
             frames come out dark, and the depth is correspondingly sparse.
@@ -187,6 +197,12 @@ class RealSenseSource(CameraSource):
             never measured, and the TSDF encoder cannot tell an invented
             surface from a real one -- it stamps both as observed geometry.
             Completing unseen space is the network's job, not a filter's.
+        imu: read the accelerometer and attach measured gravity to every
+            frame, so the voxel grid is built around real gravity rather than
+            around the assumption that the rig is level. Requires a device
+            with a motion module -- a D435i or D455 has one, a D435 does not
+            -- and is skipped with a warning when there is none. The same
+            smoothing the .bag path uses, which is where it was measured.
         keep_native: also attach the pre-FOV-match frame (see Frame).
         undistort: resample into an ideal pinhole frame. The D455's COLOR
             stream is inverse_brown_conrady with real coefficients, and after
@@ -222,6 +238,16 @@ class RealSenseSource(CameraSource):
         cfg = rs.config()
         cfg.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
         cfg.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+        # enabling a stream the device does not have makes start() throw, so
+        # ask the sensors first rather than guess from the model name
+        has_accel = any(
+            p.stream_type() == rs.stream.accel
+            for sensor in dev.query_sensors()
+            for p in sensor.get_stream_profiles())
+        if imu and has_accel:
+            cfg.enable_stream(rs.stream.accel)
+        self._init_imu(imu, has_accel,
+                       dev.get_info(rs.camera_info.name))
         self.pipeline = rs.pipeline(ctx)
         self.profile = self.pipeline.start(cfg)
         self.align = rs.align(rs.stream.color) if align_to_color else None
@@ -438,12 +464,62 @@ class RealSenseSource(CameraSource):
                      depth_native=depth_n, rgb_native=rgb_n,
                      cam_K_native=self.cam_K if self.keep_native else None)
 
+    def _init_imu(self, imu, has_accel, where):
+        """The accelerometer state both this and BagSource keep."""
+        self.imu = bool(imu) and bool(has_accel)
+        if imu and not has_accel:
+            log.warning('%s has no accel stream; falling back to assuming the '
+                        'camera is level. A tilt of 4 degrees puts a surface '
+                        '3 m away 21 cm from where the grid draws it.', where)
+        self._up = None                        # smoothed gravity, camera frame
+        self._mag = None
+        self._imu_seen = self._imu_used = 0
+
+    def _gravity(self, fs):
+        """The smoothed accel vector, or None until one is trustworthy.
+
+        The accelerometer runs far faster than the video streams and is not
+        synchronised to them, so a frameset may carry no motion frame at all;
+        that keeps the last value rather than dropping to None.
+        """
+        rs = self._rs
+        a = fs.first_or_default(rs.stream.accel)
+        if not a:
+            return self._up
+        self._imu_seen += 1
+        m = a.as_motion_frame().get_motion_data()
+        v = np.array([m.x, m.y, m.z], dtype=np.float64)
+        mag = float(np.linalg.norm(v))
+        if mag < 1e-3:
+            return self._up
+        if self._mag is None:
+            self._mag, self._up = mag, v
+            self._imu_used += 1
+            return self._up
+        # under motion the reading is gravity PLUS linear acceleration; a
+        # magnitude that has wandered says this sample is not gravity alone
+        if abs(mag - self._mag) <= self.MAG_TOL * self._mag:
+            self._up = (1 - self.EMA_UP) * self._up + self.EMA_UP * v
+            self._mag = (1 - self.EMA_MAG) * self._mag + self.EMA_MAG * mag
+            self._imu_used += 1
+        return self._up
+
+    def report(self):
+        if not self._imu_seen:
+            return None
+        return ('realsense: accel %d of %d samples used'
+                % (self._imu_used, self._imu_seen))
+
     def frames(self):
         i = 0
         while True:
-            fr = self._process(self.pipeline.wait_for_frames(), i)
+            fs = self.pipeline.wait_for_frames()
+            up = self._gravity(fs) if self.imu else None
+            fr = self._process(fs, i)
             if fr is None:
                 continue
+            if up is not None:
+                fr.up_camera = up / np.linalg.norm(up)
             yield fr
             i += 1
 
@@ -509,14 +585,8 @@ class BagSource(RealSenseSource):
 
     name = 'bag'
 
-    # At 15 Hz a 0.25 weight is a ~0.2 s time constant on the DIRECTION: long
-    # enough to average out a footstep, short enough to follow a turn. The
-    # magnitude reference is deliberately much slower -- it is meant to be the
-    # sensor's magnitude AT REST, and an average that chases the motion it is
-    # supposed to reject would be no gate at all.
-    EMA_UP = 0.25
-    EMA_MAG = 0.02                 # ~3 s, so the reference stays near rest
-    MAG_TOL = 0.08                 # fraction of that reference
+    # EMA_UP / EMA_MAG / MAG_TOL and _gravity() live on RealSenseSource: the
+    # same smoothing serves the device, and this path is what measured it.
 
     def __init__(self, path, fov='nyu', loop=False, fps=None, imu=True,
                  realtime=False, align_to_color=True, filters=False,
@@ -538,11 +608,8 @@ class BagSource(RealSenseSource):
         self.imu = imu
         self.timeout_ms = timeout_ms
         self.period = (1.0 / fps) if fps else 0.0
-        self._up = None                        # smoothed gravity, camera frame
-        self._mag = None
         self._dropped = 0
         self._first_num = self._last_num = None
-        self._imu_seen = self._imu_used = 0
 
         cfg = rs.config()
         rs.config.enable_device_from_file(cfg, path, repeat_playback=loop)
@@ -560,10 +627,7 @@ class BagSource(RealSenseSource):
         secs = playback.get_duration().total_seconds()
         has_accel = any(st.stream_type() == rs.stream.accel
                         for st in self.profile.get_streams())
-        if imu and not has_accel:
-            log.warning('%s has no accel stream; falling back to assuming the '
-                        'camera was level', path)
-            self.imu = False
+        self._init_imu(imu, has_accel, path)
         log.info('BagSource: %s  %.1f s  loop=%s  imu=%s  pacing=%s', path,
                  secs, loop, 'on' if self.imu else 'off',
                  'real time (drops frames, like a camera)' if realtime
@@ -610,30 +674,6 @@ class BagSource(RealSenseSource):
         elif num > self._last_num + 1:
             self._dropped += num - self._last_num - 1
         self._last_num = num
-
-    def _gravity(self, fs):
-        """The smoothed accel vector, or None until one is trustworthy."""
-        rs = self._rs
-        a = fs.first_or_default(rs.stream.accel)
-        if not a:
-            return self._up
-        self._imu_seen += 1
-        m = a.as_motion_frame().get_motion_data()
-        v = np.array([m.x, m.y, m.z], dtype=np.float64)
-        mag = float(np.linalg.norm(v))
-        if mag < 1e-3:
-            return self._up
-        if self._mag is None:
-            self._mag, self._up = mag, v
-            self._imu_used += 1
-            return self._up
-        # under motion the reading is gravity PLUS linear acceleration; a
-        # magnitude that has wandered says this sample is not gravity alone
-        if abs(mag - self._mag) <= self.MAG_TOL * self._mag:
-            self._up = (1 - self.EMA_UP) * self._up + self.EMA_UP * v
-            self._mag = (1 - self.EMA_MAG) * self._mag + self.EMA_MAG * mag
-            self._imu_used += 1
-        return self._up
 
     def frames(self):
         i = 0
@@ -830,7 +870,7 @@ def open_source(spec, rgb_dir=None, loop=False, fps=None, fov='nyu',
                 w, h = (int(v) for v in res.lower().split('x'))
             if rate:
                 f = int(rate)
-        return RealSenseSource(width=w, height=h, fps=f, fov=fov)
+        return RealSenseSource(width=w, height=h, fps=f, fov=fov, imu=imu)
 
     if kind == 'bag':
         return BagSource(arg, fov=fov, loop=loop, fps=fps, imu=imu,

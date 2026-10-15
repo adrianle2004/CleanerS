@@ -451,11 +451,15 @@ def main():
     native_dir = None if args.no_native else ensure_dir(
         os.path.join(args.out_dir, 'native'))
 
+    # imu=False keeps this path exactly as it was: the accel stream is new
+    # and only verified through .bag replay, and the tool that writes the
+    # dataset is not where to find out it changes frame delivery. A capture's
+    # up_camera still comes from the scan's floor fit, not from here.
     src = RealSenseSource(width=args.width, height=args.height, fps=args.fps,
                           fov=args.fov, warmup=args.warmup,
                           filters=args.filters, hole_fill=args.hole_fill,
                           keep_native=not args.no_native,
-                          undistort=not args.no_undistort)
+                          undistort=not args.no_undistort, imu=False)
 
     saved = []
     cam_K_eff = None

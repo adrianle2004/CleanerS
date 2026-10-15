@@ -214,7 +214,7 @@ source kind, only on which optional fields are populated.
 | `vox_origin` | (3,) | NYU replay only — dataset grid placement |
 | `cam_pose` | 4×4 | NYU replay only |
 | `camera_height` | float | from `meta.json`; live sources only |
-| `up_camera` | (3,) | measured gravity in camera coords; `bag:` only |
+| `up_camera` | (3,) | measured gravity in camera coords; `bag:` and `realsense` |
 | `yaw` | float | from `meta.json` |
 | `depth_native` | (H,W) float32 | pre-crop frame, when `keep_native=True` |
 | `rgb_native` | (H,W,3) uint8 | pre-crop frame |
@@ -315,7 +315,9 @@ Three things differ from the device:
   capture.py's scans are rgb8 where the live stream is requested as bgr8. The
   profile is read and the channels swapped (`_color_swap`), so `Frame.rgb` is
   BGR either way.
-- **It carries an accelerometer.** See below.
+- ~~**It carries an accelerometer.**~~ Both do now — see below. The bag is
+  still where the smoothing was measured, and still the only path the device
+  half has been checked against.
 
 `camera_height` and `yaw` come from the capture's `meta.json` two directories
 up (`captures/room07/` for `captures/room07/scan/scan.bag`). The `cam_K` in
@@ -323,7 +325,7 @@ that file is deliberately **not** used: it describes capture.py's own
 1280×720 stream, while room07's scan was recorded at 848×480. The recording's
 intrinsics are read from its own profile.
 
-#### `BagSource._gravity(fs)` — why the IMU is read
+#### `RealSenseSource._gravity(fs)` — why the IMU is read
 
 `from_live_camera` builds the voxel grid around the up direction, and a
 handheld sweep is never level. Over room07's scan the median tilt is **5.2°**
@@ -331,6 +333,14 @@ and the maximum 16.1°, which puts a surface 3 m away 29 cm from where a level
 grid draws it.
 
 So the accel vector is read per frame and passed through `Frame.up_camera`.
+`RealSenseSource` asks for `rs.stream.accel` when the device has a motion
+module (a D435i or D455 does, a D435 does not — the sensors are queried
+rather than the model name guessed at, because enabling a stream a device
+lacks makes `pipeline.start` throw), and `BagSource` inherits the same
+reader. **The device side is unverified**: no camera was attached when it was
+written. `capture.py` deliberately passes `imu=False` and keeps its old
+behaviour — the tool that writes the dataset is not where to discover that an
+extra stream changed frame delivery.
 The magnitude is not trusted and does not need to be — `live_cam_pose`
 normalises it, and this unit reads 9.02 m/s² at rest, 8% low. The *direction*
 is the good part: 0.108° of noise at rest
@@ -632,6 +642,38 @@ Too low and the floor is pushed under `vox_origin[2]` and clipped away —
 observed voxels fall 5% at 30 cm. Too high and the ceiling band leaves the
 volume: `ceiling` predictions drop 29%. `run_live` warns once if it has to
 assume 1.25 m.
+
+**`--camera_height auto`** measures it instead, per frame, from the depth
+itself: `camera_height_from_depth` → `reconstruction_GT.measure_floor.fit_floor`,
+the same fit room07's own value came from. Two things make it work rather
+than merely run:
+
+- It asks for the **lowest** well-supported level plane, not the largest.
+  The largest is the bed — in room07's frames that is 0.537 m with 41,000
+  inliers and a believable 3.3° of tilt, half a metre wrong.
+- It keeps a running **maximum** across frames and never averages. On
+  room07's recorded sweep exactly one frame of 808 sees the floor properly,
+  and it answers **1.111 m** against the fused sweep's 1.086 and the tape's
+  1.150. Requiring two frames to agree gives 1.006 — 8 cm low — because what
+  the other 500 frames can see is furniture.
+
+Every accepted fit is gated: level against **measured gravity** (≤3°), ≥3,000
+inliers, within 2.5 m of the lens. Without gravity it refuses and falls back,
+because a level bed and a level floor are then the same thing. It costs 17 ms
+a frame and logs each improvement with its evidence, then prints the final
+number to record in `meta.json`.
+
+#### `camera_height_from_depth(depth, cam_K=None, up_camera=None, min_drop=0.40, max_drop=2.50, max_tilt=3.0, min_inliers=3000)`
+
+→ `(height_m, info)`, or `(None, info)` with `info['error']` when this frame
+cannot answer. Never raises for an ordinary failure: the caller is a live loop
+that should try the next frame. Backs
+[`run_live --camera_height auto`](#run_livepy--streaming-runner).
+
+The fit is `reconstruction_GT.measure_floor.fit_floor`, asked for the
+**lowest** well-supported level plane rather than the largest — and the
+largest is the bed. See the table under `from_live_camera` for why that
+distinction is half a metre wide, and what the estimator gets on room07.
 
 #### `_load_bin_header(bin_path)` (static)
 
@@ -998,7 +1040,7 @@ and closes the sensor cleanly.
 | --- | --- | --- |
 | `--source` | `realsense` | `realsense[:WxH@FPS]` \| `nyu:/path` \| `folder:/path` |
 | `--fov {nyu,native}` | `nyu` | |
-| `--camera_height` | `None` | → capture's meta.json → 1.25 **and warns**; see below |
+| `--camera_height M\|auto` | `None` | → capture's meta.json → 1.25 **and warns**. `auto` measures it; see below |
 | `--yaw` | `None` | → meta.json → 0.0 |
 | `--rgb_dir`, `--loop`, `--fps` | | replay sources only |
 | `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 82 ms of a 320 ms frame |

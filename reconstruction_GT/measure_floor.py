@@ -139,7 +139,29 @@ def grab(args):
     return depth, colour, K, up / np.linalg.norm(up)
 
 
-def fit_floor(depth, K, up, min_drop, max_drop):
+class FloorNotVisible(ValueError):
+    """fit_floor found too little to fit a floor to.
+
+    A ValueError rather than a SystemExit, so a caller that is not a CLI --
+    `run_live --camera_height auto` -- can keep going and try the next frame.
+    """
+
+
+def fit_floor(depth, K, up, min_drop, max_drop, prefer='largest',
+              min_support=0.15):
+    """prefer: which histogram peak is the floor.
+
+    'largest' (the default, and what this tool has always done) takes the peak
+    with the most points. That is right for a frame aimed deliberately at the
+    floor, and wrong for an ordinary one: in room07's capture frames the BED
+    is the biggest level surface, and 'largest' returns 0.537 m with 41k
+    inliers and a believable 3.3 deg of tilt.
+
+    'lowest' takes instead the lowest-lying peak that still holds
+    `min_support` of the largest peak's points -- the floor is the lowest
+    level thing in a room, not the widest. The support fraction is what keeps
+    a handful of stray far points from passing for a floor.
+    """
     v, u = np.nonzero(depth > 0)
     z = depth[v, u].astype(np.float64)
     P = np.stack([(u - K[0, 2]) * z / K[0, 0],
@@ -147,11 +169,23 @@ def fit_floor(depth, K, up, min_drop, max_drop):
     h = -(P @ up)                                # metres below the lens
     band = (h > min_drop) & (h < max_drop)
     if band.sum() < 2000:
-        raise SystemExit('only %d points between %.2f and %.2f m below the lens '
-                         '-- tilt the camera further down so the floor is in '
-                         'view' % (int(band.sum()), min_drop, max_drop))
+        raise FloorNotVisible(
+            'only %d points between %.2f and %.2f m below the lens -- tilt '
+            'the camera further down so the floor is in view'
+            % (int(band.sum()), min_drop, max_drop))
     hist, edges = np.histogram(h[band], bins=np.arange(min_drop, max_drop, 0.02))
-    peak = edges[int(np.argmax(hist))]
+    if hist.max() < 1:
+        raise FloorNotVisible('no populated depth band below the lens')
+    if prefer == 'lowest':
+        # h is metres BELOW the lens, so the lowest surface is the LAST
+        # qualifying bin, not the first
+        ok = np.nonzero(hist >= max(min_support * hist.max(), 1.0))[0]
+        peak = edges[int(ok[-1])]
+    elif prefer == 'largest':
+        peak = edges[int(np.argmax(hist))]
+    else:
+        raise ValueError("prefer must be 'largest' or 'lowest', not %r"
+                         % (prefer,))
     # two refinement passes: take a slab around the peak, fit a plane, re-select
     sel = band & (np.abs(h - (peak + 0.01)) < 0.06)
     # plane as n.P + d = 0. Start from "level at the peak": h = -(P.up), so a
@@ -192,7 +226,10 @@ def main():
              'tilt down as far as you like, and keep the rig at its capture '
              'height. Hold still.')
     depth, colour, K, up = grab(args)
-    res = fit_floor(depth, K, up, args.min_drop, args.max_drop)
+    try:
+        res = fit_floor(depth, K, up, args.min_drop, args.max_drop)
+    except FloorNotVisible as e:
+        raise SystemExit(str(e))
 
     stamp = time.strftime('%Y%m%d_%H%M%S')
     cv2.imwrite(os.path.join(out_dir, 'floor_%s_depth.png' % stamp),

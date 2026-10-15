@@ -32,12 +32,17 @@ Two limits remain:
    independent single-shot completion, not an accumulating reconstruction.
    Fusing across frames needs real localisation (SLAM/ICP) driving cam_pose.
 
-2. `--camera_height` is assumed; level mounting no longer is, IF the source
-   supplies gravity. A .bag carries the D455's accelerometer, so `--source
-   bag:` reads it per frame and builds the rotation around measured up
-   (`--no_imu` to compare against assuming level). A live camera still does
-   not: RealSenseSource requests depth and colour only, and wiring the accel
-   stream into it is the remaining half of this.
+2. Level mounting is no longer assumed, IF the source supplies gravity.
+   Both `bag:` and `realsense` now request the D455's accelerometer and
+   build the rotation around measured up, per frame (`--no_imu` to compare
+   against assuming level). The device half is unverified -- no camera was
+   attached when it was written -- while the half that reads and smooths the
+   samples is the same code the .bag exercises.
+
+   `--camera_height` is still a number you supply, or `auto`, which measures
+   the lowest level surface in view and keeps the lowest one the run has
+   seen. It needs gravity for the same reason the grid does: without it a
+   level bed is indistinguishable from a level floor. See AutoHeight.
 """
 
 import argparse
@@ -59,13 +64,15 @@ from cleaner.utils import EasyConfig
 
 try:
     from .camera import open_source
-    from .frame_loader import FrameLoader, torch_cuda_available
+    from .frame_loader import (FrameLoader, torch_cuda_available,
+                               camera_height_from_depth)
     from . import model as model_mod
     from .visualize import save_prediction_ply
     from .utils import get_device, setup_logging, ensure_dir
 except ImportError:
     from camera import open_source
-    from frame_loader import FrameLoader, torch_cuda_available
+    from frame_loader import (FrameLoader, torch_cuda_available,
+                              camera_height_from_depth)
     import model as model_mod
     from visualize import save_prediction_ply
     from utils import get_device, setup_logging, ensure_dir
@@ -110,11 +117,16 @@ def parse_args():
                    help="'nyu' resizes+crops to NYU's 63x49 deg intrinsics "
                         '(recommended: the checkpoint was trained there). '
                         "'native' keeps the D455's ~90 deg frame.")
-    p.add_argument('--camera_height', type=float, default=None,
+    p.add_argument('--camera_height', type=_height, default=None,
+                   metavar='M|auto',
                    help='metres above the floor. NYU sits at 1.18-1.32; '
                         'measure yours, it shifts the whole volume. Defaults '
                         "to the capture's meta.json when replaying one, "
-                        'otherwise 1.25.')
+                        "otherwise 1.25. 'auto' measures it from the frames "
+                        'themselves -- the lowest level surface in view, '
+                        'needs the accelerometer, costs 17 ms a frame, and '
+                        'keeps looking for something lower as the run goes '
+                        'on.')
     p.add_argument('--yaw', type=float, default=None,
                    help='radians about the vertical axis; defaults to '
                         "meta.json's value, otherwise 0")
@@ -197,6 +209,84 @@ def parse_args():
     return p.parse_known_args()
 
 
+def _height(v):
+    """--camera_height takes metres or the word auto."""
+    if str(v).strip().lower() == 'auto':
+        return 'auto'
+    try:
+        return float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            'camera height must be metres or "auto", not %r' % (v,))
+
+
+class AutoHeight:
+    """--camera_height auto: the lowest level surface the run has seen.
+
+    The floor is the lowest level thing in a room, so the estimate is a
+    running MAXIMUM of per-frame fits rather than an average -- which is also
+    why every fit is gated hard before it counts (`camera_height_from_depth`:
+    level against measured gravity, 3000+ inliers, within 2.5 m of the lens).
+    On room07's recorded sweep exactly one frame of 808 sees the floor
+    properly, and it answers 1.111 m against the fused sweep's 1.086 and the
+    tape's 1.150. Taking an average, or asking for two frames to agree, gives
+    1.006 -- 8 cm low -- because what the other 500 frames can see is the bed.
+
+    It needs the accelerometer. Without gravity there is no way to tell a
+    level floor from a level bed, and the same room07 frames return the bed at
+    0.52 m, which is worse than assuming 1.25. So without it this refuses and
+    says so, rather than quietly handing the encoder a number half a metre out.
+    """
+
+    def __init__(self):
+        self.value = None
+        self.frames = 0
+        self.fits = 0
+        self.at = None
+        self.info = None
+        self.said_no_imu = False
+        self.said_waiting = False
+
+    def update(self, frame):
+        """-> the best height so far, or None while there is none."""
+        self.frames += 1
+        if frame.up_camera is None:
+            if not self.said_no_imu:
+                self.said_no_imu = True
+                log.warning('--camera_height auto needs measured gravity and '
+                            'this source has none, so it cannot tell a floor '
+                            'from a bed. Falling back; pass the height you '
+                            'measured instead.')
+            return self.value
+        h, info = camera_height_from_depth(
+            frame.depth, frame.cam_K, frame.up_camera)
+        if h is None:
+            if self.value is None and not self.said_waiting:
+                self.said_waiting = True
+                log.info('--camera_height auto: no floor yet (%s). Aim lower; '
+                         'using the fallback until then.',
+                         info.get('error', 'no fit'))
+            return self.value
+        self.fits += 1
+        if self.value is None or h > self.value + 0.02:
+            self.value, self.at, self.info = h, self.frames, info
+            log.info('--camera_height auto: %.3f m (frame %d, floor plane '
+                     '%.1f deg off level, %d inliers)', h, self.frames,
+                     info['plane_tilt_vs_gravity_deg'], info['inliers'])
+        return self.value
+
+    def report(self):
+        if self.value is None:
+            if self.frames and not self.said_no_imu:
+                return ('camera height auto: never found a floor in %d frames '
+                        '-- measure it and pass --camera_height' % self.frames)
+            return None
+        return ('camera height auto: %.3f m, from frame %d of %d (%d frames '
+                'gave a usable floor). Record it in meta.json rather than '
+                'measuring it again.'
+                % (self.value, self.at, self.frames, self.fits))
+
+
 def load_cfg(args, opts):
     cfg = EasyConfig()
     cfg.load(args.cfg, recursive=True)
@@ -258,6 +348,7 @@ def main():
     t_start = t_window = time.time()
     enc_s = inf_s = 0.0
     said_height = False        # the 1.25 m fallback is worth saying out loud
+    auto_height = AutoHeight()
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov, imu=args.imu,
@@ -288,6 +379,8 @@ def main():
                 # default -- so replaying a capture reproduces the
                 # single-frame run_inference result without re-typing anything
                 height = args.camera_height
+                if height == 'auto':
+                    height = auto_height.update(frame)
                 if height is None:
                     height = frame.camera_height
                 if height is None:
@@ -354,6 +447,9 @@ def main():
 
     total = time.time() - t_start
     said = src.report()
+    if said:
+        log.info('%s', said)
+    said = auto_height.report()
     if said:
         log.info('%s', said)
     if view is not None:
