@@ -322,14 +322,39 @@ Both panes show the frame **after** the FOV match, 640×480 with NYU's
 intrinsics, because that is what the network sees. A thin prediction is
 usually explained by the depth pane before it is explained by the voxels.
 
+### Framing
+
+`--zoom`, as a fraction of the window's height. open3d's own fit frames the
+bounding *sphere*, so it sits about twice as far back as it needs to:
+
+| `--zoom` | 1.0 | 1.7 | 2.0 |
+| --- | ---: | ---: | ---: |
+| a live frame | 31% | 58% | **65%** |
+| an NYU frame | 44% | 86% | 99%, at the edges |
+
+**2.0 is the default** because `--display` is for watching a camera, where the
+room occupies much less of the 4.8 × 4.8 × 2.88 m volume than NYU's
+room-canonical placement does. Replaying NYU frames, `--zoom 1.7` fits better.
+
+The direction needs no correction: the default view looks down −Z with +Y up,
+which after `to_view_index` is where the capture camera stood — the same
+viewpoint `display_solid` opens with.
+
 ### Keys and mouse
 
 | | |
 | --- | --- |
-| mouse | orbit, pan, zoom — and the viewpoint survives every frame update |
+| mouse | orbit, pan, zoom — the viewpoint survives every frame update |
 | `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
+| `+` / `-` | step the zoom by 15%; `0` resets it to 2.0 |
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
+
+The handlers are verified by calling them directly — two `+` take the zoom to
+2.64 and redraw at the larger size — but this machine is a Wayland session
+with no way to synthesise a key press, so **the dispatch itself is untested**.
+If the keys turn out dead, `--zoom` and `--colour` do the same jobs from the
+command line and cannot fail.
 
 ### Pacing
 
@@ -357,15 +382,19 @@ Either way the run prints which it did.
 callback, so naming the voxel under the cursor is not a matter of effort — it
 is not available. Open the saved `.ply` in `display_solid.py` for that.
 
-**No programmatic framing.** Where the window first points is open3d's own fit,
-which frames the bounding sphere and so backs off about twice as far as it
-needs to: the room lands at ~40% of the window and you scroll once. In open3d
+**No camera control — the framing is done to the geometry instead.** In open3d
 0.17 `Visualizer.get_view_control()` returns a **copy**, so `set_zoom`,
 `set_lookat` and `set_front` change an object the window does not own. They
 report success and the readback through the same handle agrees; the rendered
 pixels are byte-identical at zoom 0.3 and 0.9. `display_solid` aims its camera
 with `widget3d.look_at`, which works — but that is the `gui` toolkit, and it
 owns the main thread.
+
+So the window fits its camera once to a proxy box covering the whole grid,
+then every frame's mesh is **scaled about the grid centre** by `--zoom`. With
+the camera fixed, scaling the content is exactly equivalent to moving the
+camera, and it cannot be undone by the bug above. The pivot is the grid's
+centre, so orbiting behaves the same whatever the model predicts.
 
 ---
 

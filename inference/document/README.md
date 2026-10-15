@@ -982,7 +982,9 @@ and closes the sensor cleanly.
 | `--camera_height` | `None` | → capture's meta.json → 1.25 |
 | `--yaw` | `None` | → meta.json → 0.0 |
 | `--rgb_dir`, `--loop`, `--fps` | | replay sources only |
-| `--save {ply,npy,both,none}` | `ply` | `none` still reports throughput — use it to benchmark |
+| `--save {ply,npy,both,none}` | **`none`** | a live run is usually watched, not kept, and a `.ply` costs 83 ms of a 320 ms frame |
+| `--out_dir` | `./outputs/live_session` | `prediction/` and `ply/` under it, created only when written to |
+| `--zoom` | 2.0 | how much of the window the volume fills |
 | `--mask {surface,occluded,frustum}` | `surface` | no `label_weight`: there is no GT live |
 | `--encoder {auto,torch,numpy,cuda}` | `auto` | → `torch` with a card, else `numpy` |
 | `--amp {auto,on,off}` | `auto` | → on when the model is on a card |
@@ -1065,6 +1067,27 @@ the user closes the window**, which stops the run.
 | colour, `all` | ~100 |
 | `build_cube_mesh` + draw | 4-9 |
 | the camera panels | ~15 |
+
+#### `_build(idx, colours)` and `_swap(mesh)` — the framing
+
+The camera cannot be aimed from Python in open3d 0.17 (`get_view_control()`
+returns a copy), so the framing is done to the geometry, which this file
+rebuilds every frame anyway:
+
+- `_swap` fits the camera **once**, to a proxy box covering the whole
+  60×36×60 grid, then removes the box. Fitting the first frame's voxels
+  instead would make the opening view depend on what the model happened to
+  predict then, and put the orbit pivot somewhere arbitrary. The pivot is the
+  grid's centre, always.
+- `_build` scales each frame's mesh about that same centre by `zoom`. With the
+  camera fixed, scaling the content is exactly equivalent to moving the camera
+  in or out.
+
+open3d's fit frames the bounding *sphere*, hence the factor: at `zoom=1.0` a
+live frame fills 31% of the window height, at 2.0 it fills 65%. An NYU frame
+is tighter in the volume and reaches the edges at 2.0, so `--zoom 1.7` suits
+replay. `+`/`-`/`0` step it in the window, and `_repaint` redraws the frame
+already on screen rather than waiting for the next one.
 
 #### `_draw_panels(depth, rgb, name, fps)`
 

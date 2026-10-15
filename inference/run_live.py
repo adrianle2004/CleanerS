@@ -148,6 +148,12 @@ def parse_args():
                         'replace the voxels in it every frame. Orbit and zoom '
                         'with the mouse; the viewpoint survives the updates. '
                         'Closing the window stops the run.')
+    p.add_argument('--zoom', type=float, default=2.0,
+                   help='how much of the window the volume fills. 1.0 is '
+                        "open3d's own fit, which frames the bounding SPHERE "
+                        'and so sits about twice as far back as it needs to; '
+                        '1.7 fills roughly 90%% of the height. Applied to the '
+                        'geometry, not the camera -- see live_view.py.')
     p.add_argument('--no_panels', dest='panels', action='store_false',
                    help='--display only: drop the second window showing the '
                         'colour and depth the model was given')
@@ -159,9 +165,18 @@ def parse_args():
                         "'all' the three photo rules stacked, best evidence "
                         'first (98 ms). `c` in the window cycles them.')
 
-    p.add_argument('--out_dir', default='./outputs')
-    p.add_argument('--save', default='ply', choices=['ply', 'npy', 'both', 'none'],
-                   help="'none' still reports throughput; use it to benchmark")
+    p.add_argument('--out_dir', default='./outputs/live_session',
+                   help='predictions go to <out_dir>/prediction, voxel plys to '
+                        '<out_dir>/ply, window screenshots to <out_dir>. '
+                        'Nothing is created unless something is written. NOTE '
+                        'that live frames are named live_000000 upward from '
+                        'each run, so a second run into the same folder '
+                        'overwrites the first.')
+    p.add_argument('--save', default='none',
+                   choices=['ply', 'npy', 'both', 'none'],
+                   help="default 'none': a live run is usually watched, not "
+                        'kept, and writing a .ply costs 83 ms of a 320 ms '
+                        'frame. Ask for it when you want it.')
     p.add_argument('--mask', default='surface',
                    choices=['surface', 'occluded', 'frustum'],
                    help="which voxels the .ply shows. The GT-derived "
@@ -207,8 +222,10 @@ def main():
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    ply_dir = ensure_dir(os.path.join(args.out_dir, 'ply'))
-    pred_dir = ensure_dir(os.path.join(args.out_dir, 'prediction'))
+    # created on first write, not now: a --save none run should leave nothing
+    # behind, and the screenshot key makes its own
+    ply_dir = os.path.join(args.out_dir, 'ply')
+    pred_dir = os.path.join(args.out_dir, 'prediction')
 
     view = None
     if args.display:
@@ -217,7 +234,7 @@ def main():
         except ImportError:
             from live_view import LiveView
         view = LiveView(colour=args.colour, out_dir=args.out_dir,
-                        panels=args.panels)
+                        panels=args.panels, zoom=args.zoom)
 
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)
@@ -286,10 +303,12 @@ def main():
             if view is not None or args.save in ('ply', 'both'):
                 mask = build_mask(sample, args.mask)
             if args.save in ('npy', 'both'):
-                np.save(os.path.join(pred_dir, '%s.npy' % frame.name), pred_label)
+                np.save(os.path.join(ensure_dir(pred_dir),
+                                     '%s.npy' % frame.name), pred_label)
             if args.save in ('ply', 'both'):
                 save_prediction_ply(pred_label, mask,
-                                    os.path.join(ply_dir, '%s.ply' % frame.name))
+                                    os.path.join(ensure_dir(ply_dir),
+                                                 '%s.ply' % frame.name))
             if view is not None and not view.update(
                     pred_label, mask, loader, frame.rgb, name=frame.name,
                     fps=1.0 / max(1e-6, time.time() - t0)):

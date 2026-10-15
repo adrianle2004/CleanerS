@@ -44,22 +44,43 @@ optimising rather than excluding: see `display_solid.points_in_cubes`. The
 budget it now fits in is a 317 ms frame, so `all` costs about a third of the
 frame rate and `zbuffer` about a twentieth.
 
-*** THE OPENING VIEWPOINT ***
-Where the window first points is open3d's own fit to the geometry, which
-frames the bounding SPHERE and so backs off about twice as far as it needs
-to -- the room lands at roughly 40% of the window and you scroll once.
+*** FRAMING, AND WHY IT IS DONE TO THE GEOMETRY ***
+In open3d 0.17 `Visualizer.get_view_control()` returns a COPY, so `set_zoom`,
+`set_lookat` and `set_front` change an object the window does not own. They
+report success, the readback through the same handle agrees, and the picture
+never moves -- verified by screenshot, the rendered pixels being identical at
+zoom 0.3 and 0.9. The camera cannot be aimed from Python here.
 
-That is not a choice. In open3d 0.17 `Visualizer.get_view_control()` returns a
-COPY, so `set_lookat` / `set_front` / `set_zoom` change an object the window
-does not own: they report success, the readback through the same handle
-agrees, and the picture never moves. Verified by screenshot -- the rendered
-pixels are byte-identical at zoom 0.3 and 0.9. display_solid aims its camera
-with `widget3d.look_at`, which works, but that is the `gui` toolkit and
-belongs to the thread-owning architecture this file exists to avoid.
+What CAN be controlled is the geometry, which this file rebuilds every frame
+anyway. So the framing is done there, in two steps:
 
-Mouse control is unaffected: orbit, pan and zoom go through the real view
-control inside the window, and the viewpoint you set survives every update
-because the geometry is replaced in place rather than re-added.
+1. The camera is fitted once, to a proxy box covering the whole 60x36x60
+   GRID, which is then removed. Fitting the first frame's voxels instead
+   would make the opening view depend on what the model happened to predict
+   in that frame, and the orbit pivot land somewhere arbitrary. The pivot is
+   now the grid's centre, always.
+
+2. Every frame's mesh is scaled about that same centre by `zoom`. Because the
+   camera is fixed, scaling the content is exactly equivalent to moving the
+   camera in or out, and it is immune to the bug above.
+
+open3d's own fit frames the bounding SPHERE, so it sits about twice as far
+back as it needs to. Measured, as a fraction of the window's height:
+
+    zoom          1.0    1.7    2.0
+    a live frame   31%    58%    65%
+    an NYU frame   44%    86%    99%, touching the edges
+
+2.0 is the default because --display is for watching a camera, where the
+room occupies much less of the 4.8 x 4.8 x 2.88 m volume than NYU's
+room-canonical placement does. Replaying NYU frames, --zoom 1.7 fits better.
+
+The direction needs no correction -- the default view looks down -Z with +Y
+up, which after `to_view_index` is exactly where the capture camera stood, the
+same viewpoint display_solid opens with.
+
+`+` and `-` in the window step the zoom and `0` resets it, but a key press has
+to reach the window, and the CLI's `--zoom` is the path that cannot fail.
 
 *** THE CAMERA PANELS ***
 Beside the 3D window, a second one holds what the model was actually given:
@@ -102,7 +123,7 @@ class LiveView:
 
     def __init__(self, colour='zbuffer', reach=0.75, width=1280, height=800,
                  out_dir=None, title='CleanerS live', panels=True,
-                 panel_width=640):
+                 panel_width=640, zoom=2.0):
         if colour not in MODES:
             raise ValueError('colour must be one of %s, not %r'
                              % (', '.join(MODES), colour))
@@ -121,6 +142,10 @@ class LiveView:
 
         self.colour = colour
         self.reach = reach
+        self.zoom = float(zoom)
+        # the grid's centre in view-index coordinates: the camera's pivot
+        # after the proxy fit, and what every frame is scaled about
+        self.centre = np.array([(g - 1) / 2.0 for g in GRID], dtype=np.float64)
         self.out_dir = out_dir
         self.frames = 0
         self.colour_ms = 0.0
@@ -155,6 +180,11 @@ class LiveView:
         opt.background_color = np.array([0.08, 0.08, 0.09])
         self.vis.register_key_callback(ord('C'), self._cycle)
         self.vis.register_key_callback(ord('S'), self._screenshot)
+        for key in ('=', '+'):
+            self.vis.register_key_callback(ord(key), self._zoom_in)
+        for key in ('-', '_'):
+            self.vis.register_key_callback(ord(key), self._zoom_out)
+        self.vis.register_key_callback(ord('0'), self._zoom_reset)
         if panels:
             self._cv.namedWindow(self.panel_window, self._cv.WINDOW_AUTOSIZE)
             self._cv.moveWindow(self.panel_window, width + 20, 0)
@@ -179,8 +209,7 @@ class LiveView:
         t0 = time.time()
         colours = self._paint(idx, cls, loader, rgb)
         t1 = time.time()
-        mesh, _, _ = self.ds.build_cube_mesh(self.ds.to_view_index(idx),
-                                             colours)
+        mesh = self._build(idx, colours)
         self._swap(mesh)
         alive = self._draw()
         self.frames += 1
@@ -267,13 +296,34 @@ class LiveView:
         return out
 
     # ---- window plumbing ----
+    def _build(self, idx, colours):
+        """The solid cubes, scaled about the grid centre by `zoom`.
+
+        Scaling the content rather than moving the camera, because the camera
+        cannot be moved from Python in this open3d -- see the module
+        docstring. The centre is the GRID's, not this frame's, so the scene
+        does not shift when the prediction changes.
+        """
+        mesh, _, _ = self.ds.build_cube_mesh(self.ds.to_view_index(idx),
+                                             colours)
+        if self.zoom != 1.0:
+            v = np.asarray(mesh.vertices)
+            mesh.vertices = self.o3d.utility.Vector3dVector(
+                (v - self.centre) * self.zoom + self.centre)
+        return mesh
+
     def _swap(self, mesh):
         if self.geom is None:
+            # Fit the camera to the whole grid, then drop the box that did it.
+            # This is the only moment open3d will aim the camera, and fitting
+            # a constant box rather than the first frame's voxels is what
+            # makes --zoom mean the same thing from run to run.
+            box = self.o3d.geometry.TriangleMesh.create_box(
+                *[float(g) for g in GRID]).translate((-0.5, -0.5, -0.5))
+            self.vis.add_geometry(box)
             self.geom = mesh
-            # open3d fits the view to the geometry here, and that is the only
-            # chance to aim the camera -- see the docstring on the opening
-            # viewpoint
-            self.vis.add_geometry(self.geom)
+            self.vis.add_geometry(self.geom, reset_bounding_box=False)
+            self.vis.remove_geometry(box, reset_bounding_box=False)
             return
         # one geometry, its arrays replaced: the vertex count changes every
         # frame, and add/remove would refit the camera and throw away the
@@ -290,15 +340,34 @@ class LiveView:
             self.close()
         return alive
 
+    def _set_zoom(self, value):
+        self.zoom = float(np.clip(value, 0.2, 6.0))
+        log.info('display zoom=%.2f', self.zoom)
+        self._repaint()
+        return False
+
+    def _zoom_in(self, _vis):
+        return self._set_zoom(self.zoom * 1.15)
+
+    def _zoom_out(self, _vis):
+        return self._set_zoom(self.zoom / 1.15)
+
+    def _zoom_reset(self, _vis):
+        return self._set_zoom(2.0)
+
+    def _repaint(self):
+        """Redraw the frame on screen with the current settings, rather than
+        making the user wait for the next one."""
+        if self._last is None:
+            return
+        idx, cls, loader, rgb = self._last
+        self._swap(self._build(idx, self._paint(idx, cls, loader, rgb)))
+        self._draw()
+
     def _cycle(self, _vis):
         self.colour = MODES[(MODES.index(self.colour) + 1) % len(MODES)]
         log.info('display colour=%s', self.colour)
-        if self._last is not None:                    # repaint the frame on
-            idx, cls, loader, rgb = self._last        # screen, do not wait
-            mesh, _, _ = self.ds.build_cube_mesh(
-                self.ds.to_view_index(idx), self._paint(idx, cls, loader, rgb))
-            self._swap(mesh)
-            self._draw()
+        self._repaint()
         return False
 
     def _screenshot(self, _vis):

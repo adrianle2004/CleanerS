@@ -148,6 +148,7 @@ captures/*/scan/room*.ply
 checkpoint/*.pth
 # regenerable outputs
 outputs/scannet*/
+outputs/live_session/
 custom_visual_pred/
 visual_pred/
 # guard.sh per-run scratch: which pid a job got, and the pause/stop flags
