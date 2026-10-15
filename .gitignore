@@ -148,7 +148,10 @@ captures/*/scan/room*.ply
 checkpoint/*.pth
 # regenerable outputs
 outputs/scannet*/
+# live runs: run_live's default folder, and the per-room ones a --out_dir
+# names. outputs/room07/ and room08/ are the EVALUATION csvs and stay tracked
 outputs/live_session/
+outputs/*_live/
 custom_visual_pred/
 visual_pred/
 # guard.sh per-run scratch: which pid a job got, and the pause/stop flags
