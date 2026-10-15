@@ -33,11 +33,11 @@ Two limits remain:
    Fusing across frames needs real localisation (SLAM/ICP) driving cam_pose.
 
 2. Level mounting is no longer assumed, IF the source supplies gravity.
-   Both `bag:` and `realsense` now request the D455's accelerometer and
-   build the rotation around measured up, per frame (`--no_imu` to compare
-   against assuming level). The device half is unverified -- no camera was
-   attached when it was written -- while the half that reads and smooths the
-   samples is the same code the .bag exercises.
+   Both `bag:` and `realsense` request the D455's accelerometer and build
+   the rotation around measured up, per frame (`--no_imu` to compare against
+   assuming level). Verified on the device: a D455 (fw 5.17.0.10) reports
+   gravity on every frameset -- accel 60 of 60 samples used -- reading 1.4
+   deg of pitch on a rig that looked level.
 
    `--camera_height` is still a number you supply, or `auto`, which measures
    the lowest level surface in view and keeps the lowest one the run has

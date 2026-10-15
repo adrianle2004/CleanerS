@@ -337,10 +337,12 @@ So the accel vector is read per frame and passed through `Frame.up_camera`.
 module (a D435i or D455 does, a D435 does not — the sensors are queried
 rather than the model name guessed at, because enabling a stream a device
 lacks makes `pipeline.start` throw), and `BagSource` inherits the same
-reader. **The device side is unverified**: no camera was attached when it was
-written. `capture.py` deliberately passes `imu=False` and keeps its old
-behaviour — the tool that writes the dataset is not where to discover that an
-extra stream changed frame delivery.
+reader. Verified on the device as well as on a bag: a D455 (fw 5.17.0.10)
+delivers an accel sample with every frameset — `accel 60 of 60 samples used`
+— which it can, since the motion module runs at 63/250 Hz against 30 fps of
+video. `capture.py` still passes `imu=False` on purpose: it does not record
+`up_camera` in `meta.json` anyway, so the stream would buy it nothing, and a
+capture's gravity keeps coming from the scan's floor fit.
 The magnitude is not trusted and does not need to be — `live_cam_pose`
 normalises it, and this unit reads 9.02 m/s² at rest, 8% low. The *direction*
 is the good part: 0.108° of noise at rest
@@ -662,6 +664,20 @@ inliers, within 2.5 m of the lens. Without gravity it refuses and falls back,
 because a level bed and a level floor are then the same thing. It costs 17 ms
 a frame and logs each improvement with its evidence, then prints the final
 number to record in `meta.json`.
+
+**Checked against the independent instrument, on a live D455.** `auto` settled
+on **0.885 m** (frame 4 of 60, 2.3° off level, 4,045 inliers; 28 of 60 frames
+gave a usable floor), and
+`reconstruction_GT/measure_floor.py` — a separate frame, the
+*largest*-peak rule, the tool that produced room07's recorded value — said
+**0.889 m**. Two rules, two frames, **4 mm apart**.
+
+One operational caveat from that run: a near-level camera sees its floor
+edge-on, which inflates the fitted plane's tilt. Those frames came out at
+2.3–2.5°, just inside the ≤3° gate, and `measure_floor`'s own frame came out
+at 3.48° — which `auto` would have rejected. If `auto` reports no floor on a
+level rig, tilt the camera down; that is also what the dedicated tool asks
+for.
 
 #### `camera_height_from_depth(depth, cam_K=None, up_camera=None, min_drop=0.40, max_drop=2.50, max_tilt=3.0, min_inliers=3000)`
 
