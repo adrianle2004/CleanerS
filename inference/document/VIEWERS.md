@@ -473,10 +473,20 @@ nothing. The 807 left over are matter floating in open space.
 The exclusion is **not** applied to the score. Dropping the model's near
 misses from confirmed-versus-contradicted would simply flatter it.
 
-**`--world_shrink`** draws the voxels only the *model* claims at a
-fraction of full size, so measured and completed are told apart by size as
-well as colour and you can see between them. It makes the room read as a
-diagram rather than a place, which is why it is off by default.
+**`--world_shrink`** says how big the voxels only the *model* claims are
+drawn. `auto`, the default, decides per mode, and it has to:
+
+- in **`photo`** the room is a *place*, so everything is drawn whole and
+  it looks like one;
+- in **`verdict`** it is a *comparison*, and whole cubes hide it. Faces
+  between two occupied voxels are culled, so you only ever see the
+  outermost shell — and that shell is the model's unverified claims
+  wrapped around the real room. On room07 all 3 604 proved voxels are
+  measured surfaces inside it and **not one of them is visible**. So there
+  the model's unmeasured claims are drawn smaller and the room reads
+  through the gaps.
+
+A number forces one answer for every mode.
 
 **Stopping half way.** `SPACE` (or `f`) freezes: no more frames are taken
 and the room holds exactly as it is, with the window still live so you can

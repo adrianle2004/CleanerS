@@ -261,12 +261,16 @@ def parse_args():
                         "the model got it right; 'class' is what the "
                         "model thinks each thing is. `c` cycles them in "
                         "the window.")
-    p.add_argument('--world_shrink', type=float, default=1.0,
-                   help='--accumulate: draw the voxels only the MODEL '
-                        'claims at this fraction of full size, so they '
-                        'can be told from measured ones and seen past. '
-                        '1.0 (default) draws everything the same size, '
-                        'which looks like a room rather than a diagram.')
+    p.add_argument('--world_shrink', type=_shrink, default=None,
+                   metavar='auto|FRACTION',
+                   help='--accumulate: how big the voxels only the MODEL '
+                        'claims are drawn, as a fraction of full size. '
+                        "'auto' (default) decides per colour mode: whole "
+                        'in photo, so the room looks like a room, and '
+                        'smaller in verdict, where whole cubes hide the '
+                        'comparison -- culling shows only the outermost '
+                        "shell and that shell is the model's unverified "
+                        'claims wrapped around the real room.')
     p.add_argument('--mesh_every', type=int, default=3,
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
@@ -281,6 +285,21 @@ def parse_args():
     p.add_argument('--max_frames', type=int, default=0, help='0 = unlimited')
     p.add_argument('--log_every', type=int, default=30)
     return p.parse_known_args()
+
+
+def _shrink(v):
+    """--world_shrink takes a fraction or the word auto."""
+    if str(v).strip().lower() == 'auto':
+        return None
+    try:
+        f = float(v)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            'world shrink must be a fraction or "auto", not %r' % (v,))
+    if not 0.05 <= f <= 1.0:
+        raise argparse.ArgumentTypeError(
+            'world shrink must be between 0.05 and 1.0, not %g' % f)
+    return f
 
 
 def _height(v):

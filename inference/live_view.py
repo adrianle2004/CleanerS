@@ -185,12 +185,17 @@ class LiveView:
         # so the proxy box the camera is fitted to, the orbit pivot and the
         # depth-axis reflection all have to come from it instead of GRID.
         self.proxy = GRID
-        # Every voxel is drawn the same size by default, so the room
-        # looks like a room. shrink < 1 goes back to drawing the voxels
-        # only the MODEL claims smaller than the measured ones, which
-        # lets you see between them at the cost of looking like a
-        # diagram rather than a place.
-        self.shrink = 1.0
+        # None = decide per mode, which is the default and the only
+        # honest one. In `photo` the room is a PLACE and everything is
+        # drawn whole, so it looks like one. In `verdict` it is a
+        # COMPARISON, and whole cubes hide it: face culling means you
+        # only ever see the outermost shell, and that shell is the
+        # model's unverified claims wrapped around the real room -- on
+        # room07, all 3604 proved voxels are measured surfaces inside it
+        # and not one is visible. So there the model's unmeasured claims
+        # shrink and you see the room through the gaps. A number forces
+        # one answer for every mode.
+        self.shrink = None
         # 'photo' is the default and the one to show people: every voxel
         # wears the camera's own colour, filled in from the nearest
         # coloured voxel of the same class where the camera never saw it
@@ -390,6 +395,8 @@ class LiveView:
                         axis=1)
 
     WORLD_MODES = ('photo', 'verdict', 'class')
+    # how big the model's unmeasured claims are drawn, per mode
+    MODE_SHRINK = {'photo': 1.0, 'verdict': 0.45, 'class': 1.0}
 
     def _status_lines(self, v):
         """The counts, in the words that make them mean something.
@@ -465,7 +472,9 @@ class LiveView:
         view = self._to_view(i)
         colours = self._world_colours(world, v, i, view)
 
-        if self.shrink >= 1.0:
+        shrink = (self.MODE_SHRINK[self.world_colour]
+                  if self.shrink is None else self.shrink)
+        if shrink >= 1.0:
             # faces between two occupied voxels are dropped -- most of the
             # geometry in a filled room
             mesh = ds.build_cube_mesh(view, colours)[0]
@@ -477,7 +486,7 @@ class LiveView:
             mesh, vov, _ = ds.build_cube_mesh_all(view, colours)
             pts = np.asarray(mesh.vertices)
             mid = view[vov].astype(np.float64)
-            scale = np.where(small[vov], self.shrink, 1.0)[:, None]
+            scale = np.where(small[vov], shrink, 1.0)[:, None]
             mesh.vertices = o3d.utility.Vector3dVector(
                 mid + (pts - mid) * scale)
         if self.zoom != 1.0:
