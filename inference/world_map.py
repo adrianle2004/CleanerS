@@ -219,11 +219,17 @@ class WorldMap:
         no information at all -- not merely where its state had not
         settled. See add_prediction.
 
-        'contradicted' is the completions the sweep disproved and is what
-        the confirmed/contradicted score is computed from. 'disproved' is
-        the wider set -- every voxel the model fills where the sensor has
-        measured free space -- and is what the display colours, because a
-        voxel the model got wrong in plain view is still wrong.
+        'contradicted' is the completions the sweep disproved, and is
+        what the confirmed/contradicted score is computed from. It counts
+        every one of them: excluding the model's near misses from the
+        score would simply flatter it.
+
+        'disproved' is a different question, asked for the DISPLAY: where
+        has the model put matter in space the camera saw through? It is
+        wider than 'contradicted' in that the voxel need not have been a
+        completion -- wrong in plain view is still wrong -- and narrower
+        in that it drops the one-voxel skin along every surface, which is
+        below the resolution of the comparison. See _disproved.
 
         'untested' is normally the MAJORITY and must be reported as its own
         number: most of what a completion model fills in is permanently
@@ -238,15 +244,29 @@ class WorldMap:
                'contradicted': blind & (st == FREE),
                'untested': blind & (st == UNKNOWN),
                'missed': (st == OCCUPIED) & ~occ,
-               # Every voxel the model fills where the sensor has measured
-               # free space, whether or not it was a completion. SCORING a
-               # completion needs the blind test above; SHOWING an error
-               # does not -- the model is equally wrong either way, and
-               # without this those voxels drew the same neutral grey as
-               # "nothing has measured this yet". On room07 that hid 2687
-               # of them.
-               'disproved': occ & (st == FREE)}
+'disproved': self._disproved(occ, st)}
         return dict((k, v.reshape(self.shape)) for k, v in out.items())
+
+    def _disproved(self, occ, st):
+        """Matter the model put in space the sensor measured as EMPTY.
+
+        What the display paints red, and deliberately not what the score
+        is computed from -- see verdicts().
+
+        Voxels touching a measured surface are excluded, because that is
+        not an error this comparison can resolve. The model's surfaces
+        come out about a voxel thicker than the measurement, so the cell
+        just in front of every wall reads free; at 8 cm, with ~1 voxel of
+        trajectory drift and a half-voxel hit margin, a disagreement that
+        touches a surface is below the resolution of the question. On
+        room07 that skin is 2469 of 3276 such voxels, and painting it red
+        turns an entire wall red and says nothing. The 807 that remain are
+        matter floating in open space the camera saw through.
+        """
+        from scipy import ndimage
+        free = (occ & (st == FREE)).reshape(self.shape)
+        surface = (st == OCCUPIED).reshape(self.shape)
+        return (free & ~ndimage.binary_dilation(surface)).reshape(-1)
 
     def counts(self):
         return dict((k, int(v.sum())) for k, v in self.verdicts().items())

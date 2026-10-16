@@ -445,12 +445,23 @@ are separated by **geometry**, not by transparency:
 | **grey** | half | the model filled it in and the sensor still has no evidence either way |
 | **red** | half | the model says solid, the sensor has **measured free space** there |
 
-Red is every voxel the model fills in measured-free space, not only the
-ones that were completions. Scoring a *completion* needs the blind test
-below; showing an *error* does not — a voxel the model got wrong in plain
-view is still wrong. On room07 that distinction hides 2 687 voxels if you
-get it wrong, and they drew the same neutral grey as "nothing has measured
-this yet".
+**Red asks a different question from the score, on purpose.** The score
+below counts the *completions* the sweep disproved. Red asks: where has
+the model put matter in space the camera saw straight through? That is
+wider in one way — the voxel need not have been a completion, since wrong
+in plain view is still wrong — and narrower in another: it drops the
+one-voxel skin along every measured surface.
+
+That skin is not an error this comparison can resolve. The model's
+surfaces come out about a voxel thicker than the measurement, so the cell
+just in front of every wall reads free; at 8 cm, with ~1 voxel of
+trajectory drift and a half-voxel hit margin, a disagreement that touches
+a surface is below the resolution of the question. On room07 it is 2 469
+of 3 276 such voxels, and painting it red turns a whole wall red and says
+nothing. The 807 left over are matter floating in open space.
+
+The exclusion is **not** applied to the score. Dropping the model's near
+misses from confirmed-versus-contradicted would simply flatter it.
 
 You see between the half-size cubes, so the measured surface reads through
 the gaps. The rule needs no legend: **big solid blocks are things the camera
@@ -544,11 +555,10 @@ every drawn frame to `frames/`, for the fill-in video.
 | contradicted | 589 |
 | still untested when the sweep ended | 10 418 |
 | voxels the sensor found that the model never predicted | 133 |
-| voxels the model fills where the sensor measured free space | 3 276 |
+| voxels the model fills in open space the camera saw through | 807 |
 
-That last row is the red, and it is wider than the 589: most of those
-voxels were never completions, the model simply put matter in space the
-camera could see through.
+So the picture holds 6 392 full cubes (3 609 green, 133 blue, 2 650 photo)
+and 13 758 half cubes (807 red, 12 951 grey).
 
 The 86.0% is the number worth quoting, and the 10 418 is the number that
 keeps it honest: the sensor reached under a third of what the model

@@ -312,7 +312,22 @@ class TestVerdicts(unittest.TestCase):
         self.assertFalse(d['contradicted'][1, 1, 1])
         self.assertTrue(d['disproved'][1, 1, 1])
 
-    def test_every_contradicted_completion_is_also_disproved(self):
+    def test_disproved_drops_the_skin_along_a_measured_surface(self):
+        """The model's surfaces come out about a voxel thicker than the
+        measurement, so the cell in front of every wall reads free. That
+        is below the resolution of the comparison, and painting it red
+        turns a whole wall red and says nothing."""
+        m = self.map()
+        wall, front = [[2, 2, 2]], [[1, 2, 2]]
+        for f in (0, 1):
+            m.add_measurement(wall, front, f)
+        m.add_prediction(front, [7], 2)
+        d = m.verdicts()
+        self.assertTrue(d['measured'][2, 2, 2])
+        self.assertTrue(d['predicted'][1, 2, 2])
+        self.assertFalse(d['disproved'][1, 2, 2])
+
+    def test_disproved_keeps_matter_floating_in_open_space(self):
         m = self.map()
         m.add_prediction([[1, 1, 1]], [7], 0)
         for f in (1, 2):
