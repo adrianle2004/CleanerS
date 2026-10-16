@@ -148,19 +148,33 @@ class TestPrediction(unittest.TestCase):
         self.assertFalse(occ[1, 1, 1])
         self.assertEqual(cls[1, 1, 1], 0)
 
-    def test_blind_only_when_nothing_was_measured_there_yet(self):
+    def test_blind_needs_the_sensor_to_know_nothing_at_all(self):
         m = self.map()
         f = m._flat([[1, 1, 1]])[0][0]
         m.add_prediction([[1, 1, 1]], [7], 3)
         self.assertTrue(m.blind[f])
         self.assertEqual(m.first_pred[f], 3)
 
-        m2 = self.map()
-        g = m2._flat([[2, 2, 2]])[0][0]
+    def test_a_voxel_the_sensor_already_measured_is_not_a_completion(self):
+        m = self.map()
+        g = m._flat([[2, 2, 2]])[0][0]
         for fr in (0, 1):
-            m2.add_measurement([[2, 2, 2]], [], fr)
-        m2.add_prediction([[2, 2, 2]], [7], 2)
-        self.assertFalse(m2.blind[g])
+            m.add_measurement([[2, 2, 2]], [], fr)
+        m.add_prediction([[2, 2, 2]], [7], 2)
+        self.assertFalse(m.blind[g])
+
+    def test_one_ray_is_enough_to_stop_it_being_a_completion(self):
+        """The state needs two frames to settle, but a completion is
+        about what the sensor KNEW, not about what has settled. A surface
+        the camera is looking straight at on frame 0 is not a completion,
+        or the model takes credit for predicting what it can see."""
+        for meas in ([[1, 1, 1]], []), ([], [[1, 1, 1]]):
+            m = self.map()
+            f = m._flat([[1, 1, 1]])[0][0]
+            m.add_measurement(meas[0], meas[1], 0)
+            self.assertEqual(m.measured_state()[1, 1, 1], UNKNOWN)
+            m.add_prediction([[1, 1, 1]], [7], 0)
+            self.assertFalse(m.blind[f])
 
     def test_first_pred_is_the_first_frame_only(self):
         m = self.map()

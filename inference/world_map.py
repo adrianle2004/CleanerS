@@ -178,9 +178,22 @@ class WorldMap:
         fo = np.unique(f[occ])
         new = fo[self.first_pred[fo] < 0]
         self.first_pred[new] = frame
-        # the flag that makes the comparison mean anything: was there any
-        # measurement here at the moment the model filled this voxel in?
-        self.blind[new] = self._state()[new] == UNKNOWN
+        # The flag the whole comparison rests on: had the sensor ANY
+        # information about this voxel when the model filled it in?
+        #
+        # Not "was its state still UNKNOWN" -- that is a different and
+        # much weaker question, because a state needs hit_min frames to
+        # settle. On the first frame nothing has settled, so every
+        # surface the camera is looking straight at would count as a
+        # completion and be confirmed two frames later. The display went
+        # almost entirely green, which is how this was caught: the model
+        # was taking credit for predicting what the camera could see.
+        #
+        # So: no hit and no pass, not one ray, ever. run_live integrates
+        # the measurement BEFORE the prediction within a frame, so a
+        # surface this very frame measured is already excluded.
+        self.blind[new] = ((self.n_hit[new] == 0)
+                           & (self.n_pass[new] == 0))
 
     def predicted(self):
         """-> (occupied, class), both shaped like the grid.
@@ -201,6 +214,10 @@ class WorldMap:
         voxels are predicted occupied, and first_pred / blind are then
         consulted only for those. A voxel called occupied by a single frame
         and later outvoted is not a prediction and gets no verdict.
+
+        A COMPLETION is a voxel the model filled in where the sensor had
+        no information at all -- not merely where its state had not
+        settled. See add_prediction.
 
         'untested' is normally the MAJORITY and must be reported as its own
         number: most of what a completion model fills in is permanently

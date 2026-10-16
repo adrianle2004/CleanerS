@@ -181,6 +181,18 @@ class LiveView:
         self.geom = None
         self._last = None          # (idx, cls, loader, rgb), to recolour
 
+        # --accumulate state. The room is a different grid from the frame,
+        # so the proxy box the camera is fitted to, the orbit pivot and the
+        # depth-axis reflection all have to come from it instead of GRID.
+        self.proxy = GRID
+        self.shrink = 0.5          # how small an unproven guess is drawn
+        self.mesh_every = 3
+        self.record_dir = None
+        self._wpivot = None
+        self._wframe = 0
+        self._wmesh = None
+        self._wstatus = []
+
         # Painting a frame is pure numpy and releases the GIL, so it can run
         # while the GPU encodes and infers the NEXT frame -- measured 103 of
         # 103 ms hidden behind a 195 ms forward pass. The cost is that what
@@ -271,6 +283,161 @@ class LiveView:
         self._job = job
         return True
 
+    # ---- --accumulate: draw the ROOM, not the frame ----
+
+    def update_world(self, world, depth=None, rgb=None, name='', fps=None,
+                     note=None, force=False):
+        """The accumulating path. -> False once the user closes the window.
+
+        What separates the layers here is GEOMETRY, not transparency. The
+        legacy Visualizer has no material API -- display_overlay's
+        see-through cubes need the gui/rendering stack, which owns the main
+        thread and so cannot be driven from run_live's loop. So:
+
+            full 8 cm cube   the sensor has MEASURED something here
+            half-size cube   the model COMPLETED it and nothing has
+                             measured it yet -- you see between them, and
+                             the real surface reads through the gaps
+            green            a completion the sweep went on to PROVE
+            red              a completion the sweep DISPROVED: it measured
+                             free space where the model put something
+            blue             the sensor found it and the model never said
+
+        Which is readable without a legend: big solid blocks are things
+        the camera has really seen, little blocks are guesses, green means
+        a guess that turned out right.
+        """
+        if self.closed:
+            return False
+        if self._wpivot is None:
+            # the room's own grid: proxy box, orbit pivot and the depth
+            # reflection all come from it rather than from GRID
+            self.proxy = tuple(int(world.shape[i]) for i in (0, 2, 1))
+            self.centre = np.array([(g - 1) / 2.0 for g in self.proxy],
+                                   dtype=np.float64)
+            self._wpivot = int(world.shape[1]) - 1
+
+        # The room changes by a handful of voxels a frame, and rebuilding a
+        # whole-room mesh every frame would spend the budget redrawing what
+        # did not move. poll_events still runs every iteration below, so
+        # the window stays alive while the mesh is a few frames stale.
+        self._wframe += 1
+        due = force or (self._wframe % max(1, self.mesh_every) == 1)
+        if due:
+            t0 = time.time()
+            # verdicts() walks every voxel in the room, so it is computed
+            # ONCE here and shared by the mesh and the readout
+            v = world.verdicts()
+            self._wmesh = self._build_world(world, v)
+            self._wstatus = self._status_lines(v)
+            self.colour_ms += 1000 * (time.time() - t0)
+
+        t0 = time.time()
+        status = list(self._wstatus)
+        if note:
+            status.append((note, (90, 90, 250)))
+        if self.panels and depth is not None:
+            self._draw_panels(depth, rgb, name, fps, status=status)
+        if self._wmesh is not None:
+            self._swap(self._wmesh)
+        alive = self._draw()
+        self.frames += 1
+        self.draw_ms += 1000 * (time.time() - t0)
+        if self.record_dir is not None:
+            os.makedirs(self.record_dir, exist_ok=True)
+            self.vis.capture_screen_image(
+                os.path.join(self.record_dir, '%06d.png' % self.frames),
+                do_render=True)
+        return alive
+
+    def _to_view(self, idx):
+        """World grid index -> the viewer's left-to-right-handed frame.
+
+        display_solid draws index axis 1 as UP (its FACES table shades +y
+        brightest), and the world grid's up axis is Z, so the axes are
+        reordered (X, Z, Y) -- the same order voxel_centres_world uses for
+        a .ply. The depth axis is then reflected about a FIXED pivot, as
+        display_overlay does, so the room does not flip when its extent
+        changes.
+        """
+        return np.stack([idx[:, 0], idx[:, 2], self._wpivot - idx[:, 1]],
+                        axis=1)
+
+    def _status_lines(self, v):
+        """The counts, in the words that make them mean something.
+
+        'untested' is reported as its own number and never folded into
+        the confirmed count: most of what a completion model fills in is
+        permanently unreachable by the sensor, and that is not a win.
+        """
+        n = dict((k, int(a.sum())) for k, a in v.items())
+        settled = n['confirmed'] + n['contradicted']
+        pct = (' -- %.0f%% right' % (100.0 * n['confirmed'] / settled)
+               if settled else '')
+        return [
+            ('measured %d   model filled in %d'
+             % (n['measured'], n['confirmed'] + n['contradicted']
+                + n['untested']), (210, 210, 210)),
+            ('swept so far: %d proved, %d disproved%s'
+             % (n['confirmed'], n['contradicted'], pct),
+             (120, 230, 140) if n['confirmed'] >= n['contradicted']
+             else (140, 140, 240)),
+            ('still untested %d   sensor-only %d'
+             % (n['untested'], n['missed']), (170, 170, 170)),
+        ]
+
+    def _build_world(self, world, v):
+        """Two meshes: solid for measured, shrunken for unproven guesses."""
+        ds, o3d = self.ds, self.o3d
+        try:
+            from .visualize import DEFAULT_COLORMAP
+        except ImportError:
+            from visualize import DEFAULT_COLORMAP
+
+        meas, ghost = v['measured'], v['predicted'] & ~v['measured']
+        cls = world.predicted()[1]
+        photo = world.colours()
+        parts = []
+
+        i = np.argwhere(meas)
+        if len(i):
+            c = photo[i[:, 0], i[:, 1], i[:, 2]].astype(np.int32)
+            for name, colour in (('confirmed', (60, 220, 90)),
+                                 ('missed', (70, 130, 255))):
+                m = v[name][i[:, 0], i[:, 1], i[:, 2]]
+                if m.any():
+                    c[m] = colour
+            parts.append(ds.build_cube_mesh(self._to_view(i), c)[0])
+
+        i = np.argwhere(ghost)
+        if len(i):
+            k = cls[i[:, 0], i[:, 1], i[:, 2]]
+            c = DEFAULT_COLORMAP[np.clip(k, 0, len(DEFAULT_COLORMAP) - 1)]
+            c = c[:, :3].astype(np.int32)
+            m = v['contradicted'][i[:, 0], i[:, 1], i[:, 2]]
+            if m.any():
+                c[m] = (230, 60, 60)
+            view = self._to_view(i)
+            # no face culling: these do not touch, so there is nothing to
+            # cull, and every face of a small floating cube is visible
+            mesh, vov, _ = ds.build_cube_mesh_all(view, c)
+            pts = np.asarray(mesh.vertices)
+            mid = view[vov].astype(np.float64)
+            mesh.vertices = o3d.utility.Vector3dVector(
+                mid + (pts - mid) * self.shrink)
+            parts.append(mesh)
+
+        if not parts:
+            return None
+        mesh = parts[0]
+        for p in parts[1:]:
+            mesh += p
+        if self.zoom != 1.0:
+            pts = np.asarray(mesh.vertices)
+            mesh.vertices = o3d.utility.Vector3dVector(
+                (pts - self.centre) * self.zoom + self.centre)
+        return mesh
+
     def pump(self):
         """Answer the window system during a long step. -> False once closed.
 
@@ -352,7 +519,7 @@ class LiveView:
                     pass
 
     # ---- the camera panels ----
-    def _draw_panels(self, depth, rgb, name, fps):
+    def _draw_panels(self, depth, rgb, name, fps, status=None):
         """Colour over depth, as the model received them.
 
         The depth ramp is colorize_depth's rs-jet with per-frame equalisation,
@@ -389,6 +556,14 @@ class LiveView:
                     (170, 220, 170) if valid > 0.5 else (140, 140, 240),
                     1, cv2.LINE_AA)
         out.append(foot)
+        # The 3D window is open3d's LEGACY Visualizer: no material API and
+        # no text. The panels are cv2, so the accumulate readout lives here
+        # -- which is also why --no_panels turns the readout off with them.
+        for line, colour in (status or []):
+            bar = np.zeros((20, w, 3), np.uint8)
+            cv2.putText(bar, line, (6, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                        colour, 1, cv2.LINE_AA)
+            out.append(bar)
         cv2.imshow(self.panel_window, np.vstack(out))
         cv2.waitKey(1)                   # pumps the window; it draws nothing
 
@@ -448,7 +623,8 @@ class LiveView:
             # a constant box rather than the first frame's voxels is what
             # makes --zoom mean the same thing from run to run.
             box = self.o3d.geometry.TriangleMesh.create_box(
-                *[float(g) for g in GRID]).translate((-0.5, -0.5, -0.5))
+                *[float(g) for g in self.proxy]).translate(
+                    (-0.5, -0.5, -0.5))
             self.vis.add_geometry(box)
             self.geom = mesh
             self.vis.add_geometry(self.geom, reset_bounding_box=False)

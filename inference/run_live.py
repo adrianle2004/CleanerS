@@ -232,6 +232,13 @@ def parse_args():
     p.add_argument('--track_voxel', type=float, default=0.02,
                    help='the tracker only has to track, not make a mesh')
     p.add_argument('--track_blocks', type=int, default=8000)
+    p.add_argument('--mesh_every', type=int, default=3,
+                   help='--accumulate: rebuild the room mesh every N '
+                        'frames. The room changes by a few voxels a frame '
+                        'and the window stays responsive in between.')
+    p.add_argument('--record', action='store_true',
+                   help='--accumulate: write every drawn frame to '
+                        '<out_dir>/frames/, to make the fill-in video')
     p.add_argument('--track_device', default='auto',
                    choices=['auto', 'cpu', 'cuda'],
                    help='cpu if the card cannot hold the tracker and the '
@@ -409,6 +416,10 @@ def main():
                             width=w3d, height=h3d,
                             panel_width=args.panel_width,
                             overlap=not args.sync_display)
+            if args.accumulate:
+                view.mesh_every = args.mesh_every
+                if args.record:
+                    view.record_dir = os.path.join(args.out_dir, 'frames')
             view.pump()               # show it before the first frame's work
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
@@ -532,12 +543,21 @@ def main():
                 save_prediction_ply(pred_label, mask,
                                     os.path.join(ensure_dir(ply_dir),
                                                  '%s.ply' % frame.name))
-            if view is not None and not view.update(
-                    pred_label, mask, loader, frame.rgb, name=frame.name,
-                    fps=1.0 / max(1e-6, time.time() - t0)):
-                log.info('display window closed; stopping')
-                n += 1
-                break
+            if view is not None:
+                hz = 1.0 / max(1e-6, time.time() - t0)
+                if args.accumulate:
+                    alive = view.update_world(
+                        world, frame.depth, frame.rgb, name=frame.name,
+                        fps=hz,
+                        note='TRACKING LOST -- the map stopped growing'
+                             if tracker.lost else None)
+                else:
+                    alive = view.update(pred_label, mask, loader, frame.rgb,
+                                        name=frame.name, fps=hz)
+                if not alive:
+                    log.info('display window closed; stopping')
+                    n += 1
+                    break
 
             n += 1
             if args.log_every and n % args.log_every == 0:
