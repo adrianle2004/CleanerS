@@ -18,6 +18,9 @@ capture can be evaluated the way NYU is, see [MAKING_GT.md](../../reconstruction
 and for what those captures established once scored —
 including why SC has to be read against its own baseline — see
 [FINDINGS.md](../../reconstruction_GT/document/FINDINGS.md).
+For running the accumulating room in front of someone — the commands, the
+keys, what each mode answers, what both captures scored and what had to be
+built to get there — see [DEMO.md](DEMO.md).
 For why furniture gets extruded through the wall behind it — measured over all
 1449 NYU frames — see [OCCLUSION.md](OCCLUSION.md). For what the model is
 actually reliable at, which classes to distrust, how to hold the camera and
@@ -1301,11 +1304,11 @@ itself unsteady, so there are plenty of them at the edge of every
 surface. Accumulated over a sweep they become permanent spurs on the
 furniture. Requiring `SEEN_MIN = 3` frames to have been able to see a
 voxel and `AGREE = 0.6` of them to have claimed it takes room07's sweep
-from 20 013 claimed voxels to 17 626 while `confirmed` moves 3 605 →
-3 563: 12% of the model's claimed matter was unstable, and 1.2% of what
-the sweep had proved went with it. `missed` rises 132 → 189 — some of
+from 20 021 claimed voxels to 17 624 while `confirmed` moves 3 604 →
+3 561: 12% of the model's claimed matter was unstable, and 1.2% of what
+the sweep had proved went with it. `missed` rises 134 → 192 — some of
 what goes was a real surface the model only ever claimed once — and the
-proved share goes from 85.9% to 87.1%.
+proved share goes from 86.0% to 87.1%.
 
 **`alpha` is why the colour is a blend and not a mean.** The frames are
 not equivalent samples of a voxel's colour: a camera's auto white balance

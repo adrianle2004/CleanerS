@@ -60,10 +60,10 @@ COLOUR_ALPHA = 0.5
 # have called it occupied.
 #
 # Measured on room07's 808-frame sweep, the same map scored both ways:
-# the model's claimed matter goes from 20013 voxels to 17626 while the
-# CONFIRMED count moves 3605 -> 3563. So 12% of what the model claimed
+# the model's claimed matter goes from 20021 voxels to 17624 while the
+# CONFIRMED count moves 3604 -> 3561. So 12% of what the model claimed
 # was unstable, 1.2% of what the sweep had proved went with it, and the
-# proved share rose from 85.9% to 87.1%. What leaves is what no two
+# proved share rose from 86.0% to 87.1%. What leaves is what no two
 # viewpoints ever agreed on -- including 353 of the 805 voxels the
 # sensor had measured straight through.
 SEEN_MIN = 3
