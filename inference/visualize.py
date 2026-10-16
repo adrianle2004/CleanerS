@@ -97,3 +97,57 @@ def save_prediction_ply(pred_label, weight, ply_path, colorMap=None):
     pred_label[weight == 0] = 0
     labeled_voxel2ply(pred_label, ply_path, colorMap=colorMap)
     return ply_path
+
+# ---- the accumulated world --------------------------------------------
+
+# What the voxel IS, rather than what class it is. These are the colours
+# the accumulating display is read by, so they are deliberately blunt:
+# white is measured, class colour is a guess, green is a guess the sweep
+# proved, red is one it disproved.
+VERDICT_COLOURS = {
+    'confirmed':    (60, 220, 90),     # blind completion, later measured
+    'contradicted': (230, 60, 60),     # blind completion, measured free
+    'missed':       (70, 130, 255),    # measured, never predicted
+}
+
+
+def save_world_ply(world, ply_path, colorMap=None):
+    """One point per occupied voxel of a WorldMap, in WORLD METRES.
+
+    Unlike labeled_voxel2ply, which writes grid indices for a single
+    frame, this is a room: the coordinates are metres in the frame
+    live_cam_pose builds, so it drops straight into CloudCompare beside
+    reconstruction_GT's room.ply and the two can be compared.
+
+    Colour says what the voxel IS, not only what class it is -- a measured
+    voxel wears its measured colour, an unconfirmed completion wears its
+    class colour, and a completion the sweep settled wears green or red.
+    """
+    import numpy as np
+    if colorMap is None:
+        colorMap = DEFAULT_COLORMAP
+    v = world.verdicts()
+    occupied = v['measured'] | v['predicted']
+    idx = np.argwhere(occupied)
+    if not len(idx):
+        print('Oops! The world map is empty.')
+        return
+    xyz = world.centres(idx)
+
+    cls = world.predicted()[1][idx[:, 0], idx[:, 1], idx[:, 2]]
+    rgb = colorMap[np.clip(cls, 0, len(colorMap) - 1)][:, :3].astype(np.int32)
+    meas = v['measured'][idx[:, 0], idx[:, 1], idx[:, 2]]
+    rgb[meas] = world.colours()[idx[meas, 0], idx[meas, 1], idx[meas, 2]]
+    for name, colour in VERDICT_COLOURS.items():
+        m = v[name][idx[:, 0], idx[:, 1], idx[:, 2]]
+        if m.any():
+            rgb[m] = colour
+
+    head = ('ply\nformat ascii 1.0\nelement vertex %d\n'
+            'property float x\nproperty float y\nproperty float z\n'
+            'property uchar red\nproperty uchar green\nproperty uchar blue\n'
+            'end_header' % len(idx))
+    os.makedirs(os.path.dirname(ply_path) or '.', exist_ok=True)
+    np.savetxt(ply_path, np.hstack([xyz, rgb]),
+               fmt='%.4f %.4f %.4f %d %d %d', header=head, comments='')
+    return len(idx)

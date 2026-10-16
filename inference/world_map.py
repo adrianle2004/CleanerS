@@ -325,6 +325,16 @@ def observe(world, depth, cam_K, world_T_cam, max_range=3.5, margin=None,
 
 # ---- one frame of prediction -> where it goes in the world --------------
 
+# The network's grid is NOT indexed (X, Y, Z), and assuming it is puts the
+# room on its side. frame_loader builds it as [z_g, y_g, x_g], where axis 0
+# walks world X, axis 1 walks world Z -- the 36-cell HEIGHT axis, which is
+# why the shape is (60, 36, 60) -- and axis 2 walks world Y, the depth away
+# from the camera (frame_loader.py:503-507, and document/README.md's axis
+# table). So a world-order index (iX, iY, iZ) addresses the array at
+# [iX, iZ, iY].
+WORLD_TO_ARRAY = [0, 2, 1]
+
+
 def gather_prediction(world, pred_label, keep, vox_origin, cam_pose,
                       world_T_cam, grid=(60, 36, 60), vox=VOX):
     """The frame's 60x36x60 -> (world voxel indices, class).
@@ -338,7 +348,7 @@ def gather_prediction(world, pred_label, keep, vox_origin, cam_pose,
         p_local = cam_pose @ inv(world_T_cam) @ p_world
 
     `cam_pose` maps camera -> that frame's local world (frame_loader's NYU
-    convention), and `world_T_cam` maps camera -> the room's world, so the
+    convention) and `world_T_cam` maps camera -> the room's world, so the
     pair carries a world point into the frame's own grid. With
     world_T_cam == cam_pose -- the FIRST frame, which fuse_scan anchors the
     world on -- this collapses to the identity, and the result must land
@@ -351,7 +361,9 @@ def gather_prediction(world, pred_label, keep, vox_origin, cam_pose,
     M = np.asarray(cam_pose, np.float64) @ np.linalg.inv(
         np.asarray(world_T_cam, np.float64))
     Mi = np.linalg.inv(M)
-    g = np.asarray(grid, np.float64)
+    # the grid's extent along world X, Y, Z -- 60, 60, 36, not 60, 36, 60
+    dims = np.asarray(grid, np.int64)[WORLD_TO_ARRAY]
+    g = dims.astype(np.float64)
     c = np.array(np.meshgrid([0.0, g[0]], [0.0, g[1]], [0.0, g[2]],
                              indexing='ij')).reshape(3, -1).T
     corners = np.asarray(vox_origin, np.float64) + c * vox
@@ -368,12 +380,13 @@ def gather_prediction(world, pred_label, keep, vox_origin, cam_pose,
     idx = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=1)
 
     p = world.centres(idx) @ M[:3, :3].T + M[:3, 3]
-    f = np.floor((p - np.asarray(vox_origin, np.float64)) / vox).astype(
+    fw = np.floor((p - np.asarray(vox_origin, np.float64)) / vox).astype(
         np.int64)
-    ok = np.all((f >= 0) & (f < np.asarray(grid)), axis=1)
-    idx, f = idx[ok], f[ok]
-    if not len(f):
+    ok = np.all((fw >= 0) & (fw < dims), axis=1)
+    idx, fw = idx[ok], fw[ok]
+    if not len(fw):
         return empty
+    f = fw[:, WORLD_TO_ARRAY]
     k = np.asarray(keep)[f[:, 0], f[:, 1], f[:, 2]]
     idx, f = idx[k], f[k]
     return idx, np.asarray(pred_label)[f[:, 0], f[:, 1], f[:, 2]]

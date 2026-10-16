@@ -105,9 +105,14 @@ class Tracker:
         self.lost = False
         self.lost_after = max(1, int(round(LOST_AFTER_S * self.fps)))
 
-    def step(self, depth_m):
+    def step(self, depth_m, rgb=None):
         """depth in METRES -> world_T_cam, or None when this frame must not
-        be integrated. Once lost, it stays lost and always returns None."""
+        be integrated. Once lost, it stays lost and always returns None.
+
+        rgb is not used for TRACKING -- that is depth geometry alone --
+        but model.integrate builds a coloured TSDF and fails without a
+        colour channel, so one is always set, black if none is given.
+        """
         if self.lost:
             return None
         o3c, o3d = self._o3c, self._o3d
@@ -115,6 +120,12 @@ class Tracker:
         mm = np.ascontiguousarray(mm.astype(np.uint16)[:, :, None])
         self.frame.set_data_from_image(
             'depth', o3d.t.geometry.Image(o3c.Tensor(mm)).to(self.device))
+        if rgb is None:
+            col = np.zeros(mm.shape[:2] + (3,), np.uint8)
+        else:
+            col = np.ascontiguousarray(np.asarray(rgb, np.uint8))
+        self.frame.set_data_from_image(
+            'color', o3d.t.geometry.Image(o3c.Tensor(col)).to(self.device))
         if self.n:
             reason = None
             try:

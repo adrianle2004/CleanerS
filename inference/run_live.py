@@ -67,14 +67,18 @@ try:
     from .frame_loader import (FrameLoader, torch_cuda_available,
                                camera_height_from_depth)
     from . import model as model_mod
-    from .visualize import save_prediction_ply
+    from .visualize import save_prediction_ply, save_world_ply
+    from .world_map import WorldMap, observe, gather_prediction
+    from .tracker import Tracker
     from .utils import get_device, setup_logging, ensure_dir
 except ImportError:
     from camera import open_source
     from frame_loader import (FrameLoader, torch_cuda_available,
                               camera_height_from_depth)
     import model as model_mod
-    from visualize import save_prediction_ply
+    from visualize import save_prediction_ply, save_world_ply
+    from world_map import WorldMap, observe, gather_prediction
+    from tracker import Tracker
     from utils import get_device, setup_logging, ensure_dir
 
 log = logging.getLogger('run_live')
@@ -210,6 +214,28 @@ def parse_args():
                         "available live -- there is no ground truth. 'surface' "
                         'is the closest GT-free stand-in (0.9748 agreement on '
                         'NYU).')
+    p.add_argument('--accumulate', action='store_true',
+                   help='fill ONE room-sized grid as the camera moves, '
+                        'instead of replacing the voxels every frame. The '
+                        'pose comes from a tracker in this loop, the world '
+                        'is anchored on the first frame, and the display '
+                        'then separates what the sensor has MEASURED from '
+                        'what the model COMPLETED. Needs a measured '
+                        '--camera_height.')
+    p.add_argument('--world_extent', default='16x16x3.04', metavar='XxYxZ',
+                   help='the accumulated box in metres (default '
+                        '16x16x3.04, i.e. 200x200x38 voxels, ~80 MB)')
+    p.add_argument('--meas_range', type=float, default=3.5,
+                   help='how far the depth frame is believed, metres. The '
+                        'prediction reaches 4.8 m, so beyond this a '
+                        'completion stays untested until you walk to it.')
+    p.add_argument('--track_voxel', type=float, default=0.02,
+                   help='the tracker only has to track, not make a mesh')
+    p.add_argument('--track_blocks', type=int, default=8000)
+    p.add_argument('--track_device', default='auto',
+                   choices=['auto', 'cpu', 'cuda'],
+                   help='cpu if the card cannot hold the tracker and the '
+                        'model at once')
     p.add_argument('--max_frames', type=int, default=0, help='0 = unlimited')
     p.add_argument('--log_every', type=int, default=30)
     return p.parse_known_args()
@@ -323,6 +349,16 @@ def main():
     if encoder == 'auto':
         encoder = 'torch' if torch_cuda_available() else 'numpy'
 
+    if args.accumulate and args.camera_height == 'auto':
+        raise SystemExit(
+            '--accumulate cannot use --camera_height auto. The world frame '
+            'is anchored on the FIRST frame and everything is fused into '
+            'it, and auto has no answer yet at that point -- on room07 '
+            'exactly one frame in 808 ever sees the floor properly, so the '
+            'height would be revised later and move the world out from '
+            'under everything already in it. Measure the height and pass '
+            'it, or replay a capture whose meta.json carries one.')
+
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
@@ -360,6 +396,9 @@ def main():
     enc_s = inf_s = 0.0
     said_height = False        # the 1.25 m fallback is worth saying out loud
     auto_height = AutoHeight()
+    world = tracker = None
+    track_s = fuse_s = 0.0
+    untracked = 0
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov, imu=args.imu,
@@ -430,6 +469,39 @@ def main():
                     frame.depth, rgb=frame.rgb, cam_K=frame.cam_K,
                     camera_height=height, yaw=yaw, up_camera=frame.up_camera,
                     encoder=encoder, device=device)
+            world_T_cam = None
+            if args.accumulate:
+                if world is None:
+                    ex = tuple(float(v) for v in
+                               args.world_extent.lower().split('x'))
+                    world = WorldMap.around((0.0, 0.0), extent=ex)
+                    tracker = Tracker(
+                        frame.cam_K, frame.depth.shape[1],
+                        frame.depth.shape[0],
+                        initial_pose=loader.cam_pose.astype(np.float64),
+                        fps=args.fps or 30.0, voxel=args.track_voxel,
+                        block_count=args.track_blocks,
+                        device=args.track_device)
+                    log.info('accumulating into %dx%dx%d voxels of %.0f cm '
+                             '(%.1f x %.1f x %.1f m), world anchored on '
+                             'this frame', world.shape[0], world.shape[1],
+                             world.shape[2], 100 * world.vox, ex[0], ex[1],
+                             ex[2])
+                ta = time.time()
+                world_T_cam = tracker.step(frame.depth, frame.rgb)
+                track_s += time.time() - ta
+                if world_T_cam is None:
+                    # a bad pose does not degrade the map, it permanently
+                    # corrupts it -- so an unsure frame touches nothing
+                    untracked += 1
+                    continue
+                ta = time.time()
+                hit, hit_rgb, free = observe(
+                    world, frame.depth, frame.cam_K, world_T_cam,
+                    max_range=args.meas_range, rgb=frame.rgb)
+                world.add_measurement(hit, free, n, rgb=hit_rgb)
+                fuse_s += time.time() - ta
+
             sample = loader.build_tsdf_and_mapping()
             t1 = time.time()
 
@@ -443,8 +515,16 @@ def main():
             inf_s += t2 - t1b
 
             mask = None
-            if view is not None or args.save in ('ply', 'both'):
+            if view is not None or args.save in ('ply', 'both') \
+                    or args.accumulate:
                 mask = build_mask(sample, args.mask)
+            if args.accumulate:
+                ta = time.time()
+                widx, wcls = gather_prediction(
+                    world, pred_label, mask, loader.vox_origin,
+                    loader.cam_pose.astype(np.float64), world_T_cam)
+                world.add_prediction(widx, wcls, n)
+                fuse_s += time.time() - ta
             if args.save in ('npy', 'both'):
                 np.save(os.path.join(ensure_dir(pred_dir),
                                      '%s.npy' % frame.name), pred_label)
@@ -476,6 +556,34 @@ def main():
     said = auto_height.report()
     if said:
         log.info('%s', said)
+    if world is not None:
+        log.info('%s', tracker.report())
+        if untracked:
+            log.info('%d frames contributed nothing: the tracker was not '
+                     'sure enough of the pose to risk the map', untracked)
+        c = world.counts()
+        settled = c['confirmed'] + c['contradicted']
+        log.info('world: %d voxels measured, %d predicted occupied',
+                 c['measured'], c['predicted'])
+        log.info('blind completions -- filled in where NOTHING had been '
+                 'measured yet: %d. The sweep later reached %d of them: '
+                 '%d confirmed, %d contradicted%s. %d are still untested '
+                 '(inside furniture, behind walls -- the sensor can never '
+                 'reach most of them, and that is not a win).',
+                 c['confirmed'] + c['contradicted'] + c['untested'],
+                 settled, c['confirmed'], c['contradicted'],
+                 ' (%.1f%% right)' % (100.0 * c['confirmed'] / settled)
+                 if settled else '', c['untested'])
+        log.info('%d voxels the sensor measured were never predicted',
+                 c['missed'])
+        if n:
+            log.info('accumulate cost: track %.0f ms/frame, fuse %.0f '
+                     'ms/frame', 1000 * track_s / n, 1000 * fuse_s / n)
+        out = ensure_dir(args.out_dir)
+        world.save(os.path.join(out, 'world.npz'))
+        save_world_ply(world, os.path.join(out, 'world.ply'))
+        log.info('wrote %s/world.npz and world.ply', out)
+
     if view is not None:
         log.info('%s', view.report())
         view.close()

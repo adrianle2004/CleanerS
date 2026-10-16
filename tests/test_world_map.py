@@ -174,10 +174,17 @@ class TestGather(unittest.TestCase):
     """world_T_cam == cam_pose is the FIRST frame, which fuse_scan anchors
     the world on, so the composition cam_pose @ inv(world_T_cam) must
     collapse to the identity. A transposed rotation or an inverted pose
-    shows up here as a translation or a tipped-over room."""
+    shows up here as a translation or a tipped-over room.
+
+    These also pin the AXIS CONVENTION. The network's grid is indexed
+    [z_g, y_g, x_g]: axis 0 walks world X, axis 1 walks world Z (height,
+    the 36-cell one) and axis 2 walks world Y. Assuming (X, Y, Z) puts the
+    room on its side, and the only symptom is that the prediction stops
+    agreeing with the measurement.
+    """
 
     VOX_ORIGIN = np.array([-2.4, 0.0, -0.05])
-    GRID = (6, 4, 6)
+    GRID = (6, 4, 7)            # deliberately unequal: (X, Z, Y) extents
 
     def frame(self):
         cam_pose = np.eye(4)
@@ -185,6 +192,10 @@ class TestGather(unittest.TestCase):
         rng = np.random.RandomState(0)
         pred = rng.randint(0, 12, self.GRID).astype(np.int64)
         return cam_pose, pred, np.ones(self.GRID, bool)
+
+    def world_index(self, f, off):
+        """array index [iX, iZ, iY] -> world-order index + offset."""
+        return (f[0] + off[0], f[2] + off[1], f[1] + off[2])
 
     def test_on_an_aligned_grid_every_frame_voxel_lands_where_it_should(self):
         """Offset the world by a whole number of voxels and the mapping is
@@ -197,7 +208,23 @@ class TestGather(unittest.TestCase):
         got = dict((tuple(a), int(b)) for a, b in zip(idx, cls))
         self.assertEqual(len(got), int(np.prod(self.GRID)))
         for f in np.argwhere(keep):
-            self.assertEqual(got[tuple(f + off)], int(pred[tuple(f)]))
+            self.assertEqual(got[self.world_index(f, off)],
+                             int(pred[tuple(f)]))
+
+    def test_the_height_axis_is_the_36_cell_one(self):
+        """The grid is 4.8 x 4.8 m wide and 2.88 m TALL. Read as
+        (X, Y, Z) it would be 4.8 x 2.88 x 4.8 and the room would lie on
+        its side, so check the world extent each axis actually covers."""
+        cam_pose = np.eye(4)
+        cam_pose[:3, 3] = [0.3, -0.2, 1.1]
+        grid = (60, 36, 60)
+        pred = np.ones(grid, np.int64)
+        m = WorldMap(origin=[-6.0, -6.0, -0.13], shape=(150, 150, 38))
+        idx, _ = gather_prediction(m, pred, np.ones(grid, bool),
+                                   self.VOX_ORIGIN, cam_pose, cam_pose,
+                                   grid=grid)
+        span = (idx.max(axis=0) - idx.min(axis=0) + 1)
+        np.testing.assert_array_equal(span, [60, 60, 36])
 
     def test_on_an_offset_grid_each_voxel_takes_the_class_at_its_centre(self):
         """Grids that do not share a lattice are still correct: a world
@@ -207,7 +234,8 @@ class TestGather(unittest.TestCase):
         idx, cls = gather_prediction(m, pred, keep, self.VOX_ORIGIN,
                                      cam_pose, cam_pose, grid=self.GRID)
         self.assertEqual(len(set(map(tuple, idx))), len(idx))
-        f = np.floor((m.centres(idx) - self.VOX_ORIGIN) / VOX).astype(int)
+        fw = np.floor((m.centres(idx) - self.VOX_ORIGIN) / VOX).astype(int)
+        f = fw[:, [0, 2, 1]]
         np.testing.assert_array_equal(cls, pred[f[:, 0], f[:, 1], f[:, 2]])
 
     def test_a_moved_camera_moves_the_prediction_in_the_world(self):
