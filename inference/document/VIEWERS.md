@@ -425,32 +425,42 @@ python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
     --accumulate --display --camera_height 1.0858
 ```
 
-**What you are looking at.** The legacy window has no material API — the
-see-through cubes in `display_overlay` need the `gui` stack, which owns the
-main thread and so cannot be driven from `run_live`'s loop. So the layers
-are separated by **geometry**, not by transparency:
+**What you are looking at, by default.** A room. Every voxel is drawn the
+same size and wears the camera's own colour: the mean colour of the pixels
+that measured it, or — where the camera never saw it — the colour of the
+nearest measured voxel *of the same class*, falling back to a dimmed class
+colour where a class has no measured member anywhere. That is
+`display_solid`'s `--visibility all` rule applied to a room instead of a
+frame; `fill_hidden` is imported, not reimplemented, so it means exactly
+what it means there.
 
-**Size says who put the voxel there. Colour says whether it held up.**
+**The colours answer one of three questions, and `c` cycles them.**
+`--world_colour` picks which one a run starts in.
 
-| size | means |
+| mode | the question |
 | --- | --- |
-| **full 8 cm cube** | the sensor measured a surface here |
-| **half-size cube**, floating in its voxel | only the model says anything is here |
+| **`photo`** *(default)* | what does this place look like? |
+| `verdict` | did the model get it right? |
+| `class` | what does the model think each thing is? |
 
-| colour | on | means |
-| --- | --- | --- |
-| its photo colour | full | measured, and nothing remarkable: the camera saw it and this is what it looked like |
-| **green** | full | the model had already filled this in while the sensor knew *nothing* here, and the sweep went on to **prove** it |
-| **blue** | full | the sensor found it and the model never predicted it |
-| **grey** | half | the model filled it in and the sensor still has no evidence either way |
-| **red** | half | the model says solid, the sensor has **measured free space** there |
+Keeping them apart is the point. One picture answering all three at once
+is unreadable — which is how this arrived at the default above.
 
-**Red asks a different question from the score, on purpose.** The score
-below counts the *completions* the sweep disproved. Red asks: where has
-the model put matter in space the camera saw straight through? That is
-wider in one way — the voxel need not have been a completion, since wrong
-in plain view is still wrong — and narrower in another: it drops the
-one-voxel skin along every measured surface.
+**`verdict` in detail.** Every voxel keeps its photo colour except where
+there is something to say about it:
+
+| colour | means |
+| --- | --- |
+| **green** | the model filled this in while the sensor knew *nothing* here, and the sweep went on to **prove** it |
+| **blue** | the sensor found it and the model never predicted it |
+| **grey** | the model claims it and the sensor still has no evidence either way |
+| **red** | the model says solid, the camera **saw straight through** that space |
+
+Red asks a different question from the score, on purpose. The score below
+counts the *completions* the sweep disproved. Red asks where the model put
+matter in space the camera saw through: wider in that the voxel need not
+have been a completion, since wrong in plain view is still wrong, and
+narrower in that it drops the one-voxel skin along every measured surface.
 
 That skin is not an error this comparison can resolve. The model's
 surfaces come out about a voxel thicker than the measurement, so the cell
@@ -463,16 +473,20 @@ nothing. The 807 left over are matter floating in open space.
 The exclusion is **not** applied to the score. Dropping the model's near
 misses from confirmed-versus-contradicted would simply flatter it.
 
-You see between the half-size cubes, so the measured surface reads through
-the gaps. The rule needs no legend: **big solid blocks are things the camera
-has really seen, little blocks are guesses, green is a guess that turned out
-right.**
+**`--world_shrink`** draws the voxels only the *model* claims at a
+fraction of full size, so measured and completed are told apart by size as
+well as colour and you can see between them. It makes the room read as a
+diagram rather than a place, which is why it is off by default.
 
-**Unproven guesses are neutral on purpose.** `--world_colour class` paints
-them their NYU class colour instead, which says more and reads worse: NYU's
-floor is green `(43, 160, 4)` and its ceiling is red `(214, 38, 40)`, so a
-predicted floor and a proven completion come out the same colour. Left
-neutral, green and red mean a verdict and nothing else.
+**Stopping half way.** `SPACE` (or `f`) freezes: no more frames are taken
+and the room holds exactly as it is, with the window still live so you can
+orbit what the model had at that moment. Press again to carry on, or close
+the window to end the run there — it writes the map as usual.
+
+The wait sits *after* a frame rather than before one, so nothing is pulled
+from the source while it holds. A camera's frames are dropped by the
+driver as they always are; a replay carries on at the frame it stopped at
+rather than skipping ahead.
 
 **What a completion is, exactly.** A voxel the model calls occupied *where
 the sensor had no information at all* — not one depth ray, ever. It is not
