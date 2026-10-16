@@ -473,6 +473,25 @@ cost **2.1x** at 1 GB, all of it allocator churn; dropping the encoder's peak
 from 96 to 67 MB left enough room that it stopped churning. So on a small card
 AMP is not a speed flag, it is what makes it fit.
 
+**VRAM with `--accumulate`**, which is the configuration that actually
+gets close to the card. The model is not alone on it any more: the
+tracker keeps a 2 cm TSDF of the room and the display window wants the
+same GPU. Measured on this 4 GB card against the attached D455
+(1280x720 at 30, cropped to NYU), reading `nvidia-smi` once a second:
+
+| what is running | peak | track | mesh |
+| --- | ---: | ---: | ---: |
+| model + tracker, no window | 3 125 MB | 14 ms | 3 ms |
+| model + tracker + window | **3 413 MB** | 14 ms | 3 ms |
+| model + window, `--track_device cpu` | 2 473 MB | 55 ms | 20 ms |
+
+683 MB of headroom with everything up, and it **plateaus**: 3 413 MB at
+8 s in and 3 413 MB still at 40 s, because the tracker's volume is a
+fixed `--track_blocks` and the accumulating map lives in host memory.
+A long sweep does not creep up on the card. `--track_device cpu` is the
+escape if something else wants the GPU, and it costs 41 ms a frame,
+which against a ~480 ms frame is a tenth of the rate.
+
 **Architecture.** `get_arch_list()` is `sm_37 50 60 61 70 75 80 86 compute_37`.
 
 | arch | status |

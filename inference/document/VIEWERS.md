@@ -630,6 +630,22 @@ permanently corrupts it: geometry welded into the wrong place never washes
 out. After a second of consecutive drops the map freezes where it is and
 the readout says **TRACKING LOST** rather than smearing the room.
 
+**On a live camera it is the same code and it has been run on one.**
+`--source realsense` against an attached D455 (fw 5.17.0.10, USB 3.2,
+1280x720 at 30 cropped to NYU's FOV), on this 4 GB card:
+
+| | |
+| --- | --- |
+| rate | **2.05 fps** with the window, 2.41 without — the same as a bag |
+| tracker | 80 of 80 frames tracked, none dropped; accelerometer 80 of 80 samples used |
+| peak VRAM | **3 413 MB of 4 096** with the window up, and it plateaus rather than creeping — see [HARDWARE.md](HARDWARE.md#hardware-gates) |
+| colour | settled at frame 13 on one open and 36 on another, on top of the 30 frames `RealSenseSource` already discards |
+| reconstruction | 3 ms, 30 k triangles of one frustum — `m` and the end-of-run hold behave exactly as on a replay |
+
+683 MB of headroom is not much. `--track_device cpu` takes the peak to
+2 473 MB at the cost of 41 ms a frame, and is the thing to reach for if
+something else wants the card.
+
 **It needs a measured `--camera_height`.** The world is anchored on the
 first frame and everything is fused into it, so a height revised later
 would move the world out from under everything already in it.
