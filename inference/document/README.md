@@ -38,6 +38,9 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
   - [`run_inference.py`](#run_inferencepy--batch--single-frame-runner)
   - [`run_live.py`](#run_livepy--streaming-runner)
   - [`live_view.py`](#live_viewpy--the-live-window)
+  - [`world_map.py`](#world_mappy--the-accumulating-room)
+  - [`tracker.py`](#trackerpy--where-the-pose-comes-from)
+  - [`check_world_map.py`](#check_world_mappy--keeping-accumulate-honest)
   - [`utils.py`](#utilspy--shared-helpers)
   - [`display.py`](#displaypy--standalone-viewer)
   - [`display_solid.py`](#display_solidpy--solid-voxel-viewer)
@@ -1262,6 +1265,109 @@ viewpoint the user set — which is the whole reason the swap is done this way.
 
 ---
 
+### `world_map.py` — the accumulating room
+
+One room-sized 8 cm grid that fills as the camera moves, holding what the
+sensor MEASURED and what the model COMPLETED as separate evidence so the
+two can be compared. Reached by `run_live --accumulate`; the mode itself is
+documented in [VIEWERS.md](VIEWERS.md#the-accumulating-room).
+
+Pure numpy — no open3d, no torch, no model, no file paths — so every fusion
+rule is tested on 4×4×4 grids in `tests/test_world_map.py`.
+
+#### `WorldMap(origin, shape, vox=0.08, hit_min=2, pass_min=2)`
+
+Per voxel: `n_hit` / `n_pass` (counted in FRAMES, not rays, so `uint16`
+cannot overflow and the thresholds read as "how many frames said so"),
+`colour_sum` / `colour_n`, `votes[12]`, `n_seen`, `first_meas`,
+`first_pred` and `blind`.
+
+| | |
+| --- | --- |
+| `around(centre_xy, extent=(16, 16, 3.04))` | a fixed box, 200×200×38, ~80 MB of channels. Its z origin sits a whole number of voxels from NYU's `-0.05`, so the **vertical** axis is shared exactly with every frame grid and never resampled. x and y cannot be: the camera translates continuously |
+| `index_of(p)` / `centres(idx)` | world metres ↔ grid index |
+| `add_measurement(hit, pass_, frame, rgb)` | one frame's evidence, deduplicated within the call. A frame that hit a voxel does not also report passing through it |
+| `add_prediction(idx, cls, frame)` | one frame's answer, and the `blind` flag |
+| `measured_state()` | `UNKNOWN` / `FREE` / `OCCUPIED` |
+| `predicted()` | `(occupied, class)` — occupied when more than half the frames that could see it said so |
+| `verdicts()` / `counts()` | `measured`, `predicted`, `confirmed`, `contradicted`, `untested`, `missed` |
+| `colours()` | the mean colour of the pixels that measured each voxel |
+| `save(path)` / `load(path)` | `world.npz` |
+
+**`blind` is the flag the whole comparison rests on**, and it means the
+sensor had *no information at all* about the voxel — no hit and no pass,
+not one ray, ever. It does **not** mean "the state had not settled":
+settling takes `hit_min` frames, so that weaker reading counts every
+surface the camera is looking straight at on frame 0, and the model takes
+credit for predicting what it can see.
+
+#### `observe(world, depth, cam_K, world_T_cam, max_range=3.5, ...)`
+
+What one depth frame measures, by projecting every voxel in the frustum's
+bounding box into the depth image — not by marching rays. Marching 77 k
+rays at 4 cm to 3.5 m is ~22 M sample points a frame; this is ~300 k
+voxels in one vectorised pass and gives the identical three states,
+because every voxel between the camera and the surface projects to a pixel
+whose measured depth exceeds its own range.
+
+#### `gather_prediction(world, pred_label, keep, vox_origin, cam_pose, world_T_cam, ...)`
+
+`p_local = cam_pose @ inv(world_T_cam) @ p_world`, then a **gather**: each
+world voxel takes the class of the frame voxel its centre falls in.
+Scattering the frame grid outward instead aliases at equal resolution.
+
+`WORLD_TO_ARRAY = [0, 2, 1]`, because the network's grid is **not** indexed
+`(X, Y, Z)` — see [Coordinate conventions](#coordinate-conventions). Axis 0
+walks world X, axis 1 walks world Z (the 36-cell height axis) and axis 2
+walks world Y, so a world-order index `(iX, iY, iZ)` addresses the array at
+`[iX, iZ, iY]` and the grid's world extent is 60×60×36, not 60×36×60.
+
+### `tracker.py` — where the pose comes from
+
+The tracking half of `reconstruction_GT/fuse_scan.py` and nothing else: no
+mesh, no files. Frame-to-model, so error does not compound frame over
+frame. `fuse_scan` keeps its own copy — it produced committed ground truth
+as a side effect — so the constants are repeated rather than imported, and
+changing one here cannot silently move the annotation there.
+
+| | |
+| --- | --- |
+| `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d |
+| `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost` and `.report()` |
+
+`world_T_cam = W @ T`, `fuse_scan`'s composition verbatim
+(`fuse_scan.py:484,542`): `T` accumulates from the identity and
+`W = live_cam_pose(...)` of the first frame. So frame 0's `world_T_cam` IS
+its own `cam_pose`, the placement collapses to the identity there, and
+`check_world_map.py algebra` can check the arithmetic against
+`run_inference`.
+
+**`fps` is optional and defaults to not knowing.** fuse_scan divides a
+speed limit by the bag's measured rate because it reads every frameset of
+that bag. Here the rate is not knowable, and guessing is worse than not
+having it: room07's bag is 15 fps, an early version assumed 30, and
+ordinary handheld steps of 3.6–15.7 cm were rejected as impossible until
+the tracker declared itself lost half way through the room. Without `fps`
+the allowance comes from `DT_FALLBACK_S`, which makes it a blow-up
+detector rather than a speed limit on the operator's hands.
+
+**Why not `scan/trajectory.txt`.** It indexes poses by every frameset the
+bag reader yields after skipping `--skip_s`, while `BagSource` counts only
+framesets that survive `_process` and skips nothing. `live_000000` is not
+bag frame 0, the offset is data-dependent, and a mismatch does not raise —
+the room comes out quietly smeared.
+
+### `check_world_map.py` — keeping `--accumulate` honest
+
+Three checks, each against something this repo already committed, so none
+needs new ground truth and none can pass by agreeing with itself.
+
+| | |
+| --- | --- |
+| `algebra` | the placement of one frame against `run_inference`'s own output. Caught the axis permutation above |
+| `tracker` | the in-loop poses against `scan/trajectory.txt`, compared as trajectories by nearest pose — they cannot share an index — to within the 66–102 mm drift `DRIFT_AND_ALIGNMENT.md` measured |
+| `measured` | the measured layer against `scan/room_cloud.ply`, the same sensor fused by a mature implementation |
+
 ### `utils.py` — shared helpers
 
 | symbol | purpose |
@@ -2247,6 +2353,11 @@ for `mapping`, `-1` for `mapping2d`.
   `gx ← world Y` (depth), `gy ← world Z` (height). Grid arrays are indexed
   `occ[gz, gy, gx]`, so **array axis 1 is `gy` — the 144/36-cell height axis**,
   and `vox_origin[0,1,2]` pairs with world `X, Y, Z` respectively.
+- Restated for anyone placing a frame grid somewhere else: a world-order
+  index `(iX, iY, iZ)` addresses the array at **`[iX, iZ, iY]`**, and the
+  grid spans 60×60×36 voxels in world `X, Y, Z` — not 60×36×60.
+  `world_map.WORLD_TO_ARRAY` is this permutation, and reading it as
+  `(X, Y, Z)` lays the room on its side.
 
 ---
 
