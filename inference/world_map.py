@@ -219,6 +219,12 @@ class WorldMap:
         no information at all -- not merely where its state had not
         settled. See add_prediction.
 
+        'contradicted' is the completions the sweep disproved and is what
+        the confirmed/contradicted score is computed from. 'disproved' is
+        the wider set -- every voxel the model fills where the sensor has
+        measured free space -- and is what the display colours, because a
+        voxel the model got wrong in plain view is still wrong.
+
         'untested' is normally the MAJORITY and must be reported as its own
         number: most of what a completion model fills in is permanently
         unreachable by the sensor, and that is not a win.
@@ -231,7 +237,15 @@ class WorldMap:
                'confirmed': blind & (st == OCCUPIED),
                'contradicted': blind & (st == FREE),
                'untested': blind & (st == UNKNOWN),
-               'missed': (st == OCCUPIED) & ~occ}
+               'missed': (st == OCCUPIED) & ~occ,
+               # Every voxel the model fills where the sensor has measured
+               # free space, whether or not it was a completion. SCORING a
+               # completion needs the blind test above; SHOWING an error
+               # does not -- the model is equally wrong either way, and
+               # without this those voxels drew the same neutral grey as
+               # "nothing has measured this yet". On room07 that hid 2687
+               # of them.
+               'disproved': occ & (st == FREE)}
         return dict((k, v.reshape(self.shape)) for k, v in out.items())
 
     def counts(self):

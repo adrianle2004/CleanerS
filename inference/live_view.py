@@ -396,12 +396,13 @@ class LiveView:
             ('measured %d   model filled in %d'
              % (n['measured'], n['confirmed'] + n['contradicted']
                 + n['untested']), (210, 210, 210)),
-            ('swept so far: %d proved, %d disproved%s'
+            ('completions swept so far: %d proved, %d disproved%s'
              % (n['confirmed'], n['contradicted'], pct),
              (120, 230, 140) if n['confirmed'] >= n['contradicted']
              else (140, 140, 240)),
-            ('still untested %d   sensor-only %d'
-             % (n['untested'], n['missed']), (170, 170, 170)),
+            ('still untested %d   sensor-only %d   in free space %d'
+             % (n['untested'], n['missed'], n['disproved']),
+             (170, 170, 170)),
         ]
 
     def _build_world(self, world, v):
@@ -437,7 +438,9 @@ class LiveView:
             else:
                 c = np.tile(np.array([168, 168, 174], np.int32),
                             (len(i), 1))
-            m = v['contradicted'][i[:, 0], i[:, 1], i[:, 2]]
+            # every voxel in measured-free space, not only the ones that
+            # were completions: wrong in plain view is still wrong
+            m = v['disproved'][i[:, 0], i[:, 1], i[:, 2]]
             if m.any():
                 c[m] = (230, 60, 60)
             view = self._to_view(i)

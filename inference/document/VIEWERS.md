@@ -430,13 +430,27 @@ see-through cubes in `display_overlay` need the `gui` stack, which owns the
 main thread and so cannot be driven from `run_live`'s loop. So the layers
 are separated by **geometry**, not by transparency:
 
-| | drawn as | means |
+**Size says who put the voxel there. Colour says whether it held up.**
+
+| size | means |
+| --- | --- |
+| **full 8 cm cube** | the sensor measured a surface here |
+| **half-size cube**, floating in its voxel | only the model says anything is here |
+
+| colour | on | means |
 | --- | --- | --- |
-| measured | full 8 cm cube, its own photo colour | the sensor has really seen something here |
-| completed | cube shrunk to half size, neutral grey | the model filled it in and nothing has measured it |
-| confirmed | green | a completion the sweep went on to **prove** |
-| contradicted | red | a completion the sweep **disproved** — it measured free space there |
-| sensor-only | blue | the sensor found it and the model never said |
+| its photo colour | full | measured, and nothing remarkable: the camera saw it and this is what it looked like |
+| **green** | full | the model had already filled this in while the sensor knew *nothing* here, and the sweep went on to **prove** it |
+| **blue** | full | the sensor found it and the model never predicted it |
+| **grey** | half | the model filled it in and the sensor still has no evidence either way |
+| **red** | half | the model says solid, the sensor has **measured free space** there |
+
+Red is every voxel the model fills in measured-free space, not only the
+ones that were completions. Scoring a *completion* needs the blind test
+below; showing an *error* does not — a voxel the model got wrong in plain
+view is still wrong. On room07 that distinction hides 2 687 voxels if you
+get it wrong, and they drew the same neutral grey as "nothing has measured
+this yet".
 
 You see between the half-size cubes, so the measured surface reads through
 the gaps. The rule needs no legend: **big solid blocks are things the camera
@@ -530,6 +544,11 @@ every drawn frame to `frames/`, for the fill-in video.
 | contradicted | 589 |
 | still untested when the sweep ended | 10 418 |
 | voxels the sensor found that the model never predicted | 133 |
+| voxels the model fills where the sensor measured free space | 3 276 |
+
+That last row is the red, and it is wider than the 589: most of those
+voxels were never completions, the model simply put matter in space the
+camera could see through.
 
 The 86.0% is the number worth quoting, and the 10 418 is the number that
 keeps it honest: the sensor reached under a third of what the model

@@ -297,6 +297,30 @@ class TestVerdicts(unittest.TestCase):
             m.add_measurement([[2, 2, 2]], [], f)
         self.assertTrue(m.verdicts()['missed'][2, 2, 2])
 
+    def test_disproved_is_wider_than_contradicted(self):
+        """Scoring a COMPLETION needs the blind test; showing an ERROR
+        does not. A voxel the model fills in plain view, that the sensor
+        then measures as free space, is still wrong -- and without this it
+        drew the same neutral grey as "nothing has measured this yet"."""
+        m = self.map()
+        v = [[1, 1, 1]]
+        m.add_measurement([], v, 0)          # one pass: seen, not settled
+        m.add_prediction(v, [7], 0)          # so this is NOT a completion
+        m.add_measurement([], v, 1)          # now it settles as free
+        d = m.verdicts()
+        self.assertFalse(m.blind[m._flat(v)[0][0]])
+        self.assertFalse(d['contradicted'][1, 1, 1])
+        self.assertTrue(d['disproved'][1, 1, 1])
+
+    def test_every_contradicted_completion_is_also_disproved(self):
+        m = self.map()
+        m.add_prediction([[1, 1, 1]], [7], 0)
+        for f in (1, 2):
+            m.add_measurement([], [[1, 1, 1]], f)
+        d = m.verdicts()
+        self.assertTrue(d['contradicted'][1, 1, 1])
+        self.assertTrue(d['disproved'][1, 1, 1])
+
     def test_a_prediction_that_lost_the_vote_has_no_verdict(self):
         m = self.map()
         v = [[1, 1, 1]]

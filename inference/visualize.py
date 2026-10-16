@@ -106,7 +106,7 @@ def save_prediction_ply(pred_label, weight, ply_path, colorMap=None):
 # proved, red is one it disproved.
 VERDICT_COLOURS = {
     'confirmed':    (60, 220, 90),     # blind completion, later measured
-    'contradicted': (230, 60, 60),     # blind completion, measured free
+    'disproved':    (230, 60, 60),     # model says solid, sensor says free
     'missed':       (70, 130, 255),    # measured, never predicted
 }
 
