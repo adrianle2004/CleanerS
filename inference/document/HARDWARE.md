@@ -494,8 +494,8 @@ the view change is worth more there than on the GPU, because a CPU pays full
 price for every byte `roll` copied. AMP is CUDA-only (`torch.cpu.amp` bf16
 hits the same `unet3d.py:177`), and the model is ~1.8 s on CPU against 0.20 —
 84% of the frame — so the frame goes 2.72 s -> 2.27 s, 0.37 to 0.44 fps, and
-the display stays out of reach. `--what frame --device cpu` measures this row. Apple Silicon and
-AMD fall here too: torch 1.10 predates MPS.
+the display stays out of reach. `--what frame --device cpu` measures this
+row. Apple Silicon and AMD fall here too: torch 1.10 predates MPS.
 
 **Resolution order**, so no machine ends up slower than before:
 
