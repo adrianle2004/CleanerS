@@ -225,13 +225,14 @@ Then what the hardware itself is worth:
 | other conditions | per frame | fps |
 | --- | ---: | ---: |
 | no CUDA card, `--device cpu` | 2.27 s | 0.44 |
+| ... the same, `--encoder numpy` | 2.72 s | 0.37 |
 | **CUDA, 4 GB — this card** | **0.28 s** | **3.55** |
 | ... the same card, `--amp off` | 0.42 s | 2.37 |
 | ... the same card, capped to 1.0-1.5 GB | 0.29 s | 3.4 |
 | CUDA, faster than this box | >= 0.21 s | <= 4.8 |
 | *(for scale: replaying from disk, `run_live`)* | *0.30 s* | *3.28* |
 
-These four are **staged**: encode plus forward pass on one frame in a fresh
+These five are **staged**: encode plus forward pass on one frame in a fresh
 process, no camera and no window, which is what makes them comparable to each
 other and *not* to the live rows above. Only `faster than this box` is
 arithmetic rather than a benchmark — see [the ceiling](#the-ceiling). The
@@ -254,18 +255,19 @@ Three things to read with them:
   most of the work on this page did.
 
 **A card is still the single biggest factor, but the CPU case is no longer
-hopeless.** The encode stage on CPU is 927 -> 373 ms, which moves the frame
-2.72 -> 2.27 s, **0.37 to 0.44 fps**. That is a real 19%, not a rounding
-error — the earlier "barely registers" was written when the torch encoder was
-only 1.2x numpy on a CPU, before the transform stopped copying the array for
-every shift.
+hopeless.** The two CPU rows are the same machine with and without the torch
+encoder — **2.72 -> 2.27 s, 0.37 to 0.44 fps**, a real 19%. The earlier
+"barely registers" was written when that encoder was only 1.2x numpy on a
+CPU, before the transform stopped copying the array for every shift; it is
+2.5x there now.
 
-What caps it is the forward pass, which costs ~1.8 s on this CPU against
-0.20 on the card — **84% of a CPU frame**. No amount of encoder work can
-reach that, which is also why the card is worth 8x (0.44 -> 3.55 fps) while
-the code is worth 4.9x. At 0.44 fps the live window is not practical either:
-`--colour all` would add its painting to a frame that already takes two and a
-half seconds.
+What caps it is the forward pass, which `--what frame --device cpu` puts at
+~1.8 s against 0.20 on the card — **84% of a CPU frame**. No amount of
+encoder work reaches that. Comparing within one table rather than across
+them: staged, the card is worth **8x** (0.44 -> 3.55); live, the code is
+worth **4.9x** (0.59 -> 2.87). At 0.44 fps the live window is not practical
+either, since `--colour all` would add its painting to a frame that already
+takes two and a half seconds.
 
 ## The live window
 
