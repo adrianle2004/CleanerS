@@ -202,6 +202,7 @@ class LiveView:
         self._wframe = 0
         self._wmesh = None
         self._wstatus = []
+        self._wforce = False
 
         # Painting a frame is pure numpy and releases the GIL, so it can run
         # while the GPU encodes and infers the NEXT frame -- measured 103 of
@@ -337,7 +338,9 @@ class LiveView:
         # did not move. poll_events still runs every iteration below, so
         # the window stays alive while the mesh is a few frames stale.
         self._wframe += 1
-        due = force or (self._wframe % max(1, self.mesh_every) == 1)
+        due = (force or self._wforce
+               or self._wframe % max(1, self.mesh_every) == 1)
+        self._wforce = False
         if due:
             t0 = time.time()
             # verdicts() walks every voxel in the room, so it is computed
@@ -685,9 +688,15 @@ class LiveView:
         return self._set_zoom(2.0)
 
     def _repaint(self):
-        """Redraw the frame on screen with the current settings, rather than
-        making the user wait for the next one."""
+        """Redraw with the current settings, rather than making the user
+        wait for the next frame."""
         self._drain()            # never build geometry alongside the painter
+        if self._wpivot is not None:
+            # --accumulate: the geometry is the room, not a frame, and it
+            # is rebuilt from the map on the next update. Without this the
+            # zoom and colour keys would log a change and do nothing.
+            self._wforce = True
+            return
         if self._last is None:
             return
         idx, cls, loader, rgb = self._last
@@ -695,8 +704,16 @@ class LiveView:
         self._draw()
 
     def _cycle(self, _vis):
-        self.colour = MODES[(MODES.index(self.colour) + 1) % len(MODES)]
-        log.info('display colour=%s', self.colour)
+        if self._wpivot is not None:
+            # in a room, the interesting switch is not which photo rule
+            # painted a voxel but whether an unproven guess shows its
+            # class or stays out of the way of the verdict colours
+            self.world_colour = ('class' if self.world_colour == 'verdict'
+                                 else 'verdict')
+            log.info('unproven completions: %s', self.world_colour)
+        else:
+            self.colour = MODES[(MODES.index(self.colour) + 1) % len(MODES)]
+            log.info('display colour=%s', self.colour)
         self._repaint()
         return False
 
