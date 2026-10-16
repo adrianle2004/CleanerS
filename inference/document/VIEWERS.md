@@ -284,6 +284,15 @@ them — but the geometry is **replaced in place** every frame instead of loaded
 once, and the renderer is open3d's legacy `Visualizer` rather than the `gui`
 toolkit, so every window call is made from `run_live`'s own loop.
 
+The window opens **after** the model and the camera are ready, not before.
+It is driven from `run_live`'s loop, so it only answers the desktop while
+that loop is running; opening it first left it mute through a ~2 s model
+load, the camera's 3 s warm-up and the first frame's cudnn autotune — 5.3 s
+measured, against the ~5 s at which GNOME decides a window is hung and offers
+to force quit it. That is why the dialog appeared *sometimes*: it depended on
+how warm the caches were. It now answers 2 ms after it exists, and at worst
+every 0.5 s thereafter.
+
 **The window runs one frame behind, on purpose.** Painting a frame is numpy,
 which releases the GIL, so it runs on a worker thread while the main thread
 encodes and infers the *next* frame — the paint comes out of the frame budget

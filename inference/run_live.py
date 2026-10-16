@@ -331,7 +331,15 @@ def main():
     ply_dir = os.path.join(args.out_dir, 'ply')
     pred_dir = os.path.join(args.out_dir, 'prediction')
 
+    # The window is built AFTER the model and the source, just before the
+    # loop. A window only answers the compositor while poll_events is being
+    # called, and nothing calls it until the first frame: opening it here
+    # would leave it mute through a ~4 s model load, the camera's warm-up and
+    # a first frame's cudnn autotune, which is how you get "not responding --
+    # force quit or wait". The size is still parsed now, so a typo fails
+    # before any of that rather than after.
     view = None
+    LiveView = w3d = h3d = None
     if args.display:
         try:
             from .live_view import LiveView
@@ -342,10 +350,6 @@ def main():
         except ValueError:
             raise SystemExit('--window wants WxH, e.g. 1280x800, not %r'
                              % args.window)
-        view = LiveView(colour=args.colour, out_dir=args.out_dir,
-                        panels=args.panels, zoom=args.zoom,
-                        width=w3d, height=h3d, panel_width=args.panel_width,
-                        overlap=not args.sync_display)
 
     log.info('loading model on %s', device)
     model = model_mod.load_model(cfg, device=device)
@@ -360,6 +364,13 @@ def main():
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov, imu=args.imu,
                      realtime=args.realtime) as src:
+        if LiveView is not None:
+            view = LiveView(colour=args.colour, out_dir=args.out_dir,
+                            panels=args.panels, zoom=args.zoom,
+                            width=w3d, height=h3d,
+                            panel_width=args.panel_width,
+                            overlap=not args.sync_display)
+            view.pump()               # show it before the first frame's work
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
                  'on' if model_mod.use_amp(device, args.amp) else 'off',
@@ -422,11 +433,14 @@ def main():
             sample = loader.build_tsdf_and_mapping()
             t1 = time.time()
 
+            if view is not None:
+                view.pump()           # the encode just took ~100-900 ms
+            t1b = time.time()         # the pump is display cost, not infer
             pred_label, _ = model_mod.predict(model, sample, device=device,
                                               amp=args.amp)
             t2 = time.time()
             enc_s += t1 - t0
-            inf_s += t2 - t1
+            inf_s += t2 - t1b
 
             mask = None
             if view is not None or args.save in ('ply', 'both'):

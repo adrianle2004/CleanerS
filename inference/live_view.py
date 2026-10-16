@@ -271,6 +271,22 @@ class LiveView:
         self._job = job
         return True
 
+    def pump(self):
+        """Answer the window system during a long step. -> False once closed.
+
+        A window only breathes when `poll_events` runs, and this one is
+        driven from `run_live`'s loop, so between frames that is every
+        ~400 ms -- fine. The dangerous gaps are the ones around the loop: a
+        first frame doing cudnn's autotune can take seconds, and a
+        compositor that pings a window which does not answer puts up
+        "not responding -- force quit or wait". Costs ~1 ms.
+        """
+        if self.closed:
+            return False
+        if self.panels:
+            self._cv.waitKey(1)
+        return self._draw()
+
     def _overlapping(self):
         # `class` paint is a colormap lookup -- overlapping it would buy
         # nothing and still cost a frame of lag
