@@ -185,13 +185,19 @@ class LiveView:
         # so the proxy box the camera is fitted to, the orbit pivot and the
         # depth-axis reflection all have to come from it instead of GRID.
         self.proxy = GRID
-        self.shrink = 0.5          # how small an unproven guess is drawn
-        # 'verdict': unproven guesses are NEUTRAL, so green and red mean a
-        # verdict and nothing else. 'class' paints them their NYU colour,
-        # which is more informative and much less legible: NYU's floor is
-        # green (43,160,4) and its ceiling is red (214,38,40), so a
-        # predicted floor and a proven completion are the same colour.
-        self.world_colour = 'verdict'
+        # Every voxel is drawn the same size by default, so the room
+        # looks like a room. shrink < 1 goes back to drawing the voxels
+        # only the MODEL claims smaller than the measured ones, which
+        # lets you see between them at the cost of looking like a
+        # diagram rather than a place.
+        self.shrink = 1.0
+        # 'photo' is the default and the one to show people: every voxel
+        # wears the camera's own colour, filled in from the nearest
+        # coloured voxel of the same class where the camera never saw it
+        # -- display_solid's `all` rule, applied to a room instead of a
+        # frame. 'verdict' is the comparison, and 'class' the semantics.
+        self.world_colour = 'photo'
+        self.frozen = False
         # metres; what the opening view is framed on. Independent of how
         # big the map is -- the map has to be large enough for the camera
         # to walk around in, the framing only has to show the room.
@@ -239,6 +245,8 @@ class LiveView:
         opt.background_color = np.array([0.08, 0.08, 0.09])
         self.vis.register_key_callback(ord('C'), self._cycle)
         self.vis.register_key_callback(ord('S'), self._screenshot)
+        for key in (' ', 'F'):
+            self.vis.register_key_callback(ord(key), self._freeze)
         for key in ('=', '+'):
             self.vis.register_key_callback(ord(key), self._zoom_in)
         for key in ('-', '_'):
@@ -381,6 +389,8 @@ class LiveView:
         return np.stack([idx[:, 0], idx[:, 2], self._wpivot - idx[:, 1]],
                         axis=1)
 
+    WORLD_MODES = ('photo', 'verdict', 'class')
+
     def _status_lines(self, v):
         """The counts, in the words that make them mean something.
 
@@ -393,8 +403,9 @@ class LiveView:
         pct = (' -- %.0f%% right' % (100.0 * n['confirmed'] / settled)
                if settled else '')
         return [
-            ('measured %d   model filled in %d'
-             % (n['measured'], n['confirmed'] + n['contradicted']
+            ('%s%s   measured %d   model filled in %d'
+             % ('FROZEN  ' if self.frozen else '', self.world_colour,
+                n['measured'], n['confirmed'] + n['contradicted']
                 + n['untested']), (210, 210, 210)),
             ('completions swept so far: %d proved, %d disproved%s'
              % (n['confirmed'], n['contradicted'], pct),
@@ -405,59 +416,70 @@ class LiveView:
              (170, 170, 170)),
         ]
 
-    def _build_world(self, world, v):
-        """Two meshes: solid for measured, shrunken for unproven guesses."""
-        ds, o3d = self.ds, self.o3d
+    def _world_colours(self, world, v, i, view):
+        """One colour per occupied voxel, in the current mode.
+
+        `photo` is display_solid's `all` rule applied to a room: a voxel
+        wears the mean colour of the pixels that measured it, and one the
+        camera never saw borrows from the nearest coloured voxel OF THE
+        SAME CLASS -- nearest overall would smear the wall onto the bed
+        standing in front of it. A class with no coloured member anywhere
+        keeps a dimmed class colour, which reads as unseen. That is
+        `fill_hidden`, imported, not reimplemented.
+        """
         try:
             from .visualize import DEFAULT_COLORMAP
         except ImportError:
             from visualize import DEFAULT_COLORMAP
-
-        meas, ghost = v['measured'], v['predicted'] & ~v['measured']
-        cls = world.predicted()[1]
-        photo = world.colours()
-        parts = []
-
-        i = np.argwhere(meas)
-        if len(i):
-            c = photo[i[:, 0], i[:, 1], i[:, 2]].astype(np.int32)
-            for name, colour in (('confirmed', (60, 220, 90)),
-                                 ('missed', (70, 130, 255))):
-                m = v[name][i[:, 0], i[:, 1], i[:, 2]]
-                if m.any():
-                    c[m] = colour
-            parts.append(ds.build_cube_mesh(self._to_view(i), c)[0])
-
-        i = np.argwhere(ghost)
-        if len(i):
-            if self.world_colour == 'class':
-                k = cls[i[:, 0], i[:, 1], i[:, 2]]
-                c = DEFAULT_COLORMAP[np.clip(k, 0,
-                                             len(DEFAULT_COLORMAP) - 1)]
-                c = c[:, :3].astype(np.int32)
-            else:
-                c = np.tile(np.array([168, 168, 174], np.int32),
-                            (len(i), 1))
-            # every voxel in measured-free space, not only the ones that
-            # were completions: wrong in plain view is still wrong
-            m = v['disproved'][i[:, 0], i[:, 1], i[:, 2]]
+        k = world.predicted()[1][i[:, 0], i[:, 1], i[:, 2]]
+        class_rgb = DEFAULT_COLORMAP[
+            np.clip(k, 0, len(DEFAULT_COLORMAP) - 1)][:, :3].astype(np.int32)
+        if self.world_colour == 'class':
+            return class_rgb
+        photo = world.colours()[i[:, 0], i[:, 1], i[:, 2]].astype(np.int32)
+        seen = world.colour_n.reshape(world.shape)[
+            i[:, 0], i[:, 1], i[:, 2]] > 0
+        out = self.ds.fill_hidden(photo, seen, class_rgb, view,
+                                  'nearest')[0].astype(np.int32)
+        if self.world_colour != 'verdict':
+            return out
+        # the comparison, laid over the photo: anything the model claims
+        # and the sensor has not measured goes neutral FIRST, then the
+        # three verdicts paint over it
+        g = v['predicted'] & ~v['measured']
+        out[g[i[:, 0], i[:, 1], i[:, 2]]] = (168, 168, 174)
+        for name, colour in (('confirmed', (60, 220, 90)),
+                             ('disproved', (230, 60, 60)),
+                             ('missed', (70, 130, 255))):
+            m = v[name][i[:, 0], i[:, 1], i[:, 2]]
             if m.any():
-                c[m] = (230, 60, 60)
-            view = self._to_view(i)
-            # no face culling: these do not touch, so there is nothing to
-            # cull, and every face of a small floating cube is visible
-            mesh, vov, _ = ds.build_cube_mesh_all(view, c)
+                out[m] = colour
+        return out
+
+    def _build_world(self, world, v):
+        """One mesh of the whole room."""
+        ds, o3d = self.ds, self.o3d
+        i = np.argwhere(v['measured'] | v['predicted'])
+        if not len(i):
+            return None
+        view = self._to_view(i)
+        colours = self._world_colours(world, v, i, view)
+
+        if self.shrink >= 1.0:
+            # faces between two occupied voxels are dropped -- most of the
+            # geometry in a filled room
+            mesh = ds.build_cube_mesh(view, colours)[0]
+        else:
+            # only what the MODEL claims shrinks; measured voxels stay
+            # whole, so the two are told apart by size again
+            small = (v['predicted'] & ~v['measured'])[i[:, 0], i[:, 1],
+                                                      i[:, 2]]
+            mesh, vov, _ = ds.build_cube_mesh_all(view, colours)
             pts = np.asarray(mesh.vertices)
             mid = view[vov].astype(np.float64)
+            scale = np.where(small[vov], self.shrink, 1.0)[:, None]
             mesh.vertices = o3d.utility.Vector3dVector(
-                mid + (pts - mid) * self.shrink)
-            parts.append(mesh)
-
-        if not parts:
-            return None
-        mesh = parts[0]
-        for p in parts[1:]:
-            mesh += p
+                mid + (pts - mid) * scale)
         if self.zoom != 1.0:
             pts = np.asarray(mesh.vertices)
             mesh.vertices = o3d.utility.Vector3dVector(
@@ -708,16 +730,31 @@ class LiveView:
 
     def _cycle(self, _vis):
         if self._wpivot is not None:
-            # in a room, the interesting switch is not which photo rule
-            # painted a voxel but whether an unproven guess shows its
-            # class or stays out of the way of the verdict colours
-            self.world_colour = ('class' if self.world_colour == 'verdict'
-                                 else 'verdict')
-            log.info('unproven completions: %s', self.world_colour)
+            # in a room the switch is which QUESTION the colours answer:
+            # what does it look like, did the model get it right, or what
+            # does the model think each thing is
+            m = self.WORLD_MODES
+            self.world_colour = m[(m.index(self.world_colour) + 1) % len(m)]
+            log.info('room colour=%s', self.world_colour)
         else:
             self.colour = MODES[(MODES.index(self.colour) + 1) % len(MODES)]
             log.info('display colour=%s', self.colour)
         self._repaint()
+        return False
+
+    def _freeze(self, _vis):
+        """Stop taking frames, and hold the room exactly as it is.
+
+        The loop driving this window stops pulling from the source while
+        it holds -- a camera's frames are dropped on the floor, and a
+        replay resumes on the frame it stopped at rather than skipping
+        ahead. The window stays live throughout, so the state at that
+        moment can be orbited and looked at. Press again to carry on.
+        """
+        self.frozen = not self.frozen
+        log.info('%s', 'FROZEN -- no more frames until you press space '
+                 'again' if self.frozen else 'running again')
+        self._wforce = True
         return False
 
     def _screenshot(self, _vis):

@@ -253,13 +253,20 @@ def parse_args():
                         'allowance is used, because a guessed rate is '
                         'worse than none -- see tracker.DT_FALLBACK_S')
     p.add_argument('--world_colour', '--world_color', dest='world_colour',
-                   default='verdict', choices=['verdict', 'class'],
-                   help="--accumulate: what an UNPROVEN completion is "
-                        "painted. 'verdict' (default) leaves it neutral so "
-                        "green and red mean proved and disproved and "
-                        "nothing else; 'class' gives it its NYU colour, "
-                        "which says more and reads worse -- NYU's floor is "
-                        "green and its ceiling is red.")
+                   default='photo', choices=['photo', 'verdict', 'class'],
+                   help="--accumulate: which question the room's colours "
+                        "answer. 'photo' (default) is what it LOOKS like "
+                        "-- every voxel in the camera's own colour, the "
+                        "same rule as --colour all; 'verdict' is whether "
+                        "the model got it right; 'class' is what the "
+                        "model thinks each thing is. `c` cycles them in "
+                        "the window.")
+    p.add_argument('--world_shrink', type=float, default=1.0,
+                   help='--accumulate: draw the voxels only the MODEL '
+                        'claims at this fraction of full size, so they '
+                        'can be told from measured ones and seen past. '
+                        '1.0 (default) draws everything the same size, '
+                        'which looks like a room rather than a diagram.')
     p.add_argument('--mesh_every', type=int, default=3,
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
@@ -448,6 +455,7 @@ def main():
             if args.accumulate:
                 view.mesh_every = args.mesh_every
                 view.world_colour = args.world_colour
+                view.shrink = args.world_shrink
                 view.view_extent = tuple(
                     float(v) for v in args.view_extent.lower().split('x'))
                 if args.record:
@@ -591,6 +599,27 @@ def main():
                     log.info('display window closed; stopping')
                     n += 1
                     break
+                # SPACE holds the room exactly as it is. The wait sits
+                # here, AFTER a frame rather than before one, so nothing
+                # is pulled from the source while it holds: a camera's
+                # frames are dropped by the driver as they always are,
+                # and a replay carries on at the frame it stopped at
+                # instead of skipping ahead. The window keeps answering
+                # the compositor throughout, so the state can be orbited.
+                if view.frozen:
+                    log.info('frozen at %s -- press space in the window '
+                             'to carry on, or close it to stop here',
+                             frame.name)
+                    view.update_world(world, frame.depth, frame.rgb,
+                                      name=frame.name, force=True,
+                                      note='FROZEN -- space to carry on')
+                    while view.frozen and not _STOP:
+                        if not view.pump():
+                            break
+                        time.sleep(0.03)
+                    if view.closed or _STOP:
+                        n += 1
+                        break
 
             n += 1
             if args.log_every and n % args.log_every == 0:
