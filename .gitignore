@@ -163,3 +163,7 @@ outputs/guard/*.pause
 captures/*/gt/solids.json.pre*
 # refine_frame_pose.sh keeps the record it is about to change; git history is the undo path
 captures/*/meta.json.preicp
+# brainstorming specs and implementation plans: working notes for a change,
+# not a description of the code. What they decide belongs in the commit
+# message and in inference/document/ once it is true.
+docs/superpowers/
