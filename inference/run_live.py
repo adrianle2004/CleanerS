@@ -97,6 +97,36 @@ log = logging.getLogger('run_live')
 _STOP = False
 
 
+def _reconstruct(view, tracker, when):
+    """Extract the sensor's own mesh from the tracker and hand it to the
+    window. -> the mesh, in world metres, or None.
+
+    It is the TSDF the tracker was already building to track against, so
+    this is one call and no second integration -- see Tracker.mesh.
+    """
+    if tracker is None:
+        return None
+    t0 = time.time()
+    try:
+        mesh = tracker.mesh()
+    except Exception as e:
+        # a picture to look at is never worth losing a finished run over
+        log.warning('could not extract the reconstruction: %s', e)
+        return None
+    if mesh is None:
+        if when:
+            log.info('nothing reconstructed yet at %s: the tracker has '
+                     'integrated %d frames', when, tracker.n)
+        return None
+    if when:
+        log.info('reconstruction at %s: %d vertices, %d triangles, %.0f ms',
+                 when, len(mesh.vertices), len(mesh.triangles),
+                 1000 * (time.time() - t0))
+    if view is not None:
+        view.recon = mesh
+    return mesh
+
+
 def _restore_log_levels(level=logging.INFO):
     """mmcv's get_logger (mmcv/utils/logging.py, 1.5.0) walks
     `logger.root.handlers` and forces every StreamHandler to ERROR -- it does
@@ -302,6 +332,17 @@ def parse_args():
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
                         'and the window stays responsive in between.')
+    p.add_argument('--sensor_first', action='store_true',
+                   help="--accumulate --display: open on the SENSOR's own "
+                        'reconstruction rather than on the room, and let '
+                        'm reveal what the model put there. The mesh '
+                        'stops where the depth stopped, so its holes are '
+                        'the question the model is answering.')
+    p.add_argument('--no_hold', dest='hold', action='store_false',
+                   help='--accumulate --display: close the window the '
+                        'moment the source runs out, instead of holding '
+                        "it open on the sensor's reconstruction. For a "
+                        'scripted run that nobody is sitting in front of.')
     p.add_argument('--record', action='store_true',
                    help='--accumulate: write every drawn frame to '
                         '<out_dir>/frames/, to make the fill-in video')
@@ -520,6 +561,7 @@ def main():
             if args.accumulate:
                 view.mesh_every = args.mesh_every
                 view.world_colour = args.world_colour
+                view.show_mesh = args.sensor_first
                 view.shrink = args.world_shrink
                 view.view_extent = tuple(
                     float(v) for v in args.view_extent.lower().split('x'))
@@ -692,6 +734,10 @@ def main():
                                                  '%s.ply' % frame.name))
             if view is not None:
                 hz = 1.0 / max(1e-6, time.time() - t0)
+                if args.accumulate and view.show_mesh:
+                    # 3-7 ms on room07, so while someone is actually
+                    # looking at it the mesh keeps up with the room
+                    _reconstruct(view, tracker, None)
                 if args.accumulate:
                     alive = view.update_world(
                         world, frame.depth, frame.rgb, name=frame.name,
@@ -714,13 +760,20 @@ def main():
                 # the compositor throughout, so the state can be orbited.
                 if view.frozen:
                     log.info('frozen at %s -- press space in the window '
-                             'to carry on, or close it to stop here',
+                             'to carry on, m for the sensor\'s own '
+                             'reconstruction, or close it to stop here',
                              frame.name)
+                    _reconstruct(view, tracker, 'frozen at %s' % frame.name)
                     view.update_world(world, frame.depth, frame.rgb,
                                       name=frame.name, force=True,
-                                      note='FROZEN -- space to carry on')
+                                      note='FROZEN -- space to carry on, '
+                                           'm for the sensor alone')
                     while view.frozen and not _STOP:
-                        if not view.pump():
+                        if not view.hold_step(
+                                world, frame.depth, frame.rgb,
+                                name=frame.name,
+                                note='FROZEN -- space to carry on, '
+                                     'm for the sensor alone'):
                             break
                         time.sleep(0.03)
                     if view.closed or _STOP:
@@ -777,6 +830,35 @@ def main():
         world.save(os.path.join(out, 'world.npz'))
         save_world_ply(world, os.path.join(out, 'world.ply'))
         log.info('wrote %s/world.npz, world.ply and poses.npz', out)
+        # the sweep's own reconstruction, the other half of the picture:
+        # it stops where the depth stopped, so its holes ARE what the
+        # completion above is claiming to fill
+        recon = _reconstruct(view, tracker, 'the sweep')
+        if recon is not None:
+            import open3d as o3d
+            o3d.io.write_triangle_mesh(
+                os.path.join(out, 'reconstruction.ply'), recon)
+            log.info('wrote %s/reconstruction.ply (world metres, beside '
+                     'world.ply)', out)
+        if (view is not None and args.hold and not view.closed
+                and not _STOP and n):
+            view.show_mesh = recon is not None
+            view.frozen = True
+            log.info('the sweep is done. The window is showing %s -- press '
+                     'm to flip between it and the room, c to change what '
+                     'the room is coloured by, and close the window to '
+                     'finish.',
+                     "the SENSOR's reconstruction" if recon is not None
+                     else 'the room')
+            view.update_world(world, frame.depth, frame.rgb,
+                              name=frame.name, force=True,
+                              note='DONE -- m flips sensor / model')
+            while not view.closed and not _STOP:
+                if not view.hold_step(world, frame.depth, frame.rgb,
+                                      name=frame.name,
+                                      note='DONE -- m flips sensor / model'):
+                    break
+                time.sleep(0.03)
 
     if view is not None:
         log.info('%s', view.report())

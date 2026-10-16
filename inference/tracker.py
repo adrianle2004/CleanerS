@@ -185,6 +185,43 @@ class Tracker:
         self.n += 1
         return self.W @ self.T
 
+    # fuse_scan.py:133 -- surfaces seen in fewer frames than this are not
+    # meshed, which is what drops one-frame depth noise from the surface.
+    MIN_WEIGHT = 3.0
+
+    def mesh(self, min_weight=MIN_WEIGHT):
+        """The sensor's OWN reconstruction of what it has seen, in world
+        metres -- or None if nothing has been integrated yet.
+
+        Free, in the sense that it is already there: the TSDF this builds
+        to track against is the same volume fuse_scan carves room.ply out
+        of, so extracting it costs one call and no second integration. It
+        is the same call fuse_scan makes (fuse_scan.py:434), at 2 cm
+        rather than 1, and with no checks run on it -- this is a thing to
+        LOOK at, not a measurement. room.ply remains the committed one.
+
+        What it is for: it is the half of the picture the model is not.
+        The mesh stops where the depth stopped, so every hole in it is a
+        place the sensor could not see, and that is exactly what the
+        completion is claiming to fill.
+
+        *** THE COLOURS COME OUT BGR ***
+        step() hands model.integrate the loader's frame, which is BGR,
+        because it only has to be a colour channel for tracking's sake.
+        Here it is being looked at, so the channels are swapped back.
+        """
+        if not self.n:
+            return None
+        import numpy as np
+        m = self.model.extract_trianglemesh(min_weight).to_legacy()
+        if not len(m.vertices):
+            return None
+        m.transform(self.W)
+        if len(m.vertex_colors):
+            c = np.asarray(m.vertex_colors)[:, ::-1].copy()
+            m.vertex_colors = self._o3d.utility.Vector3dVector(c)
+        return m
+
     def report(self):
         bits = ['tracker: %d frames tracked' % self.n]
         if self.dropped:

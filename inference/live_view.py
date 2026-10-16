@@ -140,6 +140,28 @@ GRID = (60, 36, 60)
 MODES = ('class', 'zbuffer', 'all')
 
 
+def view_points(p_world, origin, vox, pivot):
+    """World METRES -> the viewer's index frame, for the accumulating room.
+
+    The one piece of arithmetic the room's two layers have to share. The
+    cubes are placed by grid index and the sensor's reconstruction is a
+    mesh in metres, and if these disagree by so much as half a voxel the
+    comparison the window exists for is quietly wrong.
+
+    A voxel CENTRE is at origin + (i + 0.5) * vox and its cube is drawn
+    at i, hence the half. Then display_solid's axis order -- index axis 1
+    is UP and the room's up axis is Z -- and the depth-axis reflection
+    about a FIXED pivot, as display_overlay does, so nothing flips when
+    the extent changes.
+
+    Pure, and tested in tests/test_live_view.py: it imports no open3d and
+    needs no window.
+    """
+    g = (np.asarray(p_world, np.float64).reshape(-1, 3)
+         - np.asarray(origin, np.float64)) / float(vox) - 0.5
+    return np.stack([g[:, 0], g[:, 2], float(pivot) - g[:, 1]], axis=1)
+
+
 class LiveView:
     """One window, re-fed per frame. `update()` returns False once it closes.
 
@@ -209,6 +231,13 @@ class LiveView:
         self.view_extent = (8.0, 8.0, 3.04)
         self.mesh_every = 3
         self.record_dir = None
+        # The sensor's own reconstruction, in world metres -- what the
+        # tracker's TSDF already holds. `m` flips the window between it
+        # and the room, at the same viewpoint, which is the comparison:
+        # the mesh stops where the depth stopped, and the holes in it are
+        # what the model is claiming to fill.
+        self.recon = None
+        self.show_mesh = False
         self._wpivot = None
         self._wframe = 0
         self._wmesh = None
@@ -249,6 +278,7 @@ class LiveView:
         opt.mesh_show_back_face = True
         opt.background_color = np.array([0.08, 0.08, 0.09])
         self.vis.register_key_callback(ord('C'), self._cycle)
+        self.vis.register_key_callback(ord('M'), self._flip_mesh)
         self.vis.register_key_callback(ord('S'), self._screenshot)
         for key in (' ', 'F'):
             self.vis.register_key_callback(ord(key), self._freeze)
@@ -363,7 +393,9 @@ class LiveView:
             # verdicts() walks every voxel in the room, so it is computed
             # ONCE here and shared by the mesh and the readout
             v = world.verdicts()
-            self._wmesh = self._build_world(world, v)
+            self._wmesh = (self._build_recon(world)
+                           if self.show_mesh and self.recon is not None
+                           else self._build_world(world, v))
             self._wstatus = self._status_lines(v)
             self.colour_ms += 1000 * (time.time() - t0)
 
@@ -383,6 +415,24 @@ class LiveView:
             self.vis.capture_screen_image(
                 os.path.join(self.record_dir, '%06d.png' % self.frames),
                 do_render=True)
+        return alive
+
+    def hold_step(self, world, depth=None, rgb=None, name='', note=None):
+        """One turn of a HELD window: answer the compositor, and rebuild
+        only if a key asked for it. -> False once it is closed.
+
+        Nothing is pulled from the source and nothing is recorded, so a
+        run can sit here for as long as someone wants to look -- while
+        frozen half way, or after the last frame.
+        """
+        if not self._wforce:
+            return self.pump()
+        rec, self.record_dir = self.record_dir, None
+        try:
+            alive = self.update_world(world, depth, rgb, name=name,
+                                      note=note, force=True)
+        finally:
+            self.record_dir = rec
         return alive
 
     def _to_view(self, idx):
@@ -413,6 +463,18 @@ class LiveView:
         settled = n['confirmed'] + n['contradicted']
         pct = (' -- %.0f%% right' % (100.0 * n['confirmed'] / settled)
                if settled else '')
+        if self.show_mesh:
+            return [
+                ('%sthe SENSOR only -- its own reconstruction, %d triangles'
+                 % ('FROZEN  ' if self.frozen else '',
+                    len(self.recon.triangles) if self.recon is not None else 0),
+                 (210, 210, 210)),
+                ('every hole in it is somewhere the depth could not reach',
+                 (170, 170, 170)),
+                ('m: back to the room, which fills %d of them in'
+                 % (n['confirmed'] + n['contradicted'] + n['untested']),
+                 (170, 170, 170)),
+            ]
         return [
             ('%s%s   measured %d   model filled in %d'
              % ('FROZEN  ' if self.frozen else '', self.world_colour,
@@ -466,6 +528,42 @@ class LiveView:
             if m.any():
                 out[m] = colour
         return out
+
+    # view units, pointing up and a little towards the viewer. The room's
+    # cubes carry display_solid's baked face shading and the renderer is
+    # unlit (see __init__), so the reconstruction has to be shaded the
+    # same way or it arrives as a flat silhouette.
+    _LIGHT = np.array([0.30, 0.90, 0.25])
+
+    def _build_recon(self, world):
+        """The reconstruction, in the room's own view coordinates.
+
+        World metres -> continuous grid index -> _to_view's axis order and
+        reflection -> the zoom every room mesh is scaled by. A voxel
+        CENTRE sits at world origin + (i + 0.5) * vox and is drawn at
+        index i, hence the half-voxel: without it the mesh floats half a
+        voxel off the room it is meant to be compared with.
+        """
+        o3d = self.o3d
+        src = self.recon
+        pts = view_points(np.asarray(src.vertices), world.origin, world.vox,
+                          self._wpivot)
+        pts = (pts - self.centre) * self.zoom + self.centre
+        m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(pts),
+                                      src.triangles)
+        # the axis swap is a permutation AND a reflection, so orientation
+        # survives it and the winding does not have to be flipped
+        m.compute_vertex_normals()
+        n = np.asarray(m.vertex_normals)
+        L = self._LIGHT / np.linalg.norm(self._LIGHT)
+        shade = 0.42 + 0.58 * (0.5 + 0.5 * (n @ L))
+        if len(src.vertex_colors):
+            c = np.asarray(src.vertex_colors)
+        else:
+            c = np.full((len(pts), 3), 0.72)
+        m.vertex_colors = o3d.utility.Vector3dVector(
+            np.clip(c * shade[:, None], 0, 1))
+        return m
 
     def _build_world(self, world, v):
         """One mesh of the whole room.
@@ -712,6 +810,23 @@ class LiveView:
         self.geom.triangles = mesh.triangles
         self.geom.vertex_colors = mesh.vertex_colors
         self.vis.update_geometry(self.geom)
+
+    def _flip_mesh(self, _vis):
+        """Flip between the room and the sensor's reconstruction.
+
+        Same window, same viewpoint, so the two are read against each
+        other rather than side by side.
+        """
+        if self.recon is None:
+            log.info('no reconstruction yet -- it is built when you freeze '
+                     '(space) and again when the run ends')
+            return False
+        self.show_mesh = not self.show_mesh
+        log.info('showing %s', 'the SENSOR\'s reconstruction (the holes in '
+                 'it are what the model is filling in)' if self.show_mesh
+                 else 'the room')
+        self._repaint()
+        return False
 
     def _draw(self):
         alive = self.vis.poll_events()

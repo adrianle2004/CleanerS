@@ -1383,6 +1383,21 @@ changing one here cannot silently move the annotation there.
 | --- | --- |
 | `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d |
 | `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost` and `.report()` |
+| `.mesh(min_weight=3.0)` | the sensor's own reconstruction of what it has seen, in world metres |
+
+**`mesh()` is the other half of the picture, and it is already paid
+for.** The TSDF the tracker integrates to track against is the same
+volume `fuse_scan` carves `room.ply` out of, so this is one
+`extract_trianglemesh` call and no second integration — the same call
+`fuse_scan.py:434` makes, at 2 cm rather than 1 cm. `run_live` extracts
+it when the display is frozen and again when the run ends, writes it as
+`reconstruction.ply`, and `m` flips the window between it and the room.
+The mesh stops where the depth stopped, so its holes are exactly what
+the completion is claiming to fill. It is a thing to look at: no checks
+are run on it, and `fuse_scan` remains what produces the committed
+ground truth. Its colours come out BGR, because `step` only has to give
+`integrate` a colour channel for tracking's sake, and `mesh()` swaps
+them back.
 
 `world_T_cam = W @ T`, `fuse_scan`'s composition verbatim
 (`fuse_scan.py:484,542`): `T` accumulates from the identity and

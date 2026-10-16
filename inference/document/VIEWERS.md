@@ -387,6 +387,10 @@ viewpoint `display_solid` opens with.
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
 
+With `--accumulate` the same keys mean the room instead: `c` cycles
+`photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` flips
+between the room and the sensor's own reconstruction.
+
 The handlers are verified by calling them directly — two `+` take the zoom to
 2.64 and redraw at the larger size — but this machine is a Wayland session
 with no way to synthesise a key press, so **the dispatch itself is untested**.
@@ -503,6 +507,47 @@ from the source while it holds. A camera's frames are dropped by the
 driver as they always are; a replay carries on at the frame it stopped at
 rather than skipping ahead.
 
+**And `m` shows what the sensor alone had.** Freezing also extracts the
+**sensor's own reconstruction** — a triangle mesh of everything the depth
+has measured so far — and `m` flips the window between it and the room,
+at the same viewpoint, so the only thing that changes is the geometry.
+
+That is the comparison the mode exists for, and it reads without a legend:
+the mesh **stops where the depth stopped**, so every hole in it is
+somewhere the sensor could not see, and the room is what the model puts
+there. Freeze after the first few frames, before the camera has moved,
+and the mesh is one frustum with a room-shaped hole around it; the room
+beside it already has walls and a floor. Carry on to the end of the sweep
+and the mesh closes up, except where it never can.
+
+In the first four seconds, look at the **geometry** and not the colours:
+neither side has a usable one yet. The camera's white balance has not
+converged, so the mesh comes out pink and the room, which refuses that
+colour outright, is still falling back to class colours. Both are right
+and both are ugly; `--sensor_first` opens on the mesh so the geometry is
+what gets looked at first.
+
+It costs nothing to build — it is the TSDF the tracker was already
+integrating to track against, the same volume `fuse_scan` carves
+`room.ply` out of, at 2 cm rather than 1 cm. Extracting it is **3–7 ms**
+measured on room07 (57 k triangles at 10 frames, 138 k at 400), so while
+`m` is showing it the mesh is rebuilt every frame and fills in as you
+sweep; while the room is showing it is not rebuilt at all.
+
+It is a thing to **look at**, not a measurement: no checks are run on it
+and `reconstruction_GT/fuse_scan.py` remains what produces the committed
+`room.ply`. Its colour is also integrated from frame 0, unlike the room's
+— the tracker has to hand `integrate` a colour channel from the first
+frame, so the camera's unconverged white balance is in there. Over a full
+sweep it shows as a faint pink cast on whatever the camera saw only at
+the start and never came back to.
+
+**At the end of a run the window stays up**, frozen, showing that
+reconstruction, so a replay finishes on the sensor's own answer rather
+than vanishing. `m` flips back to the room, `c` recolours it, closing the
+window finishes. `--no_hold` skips this for a scripted run nobody is
+watching.
+
 **The room does not keep every claim it is given.** Two rules throw some
 away, and both exist because the input to the model is itself unsteady.
 
@@ -613,8 +658,10 @@ End to end that is 2.1 fps against 3.0 for the same run without the flag.
 **What it writes**, at `--out_dir`: `world.npz` (the whole map, reopenable
 without re-running the model), `world.ply` (occupied voxels in world
 **metres**, so it drops straight into CloudCompare beside
-`reconstruction_GT`'s `room.ply`), and `poses.npz`. `--record` also writes
-every drawn frame to `frames/`, for the fill-in video.
+`reconstruction_GT`'s `room.ply`), `reconstruction.ply` (the sensor's own
+mesh, same frame, same metres — the two load on top of each other) and
+`poses.npz`. `--record` also writes every drawn frame to `frames/`, for
+the fill-in video.
 
 **What room07's sweep gives**, all 808 framesets, none dropped:
 
