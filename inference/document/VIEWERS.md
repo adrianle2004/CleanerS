@@ -433,7 +433,7 @@ are separated by **geometry**, not by transparency:
 | | drawn as | means |
 | --- | --- | --- |
 | measured | full 8 cm cube, its own photo colour | the sensor has really seen something here |
-| completed | cube shrunk to half size, class colour | the model filled it in and nothing has measured it |
+| completed | cube shrunk to half size, neutral grey | the model filled it in and nothing has measured it |
 | confirmed | green | a completion the sweep went on to **prove** |
 | contradicted | red | a completion the sweep **disproved** — it measured free space there |
 | sensor-only | blue | the sensor found it and the model never said |
@@ -442,6 +442,12 @@ You see between the half-size cubes, so the measured surface reads through
 the gaps. The rule needs no legend: **big solid blocks are things the camera
 has really seen, little blocks are guesses, green is a guess that turned out
 right.**
+
+**Unproven guesses are neutral on purpose.** `--world_colour class` paints
+them their NYU class colour instead, which says more and reads worse: NYU's
+floor is green `(43, 160, 4)` and its ceiling is red `(214, 38, 40)`, so a
+predicted floor and a proven completion come out the same colour. Left
+neutral, green and red mean a verdict and nothing else.
 
 **What a completion is, exactly.** A voxel the model calls occupied *where
 the sensor had no information at all* — not one depth ray, ever. It is not
@@ -486,13 +492,25 @@ first frame and everything is fused into it, so a height revised later
 would move the world out from under everything already in it.
 `--camera_height auto` is refused, with that sentence.
 
-**What it costs**, on the dev box, against a 331 ms frame:
+**Framing.** `--world_extent` sizes the MAP — it only has to be big enough
+for the camera to walk around inside. `--view_extent` sizes the OPENING
+VIEW, and only has to show the room. They are separate because the camera
+is fitted once to a constant proxy box and cannot be aimed from python
+afterwards (see [What it does not do](#what-it-does-not-do)); fitting it to
+the whole 16 m map left the room a smudge in the middle of the window. The
+orbit pivot is the map's centre either way, so it never moves as the room
+fills.
+
+**What it costs**, on the dev box, against a 331 ms frame, measured over
+room07's 808-frame sweep:
 
 | | ms/frame |
 | --- | ---: |
 | tracking | 13 |
-| measure + gather | 21 |
-| room mesh | ~26, every `--mesh_every` frames (default 3) |
+| measure + gather | 24 |
+| room mesh | ~38, every `--mesh_every` frames (default 3) |
+
+End to end that is 2.1 fps against 3.0 for the same run without the flag.
 
 **What it writes**, at `--out_dir`: `world.npz` (the whole map, reopenable
 without re-running the model), `world.ply` (occupied voxels in world
@@ -500,10 +518,31 @@ without re-running the model), `world.ply` (occupied voxels in world
 `reconstruction_GT`'s `room.ply`), and `poses.npz`. `--record` also writes
 every drawn frame to `frames/`, for the fill-in video.
 
+**What room07's sweep gives**, all 808 framesets, none dropped:
+
+| | |
+| --- | ---: |
+| voxels the sensor measured | 6 390 |
+| voxels the model called occupied | 20 013 |
+| of those, completions — filled in where the sensor knew nothing | 14 613 |
+| completions the sweep went on to reach | 4 197 |
+| **of those, confirmed** | **3 606 (85.9%)** |
+| contradicted | 591 |
+| still untested when the sweep ended | 10 416 |
+| voxels the sensor found that the model never predicted | 132 |
+
+The 85.9% is the number worth quoting, and the 10 416 is the number that
+keeps it honest: the sensor reached under a third of what the model
+completed, and it never will reach most of the rest.
+
 **Checking it.** `inference/check_world_map.py` measures all of it against
-things this repo already committed — the placement against
-`run_inference`'s own output, the poses against `trajectory.txt`, the
-measured layer against the fused `room.ply`. See its docstring.
+things this repo already committed. On room07:
+
+| check | result |
+| --- | --- |
+| `algebra` | 7 889 of 7 889 voxels placed, 0 missing, 0 extra — the composition collapses to the identity on the anchor frame |
+| `tracker` | median 46 mm from the committed trajectory, p90 96 mm — inside the 66–102 mm `DRIFT_AND_ALIGNMENT.md` measured |
+| `measured` | 87.9% of the map's measured voxels are in the fused sweep within one voxel (97.9% within two; 51.7% exact, which is the wrong question — both sides are 8 cm shells built from trajectories a voxel apart) |
 
 ### What it does not do
 

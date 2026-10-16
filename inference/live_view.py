@@ -186,6 +186,16 @@ class LiveView:
         # depth-axis reflection all have to come from it instead of GRID.
         self.proxy = GRID
         self.shrink = 0.5          # how small an unproven guess is drawn
+        # 'verdict': unproven guesses are NEUTRAL, so green and red mean a
+        # verdict and nothing else. 'class' paints them their NYU colour,
+        # which is more informative and much less legible: NYU's floor is
+        # green (43,160,4) and its ceiling is red (214,38,40), so a
+        # predicted floor and a proven completion are the same colour.
+        self.world_colour = 'verdict'
+        # metres; what the opening view is framed on. Independent of how
+        # big the map is -- the map has to be large enough for the camera
+        # to walk around in, the framing only has to show the room.
+        self.view_extent = (8.0, 8.0, 3.04)
         self.mesh_every = 3
         self.record_dir = None
         self._wpivot = None
@@ -310,11 +320,16 @@ class LiveView:
         if self.closed:
             return False
         if self._wpivot is None:
-            # the room's own grid: proxy box, orbit pivot and the depth
-            # reflection all come from it rather than from GRID
-            self.proxy = tuple(int(world.shape[i]) for i in (0, 2, 1))
-            self.centre = np.array([(g - 1) / 2.0 for g in self.proxy],
+            # The orbit pivot is the MAP's centre, so it never moves as the
+            # room fills. The proxy the camera is fitted to is the smaller
+            # view_extent, so the opening view is framed on a room.
+            dims = tuple(int(world.shape[i]) for i in (0, 2, 1))
+            self.centre = np.array([(g - 1) / 2.0 for g in dims],
                                    dtype=np.float64)
+            ex, ey, ez = self.view_extent
+            self.proxy = tuple(
+                min(d, max(1, int(round(e / world.vox))))
+                for d, e in zip(dims, (ex, ez, ey)))
             self._wpivot = int(world.shape[1]) - 1
 
         # The room changes by a handful of voxels a frame, and rebuilding a
@@ -411,9 +426,14 @@ class LiveView:
 
         i = np.argwhere(ghost)
         if len(i):
-            k = cls[i[:, 0], i[:, 1], i[:, 2]]
-            c = DEFAULT_COLORMAP[np.clip(k, 0, len(DEFAULT_COLORMAP) - 1)]
-            c = c[:, :3].astype(np.int32)
+            if self.world_colour == 'class':
+                k = cls[i[:, 0], i[:, 1], i[:, 2]]
+                c = DEFAULT_COLORMAP[np.clip(k, 0,
+                                             len(DEFAULT_COLORMAP) - 1)]
+                c = c[:, :3].astype(np.int32)
+            else:
+                c = np.tile(np.array([168, 168, 174], np.int32),
+                            (len(i), 1))
             m = v['contradicted'][i[:, 0], i[:, 1], i[:, 2]]
             if m.any():
                 c[m] = (230, 60, 60)
@@ -622,9 +642,13 @@ class LiveView:
             # This is the only moment open3d will aim the camera, and fitting
             # a constant box rather than the first frame's voxels is what
             # makes --zoom mean the same thing from run to run.
+            # centred on the pivot, not at the origin: in --accumulate the
+            # proxy is deliberately SMALLER than the map, so that the
+            # opening view frames a room rather than the whole 16 m box the
+            # camera is free to wander inside
             box = self.o3d.geometry.TriangleMesh.create_box(
                 *[float(g) for g in self.proxy]).translate(
-                    (-0.5, -0.5, -0.5))
+                    self.centre - np.asarray(self.proxy, np.float64) / 2.0)
             self.vis.add_geometry(box)
             self.geom = mesh
             self.vis.add_geometry(self.geom, reset_bounding_box=False)

@@ -233,6 +233,12 @@ def parse_args():
     p.add_argument('--world_extent', default='16x16x3.04', metavar='XxYxZ',
                    help='the accumulated box in metres (default '
                         '16x16x3.04, i.e. 200x200x38 voxels, ~80 MB)')
+    p.add_argument('--view_extent', default='8x8x3.04', metavar='XxYxZ',
+                   help='--accumulate: what the OPENING view is framed on, '
+                        'metres. Separate from --world_extent, which only '
+                        'has to be big enough for the camera to walk '
+                        'around in; this only has to show the room. The '
+                        'orbit pivot stays the map centre either way.')
     p.add_argument('--meas_range', type=float, default=3.5,
                    help='how far the depth frame is believed, metres. The '
                         'prediction reaches 4.8 m, so beyond this a '
@@ -246,6 +252,14 @@ def parse_args():
                         'impossible; without it a generous per-frame '
                         'allowance is used, because a guessed rate is '
                         'worse than none -- see tracker.DT_FALLBACK_S')
+    p.add_argument('--world_colour', '--world_color', dest='world_colour',
+                   default='verdict', choices=['verdict', 'class'],
+                   help="--accumulate: what an UNPROVEN completion is "
+                        "painted. 'verdict' (default) leaves it neutral so "
+                        "green and red mean proved and disproved and "
+                        "nothing else; 'class' gives it its NYU colour, "
+                        "which says more and reads worse -- NYU's floor is "
+                        "green and its ceiling is red.")
     p.add_argument('--mesh_every', type=int, default=3,
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
@@ -433,6 +447,9 @@ def main():
                             overlap=not args.sync_display)
             if args.accumulate:
                 view.mesh_every = args.mesh_every
+                view.world_colour = args.world_colour
+                view.view_extent = tuple(
+                    float(v) for v in args.view_extent.lower().split('x'))
                 if args.record:
                     view.record_dir = os.path.join(args.out_dir, 'frames')
             view.pump()               # show it before the first frame's work

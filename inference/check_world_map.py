@@ -29,9 +29,12 @@ tracker   The in-loop poses against captures/*/scan/trajectory.txt.
           drift document/DRIFT_AND_ALIGNMENT.md already measured: 66-102
           mm at the ground-truth frames, about one voxel at 8 cm.
 
-measured  The measured layer against scan/room.ply, the same sensor fused
-          by a mature implementation. Reported as the fraction of the
-          map's measured voxels that the fused mesh also occupies.
+measured  The measured layer against scan/room_cloud.ply, the same sensor
+          fused by a mature implementation. Reported with a tolerance:
+          both sides are 8 cm shells over the same surfaces, built from
+          two trajectories a documented ~1 voxel apart, so exact voxel
+          equality answers the wrong question -- on room07 it says 51.7%
+          where within one voxel is 87.9% and within two is 97.9%.
 """
 
 import argparse
@@ -108,6 +111,13 @@ def check_algebra(args):
     cfg.rank = 0 if torch.cuda.is_available() else 'cpu'
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = model_mod.load_model(cfg, device=device)
+    # mmcv's get_logger forces every root StreamHandler to ERROR when the
+    # model is imported, so without this every line below vanishes --
+    # run_live carries the same call and the same comment
+    for h in logging.root.handlers:
+        if isinstance(h, logging.StreamHandler):
+            h.setLevel(logging.INFO)
+    logging.root.setLevel(logging.INFO)
     pred, _ = model_mod.predict(model, sample, device=device, amp='auto')
 
     tsdf = np.asarray(sample['tsdf']).reshape(60, 36, 60)
@@ -184,27 +194,42 @@ def check_tracker(args):
 # --------------------------------------------------------------- measured
 
 def check_measured(args):
+    """The measured layer against the fused sweep.
+
+    Compared WITH A TOLERANCE, because exact voxel equality is the wrong
+    question. Both sides are 8 cm shells over the same surfaces, and they
+    are built from two trajectories that differ by the drift
+    document/DRIFT_AND_ALIGNMENT.md measured -- 66-102 mm, about one
+    voxel. Two shells a voxel apart overlap about half, which is what
+    exact agreement reports here (51.7% on room07) and it means nothing.
+    Within one voxel it is 87.9%, within two 97.9%.
+    """
     import open3d as o3d
+    from scipy import ndimage
     world = WorldMap.load(args.world)
-    mesh = o3d.io.read_point_cloud(
-        os.path.join(args.capture, 'scan', 'room_cloud.ply'))
-    pts = np.asarray(mesh.points)
+    cloud = os.path.join(args.capture, 'scan', 'room_cloud.ply')
+    pts = np.asarray(o3d.io.read_point_cloud(cloud).points)
     if not len(pts):
-        raise SystemExit('room_cloud.ply has no points')
+        raise SystemExit('%s has no points' % cloud)
     fused = np.zeros(world.shape, bool)
     idx, inside = world.index_of(pts)
     idx = idx[inside]
     fused[idx[:, 0], idx[:, 1], idx[:, 2]] = True
 
     meas = world.verdicts()['measured']
-    both = int((meas & fused).sum())
+    n = max(1, int(meas.sum()))
     log.info('map measured %d voxels, the fused sweep occupies %d',
-             int(meas.sum()), int(fused.sum()))
-    frac = both / max(1, int(meas.sum()))
-    log.info('%d of the map\'s measured voxels are in the fused sweep '
-             '(%.1f%%)', both, 100 * frac)
-    ok = frac >= args.tol
-    log.info('MEASURED %s (wanted %.0f%%)', 'OK' if ok else 'FAILED',
+             n, int(fused.sum()))
+    frac = {}
+    for r in (0, 1, 2):
+        f = ndimage.binary_dilation(fused, iterations=r) if r else fused
+        frac[r] = int((meas & f).sum()) / float(n)
+        log.info('  within %d voxel (%2d cm): %.1f%%', r, 8 * r,
+                 100 * frac[r])
+    ok = frac[args.slack] >= args.tol
+    log.info('MEASURED %s -- %.1f%% of the map\'s measured voxels are in '
+             'the fused sweep within %d voxel, wanted %.0f%%',
+             'OK' if ok else 'FAILED', 100 * frac[args.slack], args.slack,
              100 * args.tol)
     return 0 if ok else 1
 
@@ -221,13 +246,18 @@ def main():
     p.add_argument('--world', default=None, help='a world.npz')
     p.add_argument('--poses', default=None, help='a poses.npz')
     p.add_argument('--tol', type=float, default=None)
+    p.add_argument('--slack', type=int, default=1,
+                   help='measured: how many voxels of slack the comparison '
+                        'allows. 1 by default, because the two sides are '
+                        'built from trajectories a documented ~1 voxel '
+                        'apart')
     a = p.parse_args()
     if a.check == 'algebra':
         return check_algebra(a)
     if a.check == 'tracker':
         a.tol = 0.15 if a.tol is None else a.tol
         return check_tracker(a)
-    a.tol = 0.80 if a.tol is None else a.tol
+    a.tol = 0.85 if a.tol is None else a.tol
     if not a.world:
         raise SystemExit('measured needs --world <world.npz>')
     return check_measured(a)
