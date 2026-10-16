@@ -224,7 +224,7 @@ Then what the hardware itself is worth:
 
 | other conditions | per frame | fps |
 | --- | ---: | ---: |
-| no CUDA card, `--device cpu` | 2.32 s | 0.43 |
+| no CUDA card, `--device cpu` | 2.27 s | 0.44 |
 | **CUDA, 4 GB — this card** | **0.28 s** | **3.55** |
 | ... the same card, `--amp off` | 0.42 s | 2.37 |
 | ... the same card, capped to 1.0-1.5 GB | 0.29 s | 3.4 |
@@ -253,10 +253,19 @@ Three things to read with them:
   reports SW power capping. A laptop GPU moves these numbers by more than
   most of the work on this page did.
 
-**A card is still what buys most of it.** On CPU the model costs ~2.0 s
-against 0.21, so even an encode stage that went 939 -> 363 ms there only moves
-the frame 3.12 s -> 2.32 s, 0.32 to 0.43 fps — and there is no live display
-without a card either.
+**A card is still the single biggest factor, but the CPU case is no longer
+hopeless.** The encode stage on CPU is 927 -> 373 ms, which moves the frame
+2.72 -> 2.27 s, **0.37 to 0.44 fps**. That is a real 19%, not a rounding
+error — the earlier "barely registers" was written when the torch encoder was
+only 1.2x numpy on a CPU, before the transform stopped copying the array for
+every shift.
+
+What caps it is the forward pass, which costs ~1.8 s on this CPU against
+0.20 on the card — **84% of a CPU frame**. No amount of encoder work can
+reach that, which is also why the card is worth 8x (0.44 -> 3.55 fps) while
+the code is worth 4.9x. At 0.44 fps the live window is not practical either:
+`--colour all` would add its painting to a frame that already takes two and a
+half seconds.
 
 ## The live window
 
@@ -480,12 +489,12 @@ Driver >= 450.80.02 for cu111; the conda build bundles its runtime, so no
 system CUDA toolkit is needed to run.
 
 **No CUDA.** The torch encoder is one function with a `device` argument, and
-on CPU it is now **2.6x** faster than numpy for the stage (363 vs 935 ms) —
+on CPU it is now **2.5x** faster than numpy for the stage (373 vs 927 ms) —
 the view change is worth more there than on the GPU, because a CPU pays full
 price for every byte `roll` copied. AMP is CUDA-only (`torch.cpu.amp` bf16
-hits the same `unet3d.py:177`), and the model is ~2.0 s on CPU against 0.21,
-so the frame goes 3.12 s -> 2.32 s, 0.32 to 0.43 fps, and the display stays
-out of reach. `--what frame --device cpu` measures this row. Apple Silicon and
+hits the same `unet3d.py:177`), and the model is ~1.8 s on CPU against 0.20 —
+84% of the frame — so the frame goes 2.72 s -> 2.27 s, 0.37 to 0.44 fps, and
+the display stays out of reach. `--what frame --device cpu` measures this row. Apple Silicon and
 AMD fall here too: torch 1.10 predates MPS.
 
 **Resolution order**, so no machine ends up slower than before:
