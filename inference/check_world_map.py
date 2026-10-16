@@ -126,7 +126,10 @@ def check_algebra(args):
 
     # the first frame: world_T_cam IS this frame's cam_pose
     cam_pose = loader.cam_pose.astype(np.float64)
-    world = WorldMap.around((0.0, 0.0))
+    # seen_min=1: this check asks where ONE frame's prediction lands, not
+    # whether several frames agree about it. The stability rule would
+    # throw away every voxel here and report the arithmetic as broken.
+    world = WorldMap.around((0.0, 0.0), seen_min=1, agree=0.5)
     idx, cls = gather_prediction(world, pred, keep, loader.vox_origin,
                                  cam_pose, cam_pose)
     world.add_prediction(idx, cls, 0)

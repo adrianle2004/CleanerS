@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from inference.world_map import (VOX, UNKNOWN, FREE, OCCUPIED, WorldMap,
-                                 observe, gather_prediction)
+                                 ColourSettle, observe, gather_prediction)
 
 
 class TestGrid(unittest.TestCase):
@@ -268,9 +268,143 @@ class TestGather(unittest.TestCase):
         np.testing.assert_array_equal(np.sort(b[:, 2]), np.sort(a[:, 2]))
 
 
+class TestStability(unittest.TestCase):
+    """The model may only claim a voxel enough frames looked at and
+    enough of them agreed about -- world_map.SEEN_MIN / AGREE. Without
+    it one frame's opinion is permanent, which is what grows spikes on
+    the furniture as the camera moves."""
+
+    def map(self, **kw):
+        return WorldMap(origin=[0.0, 0.0, 0.0], shape=(4, 4, 4), **kw)
+
+    def test_one_frames_opinion_is_not_a_prediction(self):
+        m = self.map(seen_min=3)
+        m.add_prediction([[1, 1, 1]], [7], 0)
+        self.assertFalse(m.predicted()[0][1, 1, 1])
+
+    def test_enough_frames_agreeing_is(self):
+        m = self.map(seen_min=3)
+        for f in range(3):
+            m.add_prediction([[1, 1, 1]], [7], f)
+        self.assertTrue(m.predicted()[0][1, 1, 1])
+        self.assertEqual(m.predicted()[1][1, 1, 1], 7)
+
+    def test_a_bare_majority_is_not_agreement(self):
+        """Three of five is a majority and would have counted before."""
+        m = self.map(seen_min=3, agree=0.6)
+        for f in range(3):
+            m.add_prediction([[1, 1, 1]], [7], f)
+        for f in (3, 4):
+            m.add_prediction([[1, 1, 1]], [0], f)
+        self.assertFalse(m.predicted()[0][1, 1, 1])
+        m.add_prediction([[1, 1, 1]], [7], 5)      # 4 of 6
+        self.assertTrue(m.predicted()[0][1, 1, 1])
+
+    def test_a_voxel_no_frame_could_see_is_never_claimed(self):
+        m = self.map(seen_min=3)
+        self.assertFalse(m.predicted()[0].any())
+
+
+class TestColour(unittest.TestCase):
+    """The LATEST look decides -- world_map.COLOUR_ALPHA. A running mean
+    keeps the colour the camera reported before its white balance had
+    converged, which is a white wall remembered as pink."""
+
+    def map(self, **kw):
+        return WorldMap(origin=[0.0, 0.0, 0.0], shape=(4, 4, 4), **kw)
+
+    def test_the_latest_look_moves_the_colour_most(self):
+        m = self.map(alpha=0.5)
+        v = [[1, 1, 1]]
+        for f in range(4):                     # four frames of pink
+            m.add_measurement(v, [], f, rgb=[[255, 0, 255]])
+        m.add_measurement(v, [], 4, rgb=[[255, 255, 255]])
+        c = m.colours()[1, 1, 1]
+        self.assertEqual(list(c[::2]), [255, 255])
+        # the mean of five would be 51; half the colour is now the last look
+        self.assertGreater(c[1], 100)
+
+    def test_a_mean_would_keep_the_early_colour_and_this_does_not(self):
+        m = self.map(alpha=0.5)
+        v = [[1, 1, 1]]
+        m.add_measurement(v, [], 0, rgb=[[0, 0, 255]])
+        for f in range(1, 9):
+            m.add_measurement(v, [], f, rgb=[[0, 255, 0]])
+        c = m.colours()[1, 1, 1]
+        self.assertLess(c[2], 2)               # nothing of the first look
+        self.assertGreater(c[1], 250)
+
+    def test_one_frame_speaks_once_however_many_pixels_it_had(self):
+        """A voxel seen at a glancing angle fills hundreds of pixels; a
+        per-pixel blend would let that one frame erase every other."""
+        m = self.map(alpha=0.5)
+        v = [[1, 1, 1]]
+        m.add_measurement(v, [], 0, rgb=[[0, 0, 0]])
+        m.add_measurement(v * 50, [], 1, rgb=[[200, 200, 200]] * 50)
+        np.testing.assert_array_equal(m.colours()[1, 1, 1], [100, 100, 100])
+
+    def test_a_voxel_measured_without_colour_is_marked_unseen(self):
+        """What the room asks before it borrows a colour for a voxel:
+        has the camera ever reported one here?"""
+        m = self.map()
+        m.add_measurement([[1, 1, 1]], [], 0)
+        self.assertEqual(int(m.colour_n.reshape(m.shape)[1, 1, 1]), 0)
+
+
+class TestColourSettle(unittest.TestCase):
+    """When has the camera finished getting ready -- the first seconds
+    of a stream come out of the sensor the wrong colour."""
+
+    def frame(self, rgb):
+        return np.tile(np.asarray(rgb, np.uint8), (16, 16, 1))
+
+    def test_a_drifting_white_balance_does_not_settle(self):
+        s = ColourSettle(drift=8e-4, hold=4, cap=100)
+        for i in range(40):
+            self.assertFalse(s.update(self.frame([100, 100, 200 - 2 * i])))
+
+    def test_a_steady_one_does(self):
+        s = ColourSettle(drift=8e-4, hold=4, cap=100)
+        for i in range(10):
+            s.update(self.frame([100, 100, 200 - 2 * i]))
+        self.assertFalse(s.settled)
+        for _ in range(5):
+            s.update(self.frame([100, 100, 180]))
+        self.assertTrue(s.settled)
+        self.assertEqual(s.at, 15)   # the first steady frame still differs
+
+    def test_once_settled_it_stays_settled(self):
+        s = ColourSettle(drift=8e-4, hold=2, cap=100)
+        for _ in range(4):
+            s.update(self.frame([120, 120, 120]))
+        self.assertTrue(s.update(self.frame([10, 200, 40])))
+
+    def test_a_scene_that_never_settles_gives_up_at_the_cap(self):
+        """A camera carried through changing light. Colouring late is
+        better than never colouring at all."""
+        s = ColourSettle(drift=8e-4, hold=4, cap=12)
+        for i in range(12):
+            s.update(self.frame([100, 100, 200 - 4 * i]))
+        self.assertTrue(s.settled)
+        self.assertTrue(s.capped)
+        self.assertEqual(s.at, 12)
+
+    def test_brightness_alone_is_not_white_balance(self):
+        """The lights dimming is not the sensor changing its mind: the
+        three channels keep their ratios, so this is settled."""
+        s = ColourSettle(drift=8e-4, hold=4, cap=100)
+        for i in range(8):
+            s.update(self.frame([200 - 10 * i, 180 - 9 * i, 100 - 5 * i]))
+        self.assertTrue(s.settled)
+
+
 class TestVerdicts(unittest.TestCase):
     def map(self):
-        return WorldMap(origin=[0.0, 0.0, 0.0], shape=(4, 4, 4))
+        # seen_min=1, agree=0.5: these are tests of what a verdict MEANS,
+        # so one frame's claim is allowed to be a claim. How many frames
+        # it really takes is TestStability's question.
+        return WorldMap(origin=[0.0, 0.0, 0.0], shape=(4, 4, 4),
+                        seen_min=1, agree=0.5)
 
     def test_confirmed(self):
         m = self.map()
@@ -325,6 +459,19 @@ class TestVerdicts(unittest.TestCase):
         d = m.verdicts()
         self.assertTrue(d['measured'][2, 2, 2])
         self.assertTrue(d['predicted'][1, 2, 2])
+        self.assertFalse(d['disproved'][1, 2, 2])
+
+    def test_in_free_keeps_the_skin_that_disproved_drops(self):
+        """The room drops every claim in measured-free space when it is
+        showing what is THERE, skin included: that skin is what makes
+        each wall a voxel too thick. 'disproved' is the narrower red."""
+        m = self.map()
+        wall, front = [[2, 2, 2]], [[1, 2, 2]]
+        for f in (0, 1):
+            m.add_measurement(wall, front, f)
+        m.add_prediction(front, [7], 2)
+        d = m.verdicts()
+        self.assertTrue(d['in_free'][1, 2, 2])
         self.assertFalse(d['disproved'][1, 2, 2])
 
     def test_disproved_keeps_matter_floating_in_open_space(self):

@@ -1275,11 +1275,11 @@ documented in [VIEWERS.md](VIEWERS.md#the-accumulating-room).
 Pure numpy — no open3d, no torch, no model, no file paths — so every fusion
 rule is tested on 4×4×4 grids in `tests/test_world_map.py`.
 
-#### `WorldMap(origin, shape, vox=0.08, hit_min=2, pass_min=2)`
+#### `WorldMap(origin, shape, vox=0.08, hit_min=2, pass_min=2, seen_min=3, agree=0.6, alpha=0.5)`
 
 Per voxel: `n_hit` / `n_pass` (counted in FRAMES, not rays, so `uint16`
 cannot overflow and the thresholds read as "how many frames said so"),
-`colour_sum` / `colour_n`, `votes[12]`, `n_seen`, `first_meas`,
+`colour_ema` / `colour_n`, `votes[12]`, `n_seen`, `first_meas`,
 `first_pred` and `blind`.
 
 | | |
@@ -1289,10 +1289,59 @@ cannot overflow and the thresholds read as "how many frames said so"),
 | `add_measurement(hit, pass_, frame, rgb)` | one frame's evidence, deduplicated within the call. A frame that hit a voxel does not also report passing through it |
 | `add_prediction(idx, cls, frame)` | one frame's answer, and the `blind` flag |
 | `measured_state()` | `UNKNOWN` / `FREE` / `OCCUPIED` |
-| `predicted()` | `(occupied, class)` — occupied when more than half the frames that could see it said so |
-| `verdicts()` / `counts()` | `measured`, `predicted`, `confirmed`, `contradicted`, `untested`, `missed` |
-| `colours()` | the mean colour of the pixels that measured each voxel |
-| `save(path)` / `load(path)` | `world.npz` |
+| `predicted()` | `(occupied, class)` — occupied when `seen_min` frames could see it and `agree` of them said so |
+| `verdicts()` / `counts()` | `measured`, `predicted`, `confirmed`, `contradicted`, `untested`, `missed`, `in_free`, `disproved` |
+| `colours()` | each voxel's colour, weighted towards the LATEST look |
+| `save(path)` / `load(path)` | `world.npz`; a map written before `colour_ema` loads, its mean taken as where the blend had reached |
+
+**`seen_min` / `agree` are what keep the room from growing spikes.** A
+voxel two frames glanced at, one of which called it a chair, is a
+coincidence rather than a prediction — and the depth the model reads is
+itself unsteady, so there are plenty of them at the edge of every
+surface. Accumulated over a sweep they become permanent spurs on the
+furniture. Requiring `SEEN_MIN = 3` frames to have been able to see a
+voxel and `AGREE = 0.6` of them to have claimed it takes room07's sweep
+from 20 013 claimed voxels to 17 626 while `confirmed` moves 3 605 →
+3 563: 12% of the model's claimed matter was unstable, and 1.2% of what
+the sweep had proved went with it. `missed` rises 132 → 189 — some of
+what goes was a real surface the model only ever claimed once — and the
+proved share goes from 85.9% to 87.1%.
+
+**`alpha` is why the colour is a blend and not a mean.** The frames are
+not equivalent samples of a voxel's colour: a camera's auto white balance
+moves for the first seconds of a stream, so the earliest looks are the
+*wrong* colour and a running mean keeps them forever — a white wall
+accumulated as pink and still pink when the rest of the same wall has gone
+white. Each frame speaks once per voxel, however many of its pixels landed
+in it, and is blended in with weight `COLOUR_ALPHA = 0.5`.
+
+#### `ColourSettle(drift=8e-4, hold=8, cap=150)`
+
+`update(rgb)` → may this frame's colour be used yet? The other half of the
+same problem: the first frames are not merely out-weighed, they are not
+integrated at all.
+
+Measured by reading the recordings back, both at 15 fps: room07's frame 0
+is 7.4% saturated and reads R137 G120 B187 — a white wall as pink — and
+the channel means do not meet until frame 60, 4.0 s in. room08 takes about
+65. `capture.py --warmup` discards 30 frames, which is 1 s at 30 fps, and
+discards them from the *capture* rather than from the recording, so a
+`scan.bag` replays the unconverged frames whatever it was set to.
+
+A fixed frame count would be room07's answer rather than the camera's, so
+what is watched is the drift itself: white balance moves the frame's
+**chromaticity** — the channel means as fractions of their sum — and when
+it has finished, that stops moving. On room07 it drifts 0.0012–0.0031 per
+frame while converging and 0.0001–0.0004 afterwards *while the camera is
+being panned round the room*; it is the white balance being watched, not
+the scene. Settled once it moves less than `drift` for `hold` frames
+running: frame 70 on room07, 71 on room06, 49 on room08, against hand
+readings of ~60, ~70 and ~65. `cap` gives up for a stream carried through
+changing light, where colouring late still beats never colouring.
+
+Geometry is never held back — the depth stream has its own exposure. Every
+frame is tracked, measured and predicted from frame 0; the early ones just
+do not get to say what anything looks like.
 
 **`blind` is the flag the whole comparison rests on**, and it means the
 sensor had *no information at all* about the voxel — no hit and no pass,

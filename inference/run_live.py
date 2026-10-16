@@ -76,7 +76,9 @@ try:
                                camera_height_from_depth)
     from . import model as model_mod
     from .visualize import save_prediction_ply, save_world_ply
-    from .world_map import WorldMap, observe, gather_prediction
+    from . import world_map
+    from .world_map import (WorldMap, ColourSettle, observe,
+                            gather_prediction)
     from .tracker import Tracker
     from .utils import get_device, setup_logging, ensure_dir
 except ImportError:
@@ -85,7 +87,9 @@ except ImportError:
                               camera_height_from_depth)
     import model as model_mod
     from visualize import save_prediction_ply, save_world_ply
-    from world_map import WorldMap, observe, gather_prediction
+    import world_map
+    from world_map import (WorldMap, ColourSettle, observe,
+                           gather_prediction)
     from tracker import Tracker
     from utils import get_device, setup_logging, ensure_dir
 
@@ -239,6 +243,29 @@ def parse_args():
                         'has to be big enough for the camera to walk '
                         'around in; this only has to show the room. The '
                         'orbit pivot stays the map centre either way.')
+    p.add_argument('--pred_seen_min', type=int, default=None,
+                   help='--accumulate: how many frames must have been '
+                        'able to see a voxel before the model is allowed '
+                        'to claim it. Below this the claim is one '
+                        "viewpoint's opinion, and those are what grow "
+                        'spikes on the furniture (default %d).'
+                        % world_map.SEEN_MIN)
+    p.add_argument('--pred_agree', type=float, default=None,
+                   help='--accumulate: the fraction of those frames that '
+                        'must agree it is occupied (default %.2f). 0.5 is '
+                        'a bare majority and keeps every unstable claim; '
+                        'higher asks the model to be consistent about '
+                        'what it is looking at.' % world_map.AGREE)
+    p.add_argument('--colour_settle', type=_settle, default='auto',
+                   metavar='auto|off|N',
+                   help='--accumulate: hold the COLOUR back until the '
+                        "camera's auto white balance has converged -- it "
+                        'opens several seconds out, which is a white wall '
+                        'accumulated as pink and never corrected. '
+                        "'auto' (default) watches the frame's "
+                        'chromaticity and starts when it stops moving; a '
+                        'number waits that many frames; off colours from '
+                        'the first frame. Geometry is never held back.')
     p.add_argument('--meas_range', type=float, default=3.5,
                    help='how far the depth frame is believed, metres. The '
                         'prediction reaches 4.8 m, so beyond this a '
@@ -285,6 +312,21 @@ def parse_args():
     p.add_argument('--max_frames', type=int, default=0, help='0 = unlimited')
     p.add_argument('--log_every', type=int, default=30)
     return p.parse_known_args()
+
+
+def _settle(v):
+    """--colour_settle takes auto, off, or a number of frames."""
+    t = str(v).strip().lower()
+    if t in ('auto', 'off'):
+        return t
+    try:
+        n = int(t)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            'colour settle must be auto, off or a frame count, not %r' % (v,))
+    if n < 0:
+        raise argparse.ArgumentTypeError('colour settle cannot be negative')
+    return n
 
 
 def _shrink(v):
@@ -458,6 +500,10 @@ def main():
     said_height = False        # the 1.25 m fallback is worth saying out loud
     auto_height = AutoHeight()
     world = tracker = None
+    # the colour gate: see world_map.ColourSettle. 'off' colours from the
+    # first frame, a number waits that many frames, 'auto' watches.
+    settle = (ColourSettle() if args.colour_settle == 'auto' else None)
+    said_settled = args.colour_settle == 'off'
     track_s = fuse_s = 0.0
     untracked = 0
     poses = []
@@ -544,7 +590,12 @@ def main():
                 if world is None:
                     ex = tuple(float(v) for v in
                                args.world_extent.lower().split('x'))
-                    world = WorldMap.around((0.0, 0.0), extent=ex)
+                    wkw = {}
+                    if args.pred_seen_min is not None:
+                        wkw['seen_min'] = args.pred_seen_min
+                    if args.pred_agree is not None:
+                        wkw['agree'] = args.pred_agree
+                    world = WorldMap.around((0.0, 0.0), extent=ex, **wkw)
                     tracker = Tracker(
                         frame.cam_K, frame.depth.shape[1],
                         frame.depth.shape[0],
@@ -557,6 +608,18 @@ def main():
                              'this frame', world.shape[0], world.shape[1],
                              world.shape[2], 100 * world.vox, ex[0], ex[1],
                              ex[2])
+                    log.info('world: the model claims a voxel once %d '
+                             'frames have seen it and %.0f%% of them '
+                             'agree; %s',
+                             world.seen_min, 100 * world.agree,
+                             'colour waits for the white balance to settle'
+                             if settle is not None else
+                             ('colour waits until frame %d'
+                              % args.colour_settle
+                              if args.colour_settle != 'off' else
+                              'colour from the first frame, unconverged '
+                              'white balance included (--colour_settle '
+                              'off)'))
                 ta = time.time()
                 world_T_cam = tracker.step(frame.depth, frame.rgb)
                 track_s += time.time() - ta
@@ -567,9 +630,33 @@ def main():
                     continue
                 poses.append(world_T_cam.copy())
                 ta = time.time()
+                # the camera opens with its white balance unconverged, and
+                # a colour blended in then is wrong for good -- so the
+                # geometry goes in from frame 0 and the colour waits
+                if settle is not None:
+                    use_rgb = settle.update(frame.rgb)
+                elif args.colour_settle == 'off':
+                    use_rgb = True
+                else:
+                    use_rgb = n >= args.colour_settle
+                if use_rgb and not said_settled:
+                    said_settled = True
+                    if settle is None:
+                        log.info('colour: starting at frame %d, as asked; '
+                                 'the room is coloured from here', n)
+                    elif settle.capped:
+                        log.warning('colour: the white balance never '
+                                    'stopped moving in %d frames -- '
+                                    'colouring anyway from here, which '
+                                    'is better than not at all', settle.at)
+                    else:
+                        log.info('colour: white balance settled at frame '
+                                 '%d; the room is coloured from here',
+                                 settle.at)
                 hit, hit_rgb, free = observe(
                     world, frame.depth, frame.cam_K, world_T_cam,
-                    max_range=args.meas_range, rgb=frame.rgb)
+                    max_range=args.meas_range,
+                    rgb=frame.rgb if use_rgb else None)
                 world.add_measurement(hit, free, n, rgb=hit_rgb)
                 fuse_s += time.time() - ta
 
@@ -675,8 +762,10 @@ def main():
                  settled, c['confirmed'], c['contradicted'],
                  ' (%.1f%% right)' % (100.0 * c['confirmed'] / settled)
                  if settled else '', c['untested'])
-        log.info('%d voxels the sensor measured were never predicted',
-                 c['missed'])
+        log.info('%d voxels the sensor measured were never predicted; '
+                 '%d the model claims stand in space the sensor measured '
+                 'as empty, and the room does not draw those outside '
+                 'verdict mode', c['missed'], c['in_free'])
         if n:
             log.info('accumulate cost: track %.0f ms/frame, fuse %.0f '
                      'ms/frame', 1000 * track_s / n, 1000 * fuse_s / n)

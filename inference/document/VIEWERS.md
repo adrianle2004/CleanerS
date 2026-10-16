@@ -426,10 +426,11 @@ python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
 ```
 
 **What you are looking at, by default.** A room. Every voxel is drawn the
-same size and wears the camera's own colour: the mean colour of the pixels
-that measured it, or — where the camera never saw it — the colour of the
-nearest measured voxel *of the same class*, falling back to a dimmed class
-colour where a class has no measured member anywhere. That is
+same size and wears the camera's own colour — the colour the pixels that
+measured it reported, weighted towards the most recent look — or, where
+the camera never saw it, the colour of the nearest measured voxel *of the
+same class*, falling back to a dimmed class colour where a class has no
+measured member anywhere. That is
 `display_solid`'s `--visibility all` rule applied to a room instead of a
 frame; `fill_hidden` is imported, not reimplemented, so it means exactly
 what it means there.
@@ -466,9 +467,13 @@ That skin is not an error this comparison can resolve. The model's
 surfaces come out about a voxel thicker than the measurement, so the cell
 just in front of every wall reads free; at 8 cm, with ~1 voxel of
 trajectory drift and a half-voxel hit margin, a disagreement that touches
-a surface is below the resolution of the question. On room07 it is 2 469
-of 3 276 such voxels, and painting it red turns a whole wall red and says
-nothing. The 807 left over are matter floating in open space.
+a surface is below the resolution of the question. On room07 it is 2 250
+of 2 702 such voxels, and painting it red turns a whole wall red and says
+nothing. The 452 left over are matter floating in open space.
+
+The other modes drop **all** 2 702, skin included — see above. Red is for
+the question "did the model get it wrong"; `photo` is answering "what is
+there", and there the skin is simply a wall drawn a voxel too thick.
 
 The exclusion is **not** applied to the score. Dropping the model's near
 misses from confirmed-versus-contradicted would simply flatter it.
@@ -481,7 +486,7 @@ drawn. `auto`, the default, decides per mode, and it has to:
 - in **`verdict`** it is a *comparison*, and whole cubes hide it. Faces
   between two occupied voxels are culled, so you only ever see the
   outermost shell — and that shell is the model's unverified claims
-  wrapped around the real room. On room07 all 3 604 proved voxels are
+  wrapped around the real room. On room07 all 3 563 proved voxels are
   measured surfaces inside it and **not one of them is visible**. So there
   the model's unmeasured claims are drawn smaller and the room reads
   through the gaps.
@@ -497,6 +502,50 @@ The wait sits *after* a frame rather than before one, so nothing is pulled
 from the source while it holds. A camera's frames are dropped by the
 driver as they always are; a replay carries on at the frame it stopped at
 rather than skipping ahead.
+
+**The room does not keep every claim it is given.** Two rules throw some
+away, and both exist because the input to the model is itself unsteady.
+
+*The model has to be consistent before the room shows it.* A voxel one
+frame glanced at and called a chair is a coincidence, not a prediction;
+the depth the model reads wobbles frame to frame, so there are plenty of
+those at the edge of every surface, and accumulated over a sweep they
+become permanent spurs — a bed with spikes. So a voxel is claimed only
+once **three** frames could see it and **60%** of them agreed
+(`--pred_seen_min`, `--pred_agree`). Scoring room07's sweep both ways:
+
+| | rule off | rule on |
+| --- | ---: | ---: |
+| voxels the model claims | 20 013 | **17 626** |
+| of those, confirmed by the sweep | 3 605 | **3 563** |
+| contradicted | 590 | **527** |
+| claims standing in measured-free space | 3 273 | **2 702** |
+| measured voxels the model never claimed | 132 | **189** |
+| proved share | 85.9% | **87.1%** |
+
+So 12% of the claimed matter was unstable and 1.2% of the proved went
+with it. `missed` rising is the honest cost: some of what goes was a real
+surface the model only ever claimed from one viewpoint.
+
+*The sensor outranks the model about space it has measured.* Outside
+`verdict`, a claim standing in space the camera measured as empty is not
+drawn at all. Those modes are answering what is **there**, and leaving the
+claim in puts matter in mid-air and thickens every wall by the voxel in
+front of it. `verdict` keeps them — in red — because that mode is asking
+how the model did, and the mistakes are the answer.
+
+**The camera's first seconds do not get to say what anything looks like.**
+A D4xx opens with its auto white balance unconverged: room07's first frame
+is 7.4% saturated and renders a white wall pink, and the channel means do
+not meet until frame 60 — 4.0 s in. Colour integrated then is wrong and
+stays wrong, which showed as one wall still pink long after the rest of it
+had gone white.
+
+So the colour waits. `--colour_settle auto` (the default) watches the
+frame's chromaticity and starts colouring when it stops moving — frame 70
+on room07, 49 on room08 — or a number of frames, or `off`. **Geometry
+never waits**: the depth stream has its own exposure, so every frame is
+tracked, measured and predicted from frame 0.
 
 **What a completion is, exactly.** A voxel the model calls occupied *where
 the sensor had no information at all* — not one depth ray, ever. It is not
@@ -518,8 +567,8 @@ the confirmed count.
 | | |
 | --- | --- |
 | measured | each frame projects every voxel in its frustum into the depth image. Within half a voxel of the measured range → hit; in front of it → free; behind it, no depth, or outside the frame → unknown. Occupied once **two frames** have put a surface in it, free once two have measured past it. Hits beat passes |
-| predicted | the frame's 60×36×60 is **gathered** into the world, not scattered out of it — at equal resolution a scatter aliases, and the holes read as model failures. A voxel is occupied when more than half the frames that could see it said so, and takes the argmax of their votes |
-| colour | accumulated as the measurement goes, not recomputed. `--colour`'s per-frame rules answer "which pixel describes this voxel *in this view*"; a room answers it by averaging over every view that saw it |
+| predicted | the frame's 60×36×60 is **gathered** into the world, not scattered out of it — at equal resolution a scatter aliases, and the holes read as model failures. A voxel is occupied once **three frames** could see it and **60%** of them said so, and takes the argmax of their votes |
+| colour | accumulated as the measurement goes, not recomputed. `--colour`'s per-frame rules answer "which pixel describes this voxel *in this view*"; a room answers it by **blending** each view that saw it into what is there, half-and-half, so the latest look decides |
 
 **Where the pose comes from.** A tracker in the loop
 (`inference/tracker.py`), which is the tracking half of
@@ -572,26 +621,26 @@ every drawn frame to `frames/`, for the fill-in video.
 | | |
 | --- | ---: |
 | voxels the sensor measured | 6 392 |
-| voxels the model called occupied | 20 017 |
-| of those, completions — filled in where the sensor knew nothing | 14 616 |
-| completions the sweep went on to reach | 4 198 |
-| **of those, confirmed** | **3 609 (86.0%)** |
-| contradicted | 589 |
-| still untested when the sweep ended | 10 418 |
-| voxels the sensor found that the model never predicted | 133 |
-| voxels the model fills in open space the camera saw through | 807 |
+| voxels the model called occupied | 17 626 |
+| of those, completions — filled in where the sensor knew nothing | 12 754 |
+| completions the sweep went on to reach | 4 090 |
+| **of those, confirmed** | **3 563 (87.1%)** |
+| contradicted | 527 |
+| still untested when the sweep ended | 8 664 |
+| voxels the sensor found that the model never predicted | 189 |
+| claims standing in space the camera measured as empty | 2 702, of which 452 are clear of any surface |
 
-So the picture holds 6 392 full cubes (3 609 green, 133 blue, 2 650 photo)
-and 13 758 half cubes (807 red, 12 951 grey).
+`photo` draws 15 113 voxels: the 6 392 measured, plus the 8 721 claims
+that are not in measured-free space. `verdict` draws all 11 423 claims,
+the measured ones whole and the claims at 0.45.
 
-The 86.0% is the number worth quoting, and the 10 418 is the number that
+The 87.1% is the number worth quoting, and the 8 664 is the number that
 keeps it honest: the sensor reached under a third of what the model
 completed, and it never will reach most of the rest.
 
 These move by a handful of voxels between runs of the same bag — AMP is
 not bitwise reproducible, and a voxel sitting on the vote threshold can
-fall either way. Two runs here gave 85.9% and 86.0%. For a figure that
-must not move, run with `--amp off`.
+fall either way. For a figure that must not move, run with `--amp off`.
 
 **Checking it.** `inference/check_world_map.py` measures all of it against
 things this repo already committed. On room07:

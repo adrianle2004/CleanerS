@@ -35,6 +35,40 @@ VOX = 0.08                 # metres; the network's own 4.8 m / 60
 N_CLASS = 12               # NYU: 0 empty, 1..11 named, 12 ignore
 UNKNOWN, FREE, OCCUPIED = 0, 1, 2
 
+# How much the LATEST look at a voxel counts for when it is coloured.
+#
+# A running mean over every frame that ever measured a voxel is the wrong
+# average, because the frames are not equivalent samples: the camera's
+# auto white balance moves for the first seconds of a stream, so the
+# earliest looks are the WRONG colour and a mean keeps them forever. On
+# room07 that showed as a wall still pink long after the camera had
+# settled and the rest of the same wall had gone white.
+#
+# So each frame's look is blended in with this weight rather than
+# averaged. At 0.5 the newest frame is half the colour and anything four
+# frames old is under 7% of it -- recent, without being one frame's noise.
+# ColourSettle below deals with the other half: the early frames are not
+# integrated at all.
+COLOUR_ALPHA = 0.5
+
+# How sure the model has to be before the room shows its claim.
+#
+# A voxel two frames glanced at and one of them called a chair is not a
+# prediction, it is a coincidence, and accumulating those is what makes a
+# bed grow spikes. SEEN_MIN is how many frames must have been able to
+# speak about a voxel at all, and AGREE is the fraction of them that must
+# have called it occupied.
+#
+# Measured on room07's 808-frame sweep, the same map scored both ways:
+# the model's claimed matter goes from 20013 voxels to 17626 while the
+# CONFIRMED count moves 3605 -> 3563. So 12% of what the model claimed
+# was unstable, 1.2% of what the sweep had proved went with it, and the
+# proved share rose from 85.9% to 87.1%. What leaves is what no two
+# viewpoints ever agreed on -- including 353 of the 805 voxels the
+# sensor had measured straight through.
+SEEN_MIN = 3
+AGREE = 0.6
+
 
 class WorldMap:
     """An 8 cm grid of a whole room, in the world frame live_cam_pose
@@ -43,18 +77,24 @@ class WorldMap:
     hit_min / pass_min are in FRAMES, not rays -- see add_measurement.
     """
 
-    def __init__(self, origin, shape, vox=VOX, hit_min=2, pass_min=2):
+    def __init__(self, origin, shape, vox=VOX, hit_min=2, pass_min=2,
+                 seen_min=SEEN_MIN, agree=AGREE, alpha=COLOUR_ALPHA):
         self.origin = np.asarray(origin, np.float64).reshape(3)
         self.shape = tuple(int(s) for s in shape)
         self.vox = float(vox)
         self.hit_min, self.pass_min = int(hit_min), int(pass_min)
+        self.seen_min, self.agree = int(seen_min), float(agree)
+        self.alpha = float(alpha)
         n = int(np.prod(self.shape))
         # Counts are per FRAME, so they are bounded by the frame count and
         # uint16 cannot overflow -- and the thresholds read as "how many
         # frames said so", which is a sentence rather than a tuning knob.
         self.n_hit = np.zeros(n, np.uint16)
         self.n_pass = np.zeros(n, np.uint16)
-        self.colour_sum = np.zeros((n, 3), np.uint32)
+        # the blend, not a sum: see COLOUR_ALPHA. colour_n counts the
+        # FRAMES that have coloured this voxel, and is only ever asked
+        # whether it is zero -- has the camera seen this place at all.
+        self.colour_ema = np.zeros((n, 3), np.float32)
         self.colour_n = np.zeros(n, np.uint32)
         self.votes = np.zeros((n, N_CLASS), np.uint16)
         self.n_seen = np.zeros(n, np.uint16)
@@ -116,13 +156,17 @@ class WorldMap:
         frame that hit a voxel does not also report passing through it --
         otherwise a surface grazed at the edge of one ray bundle would
         argue with itself.
+
+        rgb: the colour of the pixel that measured each hit voxel, RGB.
+        Pass None while the camera's white balance is still moving --
+        ColourSettle says when -- because an early colour blended in is
+        wrong, and blending is not a vote it can lose.
         """
         hf, hin = self._flat(hit_idx)
         pf, _ = self._flat(pass_idx)
         if rgb is not None and len(hf):
-            c = np.asarray(rgb, np.uint32).reshape(-1, 3)[hin]
-            np.add.at(self.colour_sum, hf, c)
-            np.add.at(self.colour_n, hf, 1)
+            self._add_colour(hf, np.asarray(rgb, np.float64)
+                             .reshape(-1, 3)[hin])
         hu = np.unique(hf)
         pu = np.unique(pf)
         if len(hu) and len(pu):
@@ -135,6 +179,27 @@ class WorldMap:
         settled = touched[(self.first_meas[touched] < 0)
                           & (self._state()[touched] != UNKNOWN)]
         self.first_meas[settled] = frame
+
+    def _add_colour(self, hf, c):
+        """Blend one frame's look at these voxels into their colour.
+
+        The frame speaks ONCE per voxel however many of its pixels landed
+        in it: those pixels are averaged first, and that average is then
+        blended with COLOUR_ALPHA. Blending per pixel instead would make
+        a voxel the camera happened to see at an angle -- hundreds of
+        pixels -- forget everything before it, and one seen edge-on keep
+        a colour it should have lost.
+        """
+        u, inv = np.unique(hf, return_inverse=True)
+        tot = np.zeros((len(u), 3), np.float64)
+        np.add.at(tot, inv, c)
+        mean = tot / np.bincount(inv, minlength=len(u))[:, None]
+        first = self.colour_n[u] == 0
+        e = self.colour_ema[u].astype(np.float64)
+        e[first] = mean[first]
+        e[~first] += self.alpha * (mean[~first] - e[~first])
+        self.colour_ema[u] = e
+        self.colour_n[u] += 1
 
     def _state(self):
         st = np.zeros(self.n_hit.shape, np.uint8)
@@ -152,10 +217,13 @@ class WorldMap:
         return self._state().reshape(self.shape)
 
     def colours(self):
-        """The mean colour of the pixels that measured each voxel, RGB."""
-        n = np.maximum(self.colour_n, 1)[:, None]
-        return (self.colour_sum // n).astype(np.uint8).reshape(
-            self.shape + (3,))
+        """Each voxel's colour, RGB, weighted towards the LATEST look.
+
+        See COLOUR_ALPHA: a running mean would keep the colour the camera
+        reported before its white balance had converged.
+        """
+        return np.clip(np.rint(self.colour_ema), 0, 255).astype(
+            np.uint8).reshape(self.shape + (3,))
 
     # ---- what the model claimed ----------------------------------------
 
@@ -198,11 +266,20 @@ class WorldMap:
     def predicted(self):
         """-> (occupied, class), both shaped like the grid.
 
-        Occupied when MORE THAN HALF the frames that could see this voxel
-        called it something, and the class is the argmax of those votes.
+        Occupied when the frames that could see this voxel AGREE it is
+        occupied, and enough of them looked to make that agreement mean
+        something -- `agree` of at least `seen_min` frames. The class is
+        the argmax of those votes.
+
+        The second condition is what keeps the room from growing spikes.
+        The depth the model reads is itself unsteady, so a voxel at the
+        edge of one frame's surface is claimed by that frame and by no
+        other; with a bare majority of a single look, every one of those
+        is a permanent spur on the furniture. See SEEN_MIN / AGREE.
         """
         total = self.votes[:, 1:].sum(axis=1, dtype=np.int64)
-        occ = total * 2 > self.n_seen.astype(np.int64)
+        seen = self.n_seen.astype(np.int64)
+        occ = (total > self.agree * seen) & (seen >= self.seen_min)
         cls = (self.votes[:, 1:].argmax(axis=1) + 1).astype(np.uint8)
         cls[~occ] = 0
         return occ.reshape(self.shape), cls.reshape(self.shape)
@@ -224,12 +301,17 @@ class WorldMap:
         every one of them: excluding the model's near misses from the
         score would simply flatter it.
 
-        'disproved' is a different question, asked for the DISPLAY: where
-        has the model put matter in space the camera saw through? It is
-        wider than 'contradicted' in that the voxel need not have been a
-        completion -- wrong in plain view is still wrong -- and narrower
-        in that it drops the one-voxel skin along every surface, which is
-        below the resolution of the comparison. See _disproved.
+        'in_free' is a different question, asked for the DISPLAY: where
+        has the model put matter in space the camera MEASURED as empty?
+        It is wider than 'contradicted' in that the voxel need not have
+        been a completion -- wrong in plain view is still wrong. The room
+        drops these when it is showing what is there rather than how the
+        model did: the sensor outranks the model about space it has
+        measured, so a claim it has refuted is not drawn at all.
+
+        'disproved' is 'in_free' minus the one-voxel skin along every
+        surface, which is below the resolution of the comparison. It is
+        what the verdict mode paints red. See _disproved.
 
         'untested' is normally the MAJORITY and must be reported as its own
         number: most of what a completion model fills in is permanently
@@ -244,7 +326,8 @@ class WorldMap:
                'contradicted': blind & (st == FREE),
                'untested': blind & (st == UNKNOWN),
                'missed': (st == OCCUPIED) & ~occ,
-'disproved': self._disproved(occ, st)}
+               'in_free': occ & (st == FREE),
+               'disproved': self._disproved(occ, st)}
         return dict((k, v.reshape(self.shape)) for k, v in out.items())
 
     def _disproved(self, occ, st):
@@ -273,7 +356,7 @@ class WorldMap:
 
     # ---- persistence ----------------------------------------------------
 
-    _ARRAYS = ('n_hit', 'n_pass', 'colour_sum', 'colour_n', 'votes',
+    _ARRAYS = ('n_hit', 'n_pass', 'colour_ema', 'colour_n', 'votes',
                'n_seen', 'first_meas', 'first_pred', 'blind')
 
     def save(self, path):
@@ -281,17 +364,116 @@ class WorldMap:
         np.savez_compressed(path, origin=self.origin,
                             shape=np.asarray(self.shape), vox=self.vox,
                             hit_min=self.hit_min, pass_min=self.pass_min,
-                            **kw)
+                            seen_min=self.seen_min, agree=self.agree,
+                            alpha=self.alpha, **kw)
 
     @classmethod
     def load(cls, path):
         z = np.load(path)
+        f = z.files
+
+        def opt(k, d):
+            return type(d)(z[k]) if k in f else d
+
         m = cls(z['origin'], tuple(int(s) for s in z['shape']),
                 vox=float(z['vox']), hit_min=int(z['hit_min']),
-                pass_min=int(z['pass_min']))
+                pass_min=int(z['pass_min']), seen_min=opt('seen_min', SEEN_MIN),
+                agree=opt('agree', AGREE), alpha=opt('alpha', COLOUR_ALPHA))
         for k in cls._ARRAYS:
-            setattr(m, k, z[k])
+            if k in f:
+                setattr(m, k, z[k])
+        if 'colour_ema' not in f and 'colour_sum' in f:
+            # a map written before the colour was a blend: its colour_n
+            # counted PIXELS, so recover the mean it stood for and treat
+            # that as where the blend had got to
+            n = np.maximum(z['colour_n'], 1)[:, None]
+            m.colour_ema = (z['colour_sum'] / n).astype(np.float32)
+            m.colour_n = (z['colour_n'] > 0).astype(np.uint32)
         return m
+
+
+
+# ---- when has the camera finished getting ready ------------------------
+
+class ColourSettle:
+    """True once the camera's auto white balance has stopped moving.
+
+    A D4xx opens with auto-exposure and auto-white-balance unconverged and
+    takes SECONDS to settle, not frames. Measured by reading the recorded
+    streams back (both at 15 fps):
+
+        room07  frame 0 is 7.4% saturated and reads R137 G120 B187 -- a
+                white wall as pink. The blue channel decays frame after
+                frame and the three means do not meet until frame 60,
+                4.0 s in, after which they are flat to 0.1 of a count.
+        room08  the same shape, converged by about frame 65.
+
+    capture.py's own --warmup discards 30 frames before it starts, which
+    is 1 s at 30 fps and nowhere near enough; and it discards them from
+    the CAPTURE, not from the recording, so a scan.bag replays the
+    unconverged frames whatever that was set to.
+
+    Geometry is not affected -- the depth stream has its own exposure --
+    so this gates the COLOUR only. Every frame is still tracked, measured
+    and predicted from frame 0; the early ones simply do not get to say
+    what anything looks like.
+
+    *** WHY NOT A FIXED NUMBER OF FRAMES ***
+    Because 60 is room07's answer, not the camera's. The rate differs
+    (15 fps recorded, 30 live), the convergence depends on the scene --
+    room08's took half as long -- and a number tuned on one bag applied
+    to a live camera is a guess wearing a measurement's clothes.
+
+    What is observable is the drift itself. White balance moves the
+    frame's CHROMATICITY, the channel means as fractions of their sum,
+    and when it has finished, that stops moving. Measured per frame on
+    room07: 0.0012-0.0031 while converging, 0.0001-0.0004 afterwards
+    while the camera is being panned round the room. An order of
+    magnitude apart, which is what makes the test possible -- it is the
+    white balance that is being watched, not the scene.
+
+    So: settled when the chromaticity has moved less than `drift` per
+    frame for `hold` frames running. At 8e-4 over 8 frames that is
+    frame 70 on room07, 71 on room06 and 49 on room08, against hand
+    reading of the channel means of about 60, 70 and 65. `cap` is the
+    escape for a stream where it never settles -- a camera carried
+    through changing light -- after which the colour is taken as it
+    comes, which is still better than no colour at all.
+    """
+
+    def __init__(self, drift=8e-4, hold=8, cap=150):
+        self.drift, self.hold, self.cap = float(drift), int(hold), int(cap)
+        self.settled = False
+        self.n = 0            # frames offered
+        self.at = None        # the frame it settled on
+        self.capped = False
+        self._prev = None
+        self._run = 0
+
+    def update(self, rgb):
+        """One frame -> may its colour be used? Channel order does not
+        matter: the test is that the three stop moving relative to
+        each other."""
+        if self.settled:
+            return True
+        self.n += 1
+        if rgb is None:
+            return False
+        a = np.asarray(rgb)[::8, ::8].reshape(-1, 3).astype(np.float64)
+        m = a.mean(axis=0)
+        t = m.sum()
+        if t <= 0:
+            return False
+        c = m / t
+        if self._prev is not None:
+            self._run = (self._run + 1
+                         if np.abs(c - self._prev).max() < self.drift else 0)
+        self._prev = c
+        if self._run >= self.hold:
+            self.settled, self.at = True, self.n
+        elif self.n >= self.cap:
+            self.settled, self.at, self.capped = True, self.n, True
+        return self.settled
 
 
 # ---- one frame of depth -> what it measures -----------------------------

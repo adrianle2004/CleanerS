@@ -330,6 +330,10 @@ class LiveView:
         Which is readable without a legend: big solid blocks are things
         the camera has really seen, little blocks are guesses, green means
         a guess that turned out right.
+
+        That legend is `verdict`'s. In `photo` and `class` the room is
+        answering what is THERE, so a claim the sensor has measured
+        through is dropped rather than drawn -- see _build_world.
         """
         if self.closed:
             return False
@@ -464,9 +468,20 @@ class LiveView:
         return out
 
     def _build_world(self, world, v):
-        """One mesh of the whole room."""
+        """One mesh of the whole room.
+
+        Outside `verdict`, a claim the sensor has REFUTED is not drawn at
+        all. The room is then answering what is there, and about space it
+        has measured as empty the sensor outranks the model -- leaving
+        the claim in puts matter in mid-air and thickens every wall by
+        the voxel in front of it. `verdict` keeps them, in red: that mode
+        is asking how the model did, and the mistakes are the answer.
+        """
         ds, o3d = self.ds, self.o3d
-        i = np.argwhere(v['measured'] | v['predicted'])
+        claim = v['predicted']
+        if self.world_colour != 'verdict':
+            claim = claim & ~v['in_free']
+        i = np.argwhere(v['measured'] | claim)
         if not len(i):
             return None
         view = self._to_view(i)
@@ -481,8 +496,7 @@ class LiveView:
         else:
             # only what the MODEL claims shrinks; measured voxels stay
             # whole, so the two are told apart by size again
-            small = (v['predicted'] & ~v['measured'])[i[:, 0], i[:, 1],
-                                                      i[:, 2]]
+            small = (claim & ~v['measured'])[i[:, 0], i[:, 1], i[:, 2]]
             mesh, vov, _ = ds.build_cube_mesh_all(view, colours)
             pts = np.asarray(mesh.vertices)
             mid = view[vov].astype(np.float64)
