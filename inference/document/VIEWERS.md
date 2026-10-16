@@ -522,18 +522,23 @@ every drawn frame to `frames/`, for the fill-in video.
 
 | | |
 | --- | ---: |
-| voxels the sensor measured | 6 390 |
-| voxels the model called occupied | 20 013 |
-| of those, completions — filled in where the sensor knew nothing | 14 613 |
-| completions the sweep went on to reach | 4 197 |
-| **of those, confirmed** | **3 606 (85.9%)** |
-| contradicted | 591 |
-| still untested when the sweep ended | 10 416 |
-| voxels the sensor found that the model never predicted | 132 |
+| voxels the sensor measured | 6 392 |
+| voxels the model called occupied | 20 017 |
+| of those, completions — filled in where the sensor knew nothing | 14 616 |
+| completions the sweep went on to reach | 4 198 |
+| **of those, confirmed** | **3 609 (86.0%)** |
+| contradicted | 589 |
+| still untested when the sweep ended | 10 418 |
+| voxels the sensor found that the model never predicted | 133 |
 
-The 85.9% is the number worth quoting, and the 10 416 is the number that
+The 86.0% is the number worth quoting, and the 10 418 is the number that
 keeps it honest: the sensor reached under a third of what the model
 completed, and it never will reach most of the rest.
+
+These move by a handful of voxels between runs of the same bag — AMP is
+not bitwise reproducible, and a voxel sitting on the vote threshold can
+fall either way. Two runs here gave 85.9% and 86.0%. For a figure that
+must not move, run with `--amp off`.
 
 **Checking it.** `inference/check_world_map.py` measures all of it against
 things this repo already committed. On room07:
