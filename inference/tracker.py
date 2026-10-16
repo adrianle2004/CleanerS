@@ -37,23 +37,49 @@ MAX_SPEED_M_S = 1.0
 MAX_TURN_DEG_S = 120.0
 LOST_AFTER_S = 1.0
 
+# The frame interval the per-frame allowance assumes when the real one is
+# not known. fuse_scan divides a SPEED by the bag's fps, which is right
+# there because it reads every frameset of a bag whose rate it has
+# measured. Here the rate is not knowable: a live camera drops framesets
+# under load, and a replay delivers whatever the loop keeps up with.
+#
+# Guessing it is worse than not having it. Room07's bag is 15 fps and the
+# first cut of this file assumed 30, so the allowance came out 0.033 m and
+# steps of 0.036-0.157 m -- an ordinary handheld sweep -- were rejected as
+# physically impossible. The tracker declared itself lost half way through
+# the room and the display simply stopped filling.
+#
+# So the default allowance is derived from a frame interval long enough to
+# be safe for any plausible stream. It is a blow-up detector, not a speed
+# limit on the operator's hands: half a metre between consecutive frames is
+# implausible at any frame rate, 3.6 cm is not. Pass --track_fps when you
+# do know the rate and want the tighter gate.
+DT_FALLBACK_S = 0.5
+LOST_AFTER_FRAMES = 15
 
-def reject(fitness, step_T, fps, min_fitness=MIN_FITNESS,
-           max_speed=MAX_SPEED_M_S, max_turn_deg=MAX_TURN_DEG_S):
+
+def reject(fitness, step_T, fps=None, min_fitness=MIN_FITNESS,
+           max_speed=MAX_SPEED_M_S, max_turn_deg=MAX_TURN_DEG_S,
+           dt=None):
     """-> why this step is not believable, or None if it is.
 
     Read as "integrate nothing this frame", not as a warning. A bad pose
     does not degrade the map, it permanently corrupts it: geometry welded
     into the wrong place never washes out, however many good frames follow.
+
+    fps: frames per second, when it is genuinely known. Without it the
+    allowance comes from DT_FALLBACK_S -- see the note there.
     """
     if fitness < min_fitness:
         return 'fitness %.3f' % fitness
+    if dt is None:
+        dt = DT_FALLBACK_S if not fps else 1.0 / float(fps)
     S = np.asarray(step_T, np.float64)
     d = float(np.linalg.norm(S[:3, 3]))
     turn = float(np.degrees(np.arccos(np.clip(
         (np.trace(S[:3, :3]) - 1.0) / 2.0, -1.0, 1.0))))
-    if d > max_speed / fps or turn > max_turn_deg / fps:
-        return 'jump %.3f m / %.1f deg' % (d, turn)
+    if d > max_speed * dt or turn > max_turn_deg * dt:
+        return 'jump %.3f m / %.1f deg in one frame' % (d, turn)
     return None
 
 
@@ -68,7 +94,7 @@ class Tracker:
     the property inference/check_world_map.py checks the algebra with.
     """
 
-    def __init__(self, cam_K, width, height, initial_pose, fps=30.0,
+    def __init__(self, cam_K, width, height, initial_pose, fps=None,
                  voxel=0.02, block_count=8000, depth_scale=1000.0,
                  depth_max=3.0, depth_diff=0.07, trunc=8.0, device='auto'):
         import open3d as o3d
@@ -84,7 +110,8 @@ class Tracker:
         # a MULTIPLIER of the voxel size, not metres: open3d's
         # trunc_voxel_multiplier. 8 at 2 cm is a 16 cm truncation
         self.trunc = float(trunc)
-        self.fps = float(fps)
+        self.fps = float(fps) if fps else None
+        self.dt = (1.0 / self.fps) if self.fps else DT_FALLBACK_S
         self.W = np.asarray(initial_pose, np.float64).copy()
         self.T = np.identity(4)
         Kt = o3c.Tensor(np.asarray(cam_K, np.float64), o3c.Dtype.Float64)
@@ -103,7 +130,8 @@ class Tracker:
         self.run_lost = 0
         self.reasons = []
         self.lost = False
-        self.lost_after = max(1, int(round(LOST_AFTER_S * self.fps)))
+        self.lost_after = (max(1, int(round(LOST_AFTER_S * self.fps)))
+                           if self.fps else LOST_AFTER_FRAMES)
 
     def step(self, depth_m, rgb=None):
         """depth in METRES -> world_T_cam, or None when this frame must not
@@ -133,7 +161,7 @@ class Tracker:
                     self.frame, self.raycast, self.scale, self.depth_max,
                     self.depth_diff)
                 step = res.transformation.cpu().numpy()
-                reason = reject(res.fitness, step, self.fps)
+                reason = reject(res.fitness, step, dt=self.dt)
             except RuntimeError as e:
                 reason = 'tracking error: %s' % e
             if reason is not None:

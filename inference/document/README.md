@@ -2377,10 +2377,15 @@ trusts them in the meantime.
 - **The model forward is now the floor**, ~205 ms of a ~290 ms frame, and it is
   not addressable here: fixed-size 3D convolutions, nothing reusable between
   independent single-shot completions. Past ~0.29 s needs TensorRT/ONNX, a
-  faster card, or a world-fixed volume — which needs the localisation below.
+  faster card, or a world-fixed volume. The world-fixed volume now exists
+  (`--accumulate`) but does not make a frame cheaper: it is where the
+  frames are PUT, not how they are computed.
 - IMU gravity alignment — hardware confirmed present, not wired in.
-- The volume is camera-fixed, so frames are independent completions rather than
-  an accumulating reconstruction. That needs SLAM driving `cam_pose`.
+- ~~The volume is camera-fixed, so frames are independent completions rather
+  than an accumulating reconstruction.~~ **Done** — `run_live --accumulate`
+  tracks in the loop (`inference/tracker.py`) and gathers every frame into
+  one room-sized grid (`inference/world_map.py`). See
+  [VIEWERS.md](VIEWERS.md#the-accumulating-room).
 - 3-crop tiling to recover the full 90° FOV without the distribution shift —
   see [CAMERA_TUNING.md](CAMERA_TUNING.md).
 - Nothing in `inference/` is committed.

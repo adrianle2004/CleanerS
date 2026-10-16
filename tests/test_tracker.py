@@ -56,6 +56,18 @@ class TestGate(unittest.TestCase):
         self.assertIsNone(reject(0.9, T, 10.0))
         self.assertIn('jump', reject(0.9, T, 100.0))
 
+    def test_without_a_known_rate_the_allowance_is_generous(self):
+        """A guessed frame rate is worse than none. room07's bag is 15 fps
+        and assuming 30 rejected ordinary handheld steps of 3.6-15.7 cm,
+        which lost the tracker half way through the room."""
+        for step in (0.036, 0.157, 0.4):
+            T = np.eye(4)
+            T[:3, 3] = [step, 0.0, 0.0]
+            self.assertIsNone(reject(0.9, T))
+        T = np.eye(4)
+        T[:3, 3] = [0.8, 0.0, 0.0]        # implausible at any frame rate
+        self.assertIn('jump', reject(0.9, T))
+
 
 if __name__ == '__main__':
     unittest.main()

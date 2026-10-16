@@ -26,11 +26,19 @@ world Z=0 at the floor, camera at `--camera_height`. That reproduces NYU's
 axis convention, which the encoder depends on -- the 144-cell axis must be
 vertical.
 
-Two limits remain:
+One limit remains, and one was removed:
 
-1. The volume is fixed relative to the camera, so each frame is an
-   independent single-shot completion, not an accumulating reconstruction.
-   Fusing across frames needs real localisation (SLAM/ICP) driving cam_pose.
+1. REMOVED, by `--accumulate`. The per-frame volume is still fixed to the
+   camera, but it no longer has to be the thing you look at. With the flag,
+   a tracker in this loop (inference/tracker.py, the tracking half of
+   reconstruction_GT/fuse_scan.py) supplies world_T_cam, and every frame is
+   gathered into ONE room-sized 8 cm grid that fills as the camera moves
+   (inference/world_map.py). The display then separates what the sensor has
+   MEASURED from what the model COMPLETED, and says which completions the
+   sweep went on to prove. Without the flag nothing about a run changes.
+
+   It needs a measured --camera_height: the world is anchored on the first
+   frame and cannot be moved afterwards, so `auto` is refused.
 
 2. Level mounting is no longer assumed, IF the source supplies gravity.
    Both `bag:` and `realsense` request the D455's accelerometer and build
@@ -232,6 +240,12 @@ def parse_args():
     p.add_argument('--track_voxel', type=float, default=0.02,
                    help='the tracker only has to track, not make a mesh')
     p.add_argument('--track_blocks', type=int, default=8000)
+    p.add_argument('--track_fps', type=float, default=None,
+                   help='the rate frames really REACH the tracker, if you '
+                        'know it. It only sets how big a jump is judged '
+                        'impossible; without it a generous per-frame '
+                        'allowance is used, because a guessed rate is '
+                        'worse than none -- see tracker.DT_FALLBACK_S')
     p.add_argument('--mesh_every', type=int, default=3,
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
@@ -406,6 +420,7 @@ def main():
     world = tracker = None
     track_s = fuse_s = 0.0
     untracked = 0
+    poses = []
 
     with open_source(args.source, rgb_dir=args.rgb_dir, loop=args.loop,
                      fps=args.fps, fov=args.fov, imu=args.imu,
@@ -490,7 +505,7 @@ def main():
                         frame.cam_K, frame.depth.shape[1],
                         frame.depth.shape[0],
                         initial_pose=loader.cam_pose.astype(np.float64),
-                        fps=args.fps or 30.0, voxel=args.track_voxel,
+                        fps=args.track_fps, voxel=args.track_voxel,
                         block_count=args.track_blocks,
                         device=args.track_device)
                     log.info('accumulating into %dx%dx%d voxels of %.0f cm '
@@ -506,6 +521,7 @@ def main():
                     # corrupts it -- so an unsure frame touches nothing
                     untracked += 1
                     continue
+                poses.append(world_T_cam.copy())
                 ta = time.time()
                 hit, hit_rgb, free = observe(
                     world, frame.depth, frame.cam_K, world_T_cam,
@@ -600,9 +616,13 @@ def main():
             log.info('accumulate cost: track %.0f ms/frame, fuse %.0f '
                      'ms/frame', 1000 * track_s / n, 1000 * fuse_s / n)
         out = ensure_dir(args.out_dir)
+        # the poses too: inference/check_world_map.py compares them with
+        # the trajectory fuse_scan already committed for this capture
+        np.savez_compressed(os.path.join(out, 'poses.npz'),
+                            poses=np.asarray(poses))
         world.save(os.path.join(out, 'world.npz'))
         save_world_ply(world, os.path.join(out, 'world.ply'))
-        log.info('wrote %s/world.npz and world.ply', out)
+        log.info('wrote %s/world.npz, world.ply and poses.npz', out)
 
     if view is not None:
         log.info('%s', view.report())

@@ -357,10 +357,15 @@ class FrameLoader:
             want the volume aligned to walls rather than to the camera.
 
         STILL A HEURISTIC: the volume is fixed relative to the camera, so
-        consecutive frames are independent single-shot completions, not an
-        accumulating reconstruction, and a pitched/rolled camera is not
-        compensated. A D455's IMU can supply real gravity alignment --
-        see the note in run_live.py.
+        consecutive frames are independent single-shot completions. They
+        can nevertheless be ACCUMULATED, by gathering each frame's grid
+        into one room-sized world grid through a tracked world_T_cam --
+        inference/world_map.py, reached by `run_live --accumulate`. That
+        does not change what this method builds; it changes where the
+        result is put.
+
+        A pitched/rolled camera is compensated when `up_camera` is given:
+        a D455's IMU supplies real gravity alignment -- see run_live.py.
         """
         if cam_pose is None:
             cam_pose = live_cam_pose(camera_height, yaw, up_camera)

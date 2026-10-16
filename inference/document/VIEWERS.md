@@ -11,9 +11,17 @@ camera.
 | [`reconstruct.py`](#reconstructpy) | the measured depth surface, photo-textured | look at what the camera actually got |
 | [`display_overlay.py`](#display_overlaypy) | both, cubes made see-through | compare the two |
 | [`live_view.py`](#live_viewpy) | the solid cubes, replaced every frame | watch the camera as it runs |
+| [`live_view.py --accumulate`](#the-accumulating-room) | ONE room that fills as the camera moves | show someone what the model is actually doing |
 
 The first four open a **file**. `live_view.py` is the odd one out: it is not a
 command, it is the window `run_live --display` drives from its own loop.
+
+**If you are showing this to someone who does not know the project, use
+`--accumulate`.** Frame-by-frame is the honest picture of what the network
+computes, and it is also the picture nobody can read: one point of view
+changes completely every frame because the depth frame does, so there is
+nothing to hold on to and no way to tell the model's output from the
+sensor's. The accumulating room answers both at once.
 
 All four of the file viewers use **buttons, not key bindings**. That is not a
 style choice — see [Why buttons](#why-buttons-and-not-keys). The live window
@@ -404,6 +412,98 @@ default     808 of 808 frames processed
 ```
 
 Either way the run prints which it did.
+
+### The accumulating room
+
+`--accumulate`. One room-sized 8 cm grid, in the world frame
+`live_cam_pose` builds, filled as the camera moves instead of replaced.
+
+```bash
+python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
+    --pretrained_path ./checkpoint/CleanerS_ckpt.pth \
+    --source bag:captures/room07/scan/scan.bag \
+    --accumulate --display --camera_height 1.0858
+```
+
+**What you are looking at.** The legacy window has no material API — the
+see-through cubes in `display_overlay` need the `gui` stack, which owns the
+main thread and so cannot be driven from `run_live`'s loop. So the layers
+are separated by **geometry**, not by transparency:
+
+| | drawn as | means |
+| --- | --- | --- |
+| measured | full 8 cm cube, its own photo colour | the sensor has really seen something here |
+| completed | cube shrunk to half size, class colour | the model filled it in and nothing has measured it |
+| confirmed | green | a completion the sweep went on to **prove** |
+| contradicted | red | a completion the sweep **disproved** — it measured free space there |
+| sensor-only | blue | the sensor found it and the model never said |
+
+You see between the half-size cubes, so the measured surface reads through
+the gaps. The rule needs no legend: **big solid blocks are things the camera
+has really seen, little blocks are guesses, green is a guess that turned out
+right.**
+
+**What a completion is, exactly.** A voxel the model calls occupied *where
+the sensor had no information at all* — not one depth ray, ever. It is not
+"where the measurement has not settled yet": a state needs two frames to
+settle, so that weaker reading counts every surface the camera is looking
+straight at on the first frame, and the model ends up taking credit for
+predicting what it can plainly see. (That is not hypothetical. It is what
+the first version of this did, and the display going almost entirely green
+is how it was caught.)
+
+**Most completions are never settled, and the readout says so.** Most of
+what a completion model fills in — the inside of the sofa, the far side of
+the wall — the sensor can never reach, however long you sweep. Those are
+reported as `still untested` on their own line and are never folded into
+the confirmed count.
+
+**The fusion rules.**
+
+| | |
+| --- | --- |
+| measured | each frame projects every voxel in its frustum into the depth image. Within half a voxel of the measured range → hit; in front of it → free; behind it, no depth, or outside the frame → unknown. Occupied once **two frames** have put a surface in it, free once two have measured past it. Hits beat passes |
+| predicted | the frame's 60×36×60 is **gathered** into the world, not scattered out of it — at equal resolution a scatter aliases, and the holes read as model failures. A voxel is occupied when more than half the frames that could see it said so, and takes the argmax of their votes |
+| colour | accumulated as the measurement goes, not recomputed. `--colour`'s per-frame rules answer "which pixel describes this voxel *in this view*"; a room answers it by averaging over every view that saw it |
+
+**Where the pose comes from.** A tracker in the loop
+(`inference/tracker.py`), which is the tracking half of
+`reconstruction_GT/fuse_scan.py` — frame-to-model, so error does not
+compound frame over frame. It is *not* `scan/trajectory.txt`: that file
+indexes poses by every frameset the bag reader yields after skipping 1 s,
+while `BagSource` counts only framesets that survive `_process` and skips
+nothing, so `live_000000` is not bag frame 0 and nothing reports the
+mismatch — the room would just come out quietly smeared.
+
+A frame the tracker is not sure of **contributes nothing at all**, neither
+measurement nor prediction. A bad pose does not degrade the map, it
+permanently corrupts it: geometry welded into the wrong place never washes
+out. After a second of consecutive drops the map freezes where it is and
+the readout says **TRACKING LOST** rather than smearing the room.
+
+**It needs a measured `--camera_height`.** The world is anchored on the
+first frame and everything is fused into it, so a height revised later
+would move the world out from under everything already in it.
+`--camera_height auto` is refused, with that sentence.
+
+**What it costs**, on the dev box, against a 331 ms frame:
+
+| | ms/frame |
+| --- | ---: |
+| tracking | 13 |
+| measure + gather | 21 |
+| room mesh | ~26, every `--mesh_every` frames (default 3) |
+
+**What it writes**, at `--out_dir`: `world.npz` (the whole map, reopenable
+without re-running the model), `world.ply` (occupied voxels in world
+**metres**, so it drops straight into CloudCompare beside
+`reconstruction_GT`'s `room.ply`), and `poses.npz`. `--record` also writes
+every drawn frame to `frames/`, for the fill-in video.
+
+**Checking it.** `inference/check_world_map.py` measures all of it against
+things this repo already committed — the placement against
+`run_inference`'s own output, the poses against `trajectory.txt`, the
+measured layer against the fused `room.ply`. See its docstring.
 
 ### What it does not do
 
