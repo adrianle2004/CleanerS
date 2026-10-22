@@ -403,10 +403,18 @@ and thrown away when the next frame arrives.
 That per-frame surface is independent by construction, which is the right
 answer in a mode that is not accumulating — no pose, nothing joined to
 anything, so a camera that has moved cannot smear one frame into the next
-and a bad frame costs exactly itself. It is built only while `m` is
-showing, at a measured 6–7 ms a frame for about 78 k triangles, so a run
-that never presses the key pays nothing for it. `--sensor_first` opens on
-it.
+and a bad frame costs exactly itself. It costs a measured 6–7 ms a frame
+for about 78 k triangles, and is built only when asked: while `m` is
+already showing, each new frame gets its own, and **when `m` is pressed,
+one is built there and then for the frame on screen**. That second case
+is not an optimisation detail — the moment anyone presses the key is
+usually while the window is *frozen*, and then no frame is being
+processed at all, so a surface built only in the loop would never
+appear. A run that never presses the key pays nothing for it.
+`--sensor_first` opens on it.
+
+If the frame measured no surface whatever, the key says so and stays on
+the prediction rather than blanking the window.
 
 The comparison is the same one either way, and it is the point of the
 key: the mesh is what the sensor **measured**, the cubes beside it are

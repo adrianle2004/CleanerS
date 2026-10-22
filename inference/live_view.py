@@ -274,6 +274,12 @@ class LiveView:
         # --accumulate, where the mesh only exists once the run has been
         # frozen or has ended, and saying so is more use than a no-op.
         self.live_recon = False
+        # How to get a surface for the frame on screen RIGHT NOW. run_live
+        # sets it in single-frame mode. Without it the key could only ever
+        # show a surface built while a frame was being processed -- and the
+        # moment anyone actually wants to look at one is while the window
+        # is FROZEN, when by definition no frame is being processed.
+        self.make_surface = None
         self._wpivot = None
         self._wworld = None        # the room last drawn, for the fit key
         self._wframe = 0
@@ -768,6 +774,10 @@ class LiveView:
         if not self.closed:
             self.closed = True               # before draining: no re-entry
             self._drain()
+            # let go of the frame surface and its builder: both hold CUDA
+            # tensors, and open3d's allocator aborts the process if any
+            # are still alive when it is torn down -- FrameSurface.close
+            self.make_surface = self.recon = None
             if self._pool is not None:
                 self._pool.shutdown(wait=True)
             self.vis.destroy_window()
@@ -927,9 +937,25 @@ class LiveView:
                          'freeze (space) and again when the run ends')
             return False
         self.show_mesh = not self.show_mesh
-        log.info('showing %s', 'the SENSOR\'s reconstruction (the holes in '
-                 'it are what the model is filling in)' if self.show_mesh
-                 else 'the room')
+        if self.show_mesh and self.recon is None and self._last is not None \
+                and self.make_surface is not None:
+            # built on demand, for the frame being shown -- see make_surface.
+            # Drained first: this runs on the GUI thread and is about to
+            # touch the card, and the painter must not be mid-frame.
+            self._drain()
+            _, _, loader, rgb = self._last
+            try:
+                self.recon = self.make_surface(loader, rgb)
+            except Exception as e:       # never lose the window over it
+                log.warning("could not build this frame's surface: %s", e)
+        if self.show_mesh and self.recon is None:
+            self.show_mesh = False
+            log.info('nothing to show: this frame measured no surface')
+            return False
+        log.info('showing %s', "the SENSOR's own surface (the holes in it "
+                 'are what the model is filling in)' if self.show_mesh
+                 else ('the room' if self.live_recon is False
+                       else "the MODEL's completion"))
         self._repaint()
         return False
 

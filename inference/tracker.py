@@ -621,6 +621,18 @@ class FrameSurface:
         self.n += 1
         return m
 
+    def close(self):
+        """Drop the CUDA tensors now rather than at interpreter exit.
+
+        open3d's cached allocator checks itself when it is torn down and
+        ABORTS the process -- 'N leaking memory blocks on CUDA:0' -- if
+        anything still holds device memory at that point. The window keeps
+        a reference to the closure that owns this object, so without an
+        explicit release the open3d Frame below outlives the allocator and
+        a clean run ends in std::terminate. Idempotent.
+        """
+        self.frame = self._K = None
+
     def report(self):
         if not self.n:
             return None

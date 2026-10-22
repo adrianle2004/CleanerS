@@ -132,3 +132,68 @@ class TestFrameSurfacePlacement(unittest.TestCase):
             got = view_points(centre[None, :], origin, VOX_UNIT_LOW, pivot)[0]
             want = np.array([idx[0], idx[1], pivot - idx[2]], np.float64)
             np.testing.assert_allclose(got, want, atol=1e-9)
+
+
+class TestMBuildsOnDemand(unittest.TestCase):
+    """Pressing m has to produce a surface for the frame ON SCREEN.
+
+    The first cut built one only while m was already showing, which
+    sounds equivalent and is not: the moment anyone presses the key is
+    while the window is FROZEN, and then no frame is being processed, so
+    nothing ever built one and the key toggled a flag that changed
+    nothing. The window therefore asks for one itself.
+    """
+
+    def view(self, make_surface, recon=None, live=True):
+        v = LiveView.__new__(LiveView)
+        v.show_mesh, v.recon, v.live_recon = False, recon, live
+        v.can_reconstruct = True
+        v._last = ('idx', 'cls', 'loader', 'rgb')
+        v.make_surface = make_surface
+        v.repainted = []
+        v._drain = lambda: None
+        v._repaint = lambda: v.repainted.append(1)
+        return v
+
+    def test_pressing_m_with_no_surface_yet_builds_one(self):
+        v = self.view(lambda loader, rgb: 'a surface')
+        v._flip_mesh(None)
+        self.assertTrue(v.show_mesh)
+        self.assertEqual(v.recon, 'a surface')
+        self.assertEqual(len(v.repainted), 1)
+
+    def test_it_is_built_for_the_frame_on_screen(self):
+        seen = []
+        v = self.view(lambda loader, rgb: seen.append((loader, rgb)) or 'm')
+        v._flip_mesh(None)
+        self.assertEqual(seen, [('loader', 'rgb')])
+
+    def test_an_existing_surface_is_not_rebuilt(self):
+        calls = []
+        v = self.view(lambda loader, rgb: calls.append(1) or 'new', 
+                      recon='already here')
+        v._flip_mesh(None)
+        self.assertEqual(calls, [])
+        self.assertEqual(v.recon, 'already here')
+
+    def test_a_frame_that_measured_nothing_does_not_leave_m_on(self):
+        """Showing nothing at all reads as a crash, so it says so and
+        stays on the prediction."""
+        v = self.view(lambda loader, rgb: None)
+        v._flip_mesh(None)
+        self.assertFalse(v.show_mesh)
+        self.assertEqual(v.repainted, [])
+
+    def test_a_failure_to_build_never_escapes(self):
+        def boom(loader, rgb):
+            raise RuntimeError('no room on the card')
+        v = self.view(boom)
+        v._flip_mesh(None)          # must not raise
+        self.assertFalse(v.show_mesh)
+
+    def test_accumulate_still_says_to_freeze_first(self):
+        """There the mesh is the sweep's, built on freeze and at the end,
+        and there is no make_surface -- the old message is still right."""
+        v = self.view(None, live=False)
+        v._flip_mesh(None)
+        self.assertFalse(v.show_mesh)

@@ -1440,8 +1440,17 @@ one frame into the next, and a bad frame costs exactly itself. None of
 `Belief`'s problems exist when nothing is being joined to anything.
 Measured on room07 at 2 cm: **6–7 ms a frame** all in — allocate,
 integrate, marching cubes — for **78 028 triangles** from one frame. It
-is built only while `m` is showing, so a run that never presses the key
-pays nothing.
+is built only when asked: by the loop while `m` is already showing, and
+by the window itself through `LiveView.make_surface` when `m` is
+*pressed*. The second path is the one that matters — the key is normally
+pressed while the window is frozen, where no frame is being processed and
+a surface built only in the loop would never arrive.
+
+It also has to be **released explicitly**, by `.close()`: open3d's cached
+allocator checks itself at teardown and aborts the process — *"N leaking
+memory blocks on CUDA:0"* — if anything still holds device memory, and
+the window holds the closure that owns this. A clean run otherwise ends
+in `std::terminate` after printing its own summary.
 
 Two details that are not obvious. `min_weight` has to be **below 1**:
 open3d treats it as a strict bound, so a volume one frame has been

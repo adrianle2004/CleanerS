@@ -609,7 +609,10 @@ def main():
     enc_s = inf_s = 0.0
     said_height = False        # the 1.25 m fallback is worth saying out loud
     auto_height = AutoHeight()
-    world = tracker = surface = None
+    world = tracker = None
+    # one slot, so the FrameSurface survives between the loop and the key
+    # callback without either having to own it
+    _surface_cell = [None]
     # the colour gate: see world_map.ColourSettle. 'off' colours from the
     # first frame, a number waits that many frames, 'auto' watches.
     settle = (ColourSettle() if args.colour_settle == 'auto' else None)
@@ -640,6 +643,30 @@ def main():
                     float(v) for v in args.view_extent.lower().split('x'))
             if args.record:
                 view.record_dir = os.path.join(args.out_dir, 'frames')
+            def frame_surface(loader, rgb):
+                """One frame's own surface, thrown away after it.
+
+                Called from two places and that is the point: from the
+                loop while m is already showing, so each new frame gets
+                its own, and from the window when m is PRESSED, which is
+                usually while frozen -- where no frame is being processed
+                and the loop would never run again. 6-7 ms, and only ever
+                when asked, so a run that never presses m pays nothing.
+
+                Built at the loader's cam_pose, so it lands in the same
+                room-canonical metres as that frame's voxel grid.
+                """
+                if _surface_cell[0] is None:
+                    _surface_cell[0] = tracker_mod.FrameSurface(
+                        loader.cam_K, loader.depth.shape[1],
+                        loader.depth.shape[0], voxel=args.track_voxel,
+                        depth_max=args.track_range,
+                        device=args.track_device)
+                return _surface_cell[0].build(loader.depth, rgb,
+                                              loader.cam_pose)
+
+            if not args.accumulate:
+                view.make_surface = frame_surface
             view.pump()               # show it before the first frame's work
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
@@ -904,18 +931,7 @@ def main():
                     # what tipped it over. See Tracker._extract.
                     _reconstruct(view, tracker, None)
                 if not args.accumulate and view.show_mesh:
-                    # One frame's own surface, thrown away after it: 6-7 ms
-                    # and only while m is down, so a run that never asks
-                    # pays nothing. Integrated at the loader's cam_pose, so
-                    # it lands in the same metres as this frame's grid.
-                    if surface is None:
-                        surface = tracker_mod.FrameSurface(
-                            frame.cam_K, frame.depth.shape[1],
-                            frame.depth.shape[0], voxel=args.track_voxel,
-                            depth_max=args.track_range,
-                            device=args.track_device)
-                    view.recon = surface.build(frame.depth, frame.rgb,
-                                               loader.cam_pose)
+                    view.recon = frame_surface(loader, frame.rgb)
                 if args.accumulate:
                     alive = view.update_world(
                         world, frame.depth, frame.rgb, name=frame.name,
@@ -940,8 +956,7 @@ def main():
                     log.info('frozen at %s -- press space in the window to '
                              'carry on%s, or close it to stop here',
                              frame.name,
-                             ", m for the sensor's own reconstruction"
-                             if args.accumulate else '')
+                             ", m for the sensor's own surface")
                     if world is not None:
                         _reconstruct(view, tracker,
                                      'frozen at %s' % frame.name)
@@ -975,8 +990,8 @@ def main():
     said = auto_height.report()
     if said:
         log.info('%s', said)
-    if surface is not None:
-        said = surface.report()
+    if _surface_cell[0] is not None:
+        said = _surface_cell[0].report()
         if said:
             log.info('%s', said)
     if world is not None:
@@ -1049,6 +1064,10 @@ def main():
     if view is not None:
         log.info('%s', view.report())
         view.close()
+    if _surface_cell[0] is not None:
+        # after the window, which held the closure that owns it
+        _surface_cell[0].close()
+        _surface_cell[0] = None
     if n:
         log.info('done: %d frames in %.1fs (%.2f fps) | encode %.0f ms/frame | '
                  'infer %.0f ms/frame%s', n, total, n / total,
