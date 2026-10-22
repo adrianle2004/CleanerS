@@ -137,6 +137,12 @@ import numpy as np
 log = logging.getLogger('live_view')
 
 GRID = (60, 36, 60)
+# frame_loader's VOX_UNIT_LOW, repeated rather than imported for the same
+# reason GRID is: this module pulls in open3d and display_solid only when
+# a window is actually asked for, and a import of the loader at module
+# scope would undo that. The network's grid is fixed by the checkpoint,
+# so neither number is going to move without a retrain.
+VOX_UNIT_LOW = 0.08
 MODES = ('class', 'zbuffer', 'all')
 
 
@@ -262,6 +268,12 @@ class LiveView:
         # matters: "not yet" sends someone to press space again, which is
         # exactly what they did.
         self.can_reconstruct = True
+        # Does a surface arrive with EVERY frame? True in single-frame
+        # mode, where run_live builds one per frame and the key can be
+        # pressed before the first has been built; false with
+        # --accumulate, where the mesh only exists once the run has been
+        # frozen or has ended, and saying so is more use than a no-op.
+        self.live_recon = False
         self._wpivot = None
         self._wworld = None        # the room last drawn, for the fit key
         self._wframe = 0
@@ -452,12 +464,20 @@ class LiveView:
         alive = self._draw()
         self.frames += 1
         self.draw_ms += 1000 * (time.time() - t0)
-        if self.record_dir is not None:
-            os.makedirs(self.record_dir, exist_ok=True)
-            self.vis.capture_screen_image(
-                os.path.join(self.record_dir, '%06d.png' % self.frames),
-                do_render=True)
+        self._record()
         return alive
+
+    def _record(self):
+        """One PNG per drawn frame, when --record asked for them. Both
+        paths call it: a single-frame run is as worth recording as a
+        sweep, and more so once `m` is showing the sensor's own surface
+        for each frame."""
+        if self.record_dir is None:
+            return
+        os.makedirs(self.record_dir, exist_ok=True)
+        self.vis.capture_screen_image(
+            os.path.join(self.record_dir, '%06d.png' % self.frames),
+            do_render=True)
 
     def hold_step(self, world, depth=None, rgb=None, name='', note=None):
         """One turn of a HELD window: answer the compositor, and rebuild
@@ -590,6 +610,32 @@ class LiveView:
         src = self.recon
         pts = view_points(np.asarray(src.vertices), world.origin, world.vox,
                           self._wpivot)
+        return self._shaded(pts, src)
+
+    def _build_frame_recon(self, loader):
+        """The SENSOR's surface for one frame, in that frame's own view
+        coordinates -- what `m` shows without --accumulate.
+
+        Same arithmetic as _build_recon and deliberately the same
+        function: the frame's grid is 60x36x60 of VOX_UNIT_LOW anchored
+        at the loader's vox_origin, and the mesh arrives in the same
+        room-canonical metres because run_live integrates it at the
+        loader's cam_pose. The pivot is the pinned one (__init__), so
+        both layers reflect about the same constant and the surface sits
+        on the prediction rather than a few voxels off it.
+        """
+        pts = view_points(np.asarray(self.recon.vertices), loader.vox_origin,
+                          VOX_UNIT_LOW, self.ds.FIXED_PIVOT)
+        return self._shaded(pts, self.recon)
+
+    def _shaded(self, pts, src):
+        """One mesh, zoomed about the anchor and lit like the cubes.
+
+        The cubes carry display_solid's baked face shading and the
+        renderer is unlit, so anything drawn beside them has to be shaded
+        the same way or it arrives as a flat silhouette.
+        """
+        o3d = self.o3d
         pts = (pts - self.anchor) * self.zoom + self.anchor
         m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(pts),
                                       src.triangles)
@@ -699,11 +745,13 @@ class LiveView:
         if self.panels:
             self._draw_panels(job['depth'], job['rgb'], job['name'],
                               job['fps'])
-        self._swap(self._build(job['idx'], job['colours']))
+        self._swap(self._frame_geometry(job['idx'], job['colours'],
+                                        job['loader']))
         alive = self._draw()
         self._last = (job['idx'], job['cls'], job['loader'], job['rgb'])
         self.frames += 1
         self.draw_ms += 1000 * (time.time() - t0)
+        self._record()
         return alive
 
     def _drain(self):
@@ -827,6 +875,14 @@ class LiveView:
                 (v - self.anchor) * self.zoom + self.anchor)
         return mesh
 
+    def _frame_geometry(self, idx, colours, loader):
+        """What the window draws in single-frame mode: the model's
+        completion, or -- with `m` down and a surface to hand -- what the
+        sensor alone measured of the same frame."""
+        if self.show_mesh and self.recon is not None:
+            return self._build_frame_recon(loader)
+        return self._build(idx, colours)
+
     def _swap(self, mesh):
         if self.geom is None:
             # Fit the camera to the whole grid, then drop the box that did it.
@@ -859,7 +915,7 @@ class LiveView:
         Same window, same viewpoint, so the two are read against each
         other rather than side by side.
         """
-        if self.recon is None:
+        if self.recon is None and not self.live_recon:
             if not self.can_reconstruct:
                 log.info("the sensor's own reconstruction needs "
                          '--accumulate. That flag is what puts a tracker '
@@ -940,7 +996,8 @@ class LiveView:
         if self._last is None:
             return
         idx, cls, loader, rgb = self._last
-        self._swap(self._build(idx, self._paint(idx, cls, loader, rgb)))
+        self._swap(self._frame_geometry(
+            idx, self._paint(idx, cls, loader, rgb), loader))
         self._draw()
 
     def _cycle(self, _vis):

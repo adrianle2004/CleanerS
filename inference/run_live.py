@@ -384,11 +384,14 @@ def parse_args():
                         'frames. The room changes by a few voxels a frame '
                         'and the window stays responsive in between.')
     p.add_argument('--sensor_first', action='store_true',
-                   help="--accumulate --display: open on the SENSOR's own "
-                        'reconstruction rather than on the room, and let '
-                        'm reveal what the model put there. The mesh '
-                        'stops where the depth stopped, so its holes are '
-                        'the question the model is answering.')
+                   help="--display: open on the SENSOR's own surface "
+                        'rather than on what the model made of it, and '
+                        'let m reveal the model. With --accumulate that '
+                        'is the whole sweep as one mesh; without it, the '
+                        "frame's own surface, rebuilt per frame. Either "
+                        'way the mesh stops where the depth stopped, so '
+                        'its holes are the question the model is '
+                        'answering.')
     p.add_argument('--no_hold', dest='hold', action='store_false',
                    help='--accumulate --display: close the window the '
                         'moment the source runs out, instead of holding '
@@ -606,7 +609,7 @@ def main():
     enc_s = inf_s = 0.0
     said_height = False        # the 1.25 m fallback is worth saying out loud
     auto_height = AutoHeight()
-    world = tracker = None
+    world = tracker = surface = None
     # the colour gate: see world_map.ColourSettle. 'off' colours from the
     # first frame, a number waits that many frames, 'auto' watches.
     settle = (ColourSettle() if args.colour_settle == 'auto' else None)
@@ -624,16 +627,19 @@ def main():
                             width=w3d, height=h3d,
                             panel_width=args.panel_width,
                             overlap=not args.sync_display)
-            view.can_reconstruct = bool(args.accumulate)
+            view.can_reconstruct = True
+            view.show_mesh = args.sensor_first
+            # without --accumulate the surface is rebuilt per frame, so m
+            # may be pressed before one exists -- the next frame makes it
+            view.live_recon = not args.accumulate
             if args.accumulate:
                 view.mesh_every = args.mesh_every
                 view.world_colour = args.world_colour
-                view.show_mesh = args.sensor_first
                 view.shrink = args.world_shrink
                 view.view_extent = tuple(
                     float(v) for v in args.view_extent.lower().split('x'))
-                if args.record:
-                    view.record_dir = os.path.join(args.out_dir, 'frames')
+            if args.record:
+                view.record_dir = os.path.join(args.out_dir, 'frames')
             view.pump()               # show it before the first frame's work
         log.info('source=%s fov=%s save=%s mask=%s | encoder=%s amp=%s%s',
                  args.source, args.fov, args.save, args.mask, encoder,
@@ -897,6 +903,19 @@ def main():
                     # 4.0 with the room up, and doing it every frame is
                     # what tipped it over. See Tracker._extract.
                     _reconstruct(view, tracker, None)
+                if not args.accumulate and view.show_mesh:
+                    # One frame's own surface, thrown away after it: 6-7 ms
+                    # and only while m is down, so a run that never asks
+                    # pays nothing. Integrated at the loader's cam_pose, so
+                    # it lands in the same metres as this frame's grid.
+                    if surface is None:
+                        surface = tracker_mod.FrameSurface(
+                            frame.cam_K, frame.depth.shape[1],
+                            frame.depth.shape[0], voxel=args.track_voxel,
+                            depth_max=args.track_range,
+                            device=args.track_device)
+                    view.recon = surface.build(frame.depth, frame.rgb,
+                                               loader.cam_pose)
                 if args.accumulate:
                     alive = view.update_world(
                         world, frame.depth, frame.rgb, name=frame.name,
@@ -956,6 +975,10 @@ def main():
     said = auto_height.report()
     if said:
         log.info('%s', said)
+    if surface is not None:
+        said = surface.report()
+        if said:
+            log.info('%s', said)
     if world is not None:
         log.info('%s', tracker.report())
         if untracked:

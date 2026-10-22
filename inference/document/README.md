@@ -1423,7 +1423,36 @@ changing one here cannot silently move the annotation there.
 | `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d. `step_T=None` gates on fitness alone |
 | `Belief(fps=None, fraction=0.6, window=30, cap=0.55, confirm=3)` | the rule around it: `.floor()`, and `.see(fitness, step_T)` → `integrate` / `confirm` / `drop`. Also pure |
 | `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb, integrate=True)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost`, `.confirming`, `.n`, `.pose_only` and `.report()` |
-| `.mesh(min_weight=3.0)` | the sensor's own reconstruction of what it has seen, in world metres; falls back to host-side marching cubes when the card has no room for the scratch structure |
+| `.mesh(min_weight=None)` | the sensor's own reconstruction of what it has seen, in world metres; falls back to host-side marching cubes when the card has no room for the scratch structure. `None` takes `--mesh_min_views` |
+| `FrameSurface(cam_K, w, h, ...)` | `.build(depth_m, rgb, pose)` → **one frame's** own surface, in whatever frame `pose` is in. No tracker, no accumulation: a fresh volume per call, dropped after |
+| `_marching_cubes(model, min_weight)` | → `(mesh, whether the host had to do it)`. Shared by both, because a 4 GB card runs out for the same reason either way |
+
+**`FrameSurface` is what `m` shows without `--accumulate`.** The key used
+to need the flag, because the mesh was the tracker's volume and there is
+no tracker without it. But the question the key asks — what did the
+sensor *measure*, as against what did the model *complete* — has an
+answer for a single frame too, so a plain `--display` run integrates the
+one depth image into a volume of its own and marching-cubes that.
+
+Independent on purpose. The volume is new per call and dropped after, so
+there is no pose to be wrong about: a camera that has moved cannot smear
+one frame into the next, and a bad frame costs exactly itself. None of
+`Belief`'s problems exist when nothing is being joined to anything.
+Measured on room07 at 2 cm: **6–7 ms a frame** all in — allocate,
+integrate, marching cubes — for **78 028 triangles** from one frame. It
+is built only while `m` is showing, so a run that never presses the key
+pays nothing.
+
+Two details that are not obvious. `min_weight` has to be **below 1**:
+open3d treats it as a strict bound, so a volume one frame has been
+integrated into — every weight exactly 1 — returns an empty mesh if you
+ask for 1 (measured: 0 triangles at 1.0, 78 028 at 0.5). And the volume
+is *rebuilt* rather than reset, because open3d 0.17's hashmap has no
+`clear()`; at 1 000 blocks for one frustum that is cheaper than it
+sounds. Hand `.build` the loader's `cam_pose` and the mesh lands in the
+same room-canonical metres as that frame's voxel grid, which is what
+lets `live_view` draw one over the other — see `view_points` and
+`tests/test_live_view.py`.
 
 **`Belief` is what makes a live run survivable, and it is why the floor is
 not `fuse_scan`'s 0.1.** Measured over both captures end to end, 1 871

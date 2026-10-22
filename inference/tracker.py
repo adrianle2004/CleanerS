@@ -253,6 +253,25 @@ class Belief:
         return 'integrate', None
 
 
+def _marching_cubes(model, min_weight):
+    """-> (mesh, whether the card had no room and the host did it).
+
+    Shared by the tracker's volume and FrameSurface's, because the card
+    runs out for the same reason in both: marching cubes wants a scratch
+    structure the size of the active blocks, on the same device, and this
+    is a 4 GB card already holding the network and the window. open3d's
+    own suggestion is to copy the volume to the host and mesh it there,
+    which costs the copy and cannot fail for want of VRAM.
+    """
+    try:
+        return model.extract_trianglemesh(min_weight), False
+    except RuntimeError as e:
+        if 'assistance mesh structure' not in str(e) \
+                and 'out of memory' not in str(e).lower():
+            raise
+        return model.voxel_grid.cpu().extract_triangle_mesh(min_weight), True
+
+
 class Tracker:
     """world_T_cam per frame, in the frame live_cam_pose builds.
 
@@ -471,20 +490,15 @@ class Tracker:
         the host and mesh it there. It costs the copy and a slower
         marching cubes, and it cannot fail for want of VRAM.
         """
-        try:
-            return self.model.extract_trianglemesh(min_weight)
-        except RuntimeError as e:
-            if 'assistance mesh structure' not in str(e) \
-                    and 'out of memory' not in str(e).lower():
-                raise
+        mesh, on_host = _marching_cubes(self.model, min_weight)
+        if on_host:
             self.on_host += 1
             if self.on_host == 1:
                 log.info('no room on the card for the marching cubes '
                          '(%s blocks): meshing on the host instead, which '
                          'is slower and cannot run out of VRAM',
                          self.model.voxel_grid.hashmap().size())
-            return self.model.voxel_grid.cpu().extract_triangle_mesh(
-                min_weight)
+        return mesh
 
     def report(self):
         b = self.belief
@@ -504,3 +518,113 @@ class Tracker:
         if b.lost:
             bits.append('LOST at the end -- the map stopped growing there')
         return ', '.join(bits)
+
+
+# open3d's extract_trianglemesh takes min_weight as a STRICT bound, so a
+# volume one frame has been integrated into -- every weight exactly 1 --
+# comes back empty if you ask for 1. Measured: 0 triangles at 1.0, 78 028
+# at 0.5 and at 0.0, from the same single frame of room07.
+SINGLE_WEIGHT = 0.5
+
+
+class FrameSurface:
+    """The sensor's own surface for ONE frame, built and thrown away.
+
+    What --accumulate's `m` key shows is the TSDF the tracker has been
+    filling all run. Without --accumulate there is no tracker and no run
+    to accumulate over -- but the question the key exists to ask still
+    has an answer for the frame on screen: what did the sensor actually
+    MEASURE, as against what did the model complete? So this integrates
+    the one frame into a volume of its own and marching-cubes that.
+
+    *** INDEPENDENT ON PURPOSE ***
+    The volume is new on every call and dropped at the end of it. Nothing
+    from the previous frame survives into this one, which is the whole
+    point in a mode that is not accumulating: there is no pose to be
+    wrong about, so a camera that has moved cannot smear one frame into
+    the next, and a frame that is garbage costs exactly itself. It also
+    means this needs no tracker, no fitness and no gate -- none of
+    Belief's problems exist when nothing is being joined to anything.
+
+    *** AND CHEAP, BECAUSE THE VOLUME IS ONE FRUSTUM ***
+    Measured on room07 at 2 cm: 6-7 ms a frame all in -- allocate,
+    integrate, marching cubes -- for 78 028 triangles. A thousand blocks
+    is plenty for one frame, where the tracker's 8 000 is sized for a
+    whole room, so allocating a fresh one per frame is cheaper than it
+    sounds. The open3d Frame is reused, since only the VOLUME has to be
+    clean; open3d 0.17's hashmap has no clear(), which is why this
+    rebuilds rather than resets.
+
+    The mesh comes back in whatever frame `pose` is in: hand it the
+    loader's cam_pose and it lands in the same room-canonical metres as
+    that frame's voxel grid, which is what lets the window draw one over
+    the other.
+    """
+
+    def __init__(self, cam_K, width, height, voxel=0.02, depth_scale=1000.0,
+                 depth_max=3.0, trunc=8.0, device='auto', blocks=1000,
+                 min_weight=SINGLE_WEIGHT):
+        import open3d as o3d
+        import open3d.core as o3c
+        self._o3d, self._o3c = o3d, o3c
+        if device == 'auto':
+            device = 'CUDA:0' if o3c.cuda.is_available() else 'CPU:0'
+        elif device in ('cpu', 'cuda'):
+            device = {'cpu': 'CPU:0', 'cuda': 'CUDA:0'}[device]
+        self.device = o3c.Device(device)
+        self.voxel, self.blocks = float(voxel), int(blocks)
+        self.scale, self.depth_max = float(depth_scale), float(depth_max)
+        self.trunc, self.min_weight = float(trunc), float(min_weight)
+        self._K = o3c.Tensor(np.asarray(cam_K, np.float64), o3c.Dtype.Float64)
+        self.frame = o3d.t.pipelines.slam.Frame(int(height), int(width),
+                                                self._K, self.device)
+        self.n = 0            # surfaces built
+        self.on_host = 0      # ... that the card had no room to extract
+
+    def build(self, depth_m, rgb=None, pose=None):
+        """depth in METRES -> the surface, or None if there is none.
+
+        rgb is swapped BGR->RGB on the way out for the same reason
+        Tracker.mesh does it: the loader's frame is BGR, integrate only
+        needs A colour channel, and this one is being looked at.
+        """
+        o3d, o3c = self._o3d, self._o3c
+        model = o3d.t.pipelines.slam.Model(
+            self.voxel, 16, self.blocks,
+            o3c.Tensor(np.identity(4)), self.device)
+        mm = np.clip(np.nan_to_num(depth_m) * self.scale, 0, 65535)
+        mm = np.ascontiguousarray(mm.astype(np.uint16)[:, :, None])
+        self.frame.set_data_from_image(
+            'depth', o3d.t.geometry.Image(o3c.Tensor(mm)).to(self.device))
+        if rgb is None:
+            col = np.zeros(mm.shape[:2] + (3,), np.uint8)
+        else:
+            col = np.ascontiguousarray(np.asarray(rgb, np.uint8))
+        self.frame.set_data_from_image(
+            'color', o3d.t.geometry.Image(o3c.Tensor(col)).to(self.device))
+        model.update_frame_pose(0, o3c.Tensor(np.identity(4)))
+        model.integrate(self.frame, self.scale, self.depth_max, self.trunc)
+        mesh, on_host = _marching_cubes(model, self.min_weight)
+        self.on_host += bool(on_host)
+        if on_host and self.on_host == 1:
+            log.info('no room on the card for the marching cubes: building '
+                     "the frame's surface on the host instead")
+        m = mesh.to_legacy()
+        del model
+        if not len(m.vertices):
+            return None
+        if pose is not None:
+            m.transform(np.asarray(pose, np.float64))
+        if len(m.vertex_colors):
+            c = np.asarray(m.vertex_colors)[:, ::-1].copy()
+            m.vertex_colors = self._o3d.utility.Vector3dVector(c)
+        self.n += 1
+        return m
+
+    def report(self):
+        if not self.n:
+            return None
+        out = "%d frame surfaces built" % self.n
+        if self.on_host:
+            out += ', %d on the host for want of VRAM' % self.on_host
+        return out

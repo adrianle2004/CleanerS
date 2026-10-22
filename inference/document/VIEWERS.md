@@ -393,11 +393,25 @@ With `--accumulate` the same keys mean the room instead: `c` cycles
 `photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` flips
 between the room and the sensor's own reconstruction.
 
-`space` works in both modes, but **`m` needs `--accumulate`**: the mesh is
-the TSDF the tracker builds to track against, and the tracker only exists
-under that flag. In a plain `--display` run there is no volume to extract
-and freezing will not make one — the key says so rather than saying "not
-yet".
+**`m` works in both modes, and means a slightly different thing in
+each.** With `--accumulate` it is the whole sweep as one mesh — the TSDF
+the tracker has been building to track against, extracted. Without it
+there is no tracker and no sweep, so it is **this frame's own surface**:
+the one depth image integrated into a volume of its own, marching-cubed,
+and thrown away when the next frame arrives.
+
+That per-frame surface is independent by construction, which is the right
+answer in a mode that is not accumulating — no pose, nothing joined to
+anything, so a camera that has moved cannot smear one frame into the next
+and a bad frame costs exactly itself. It is built only while `m` is
+showing, at a measured 6–7 ms a frame for about 78 k triangles, so a run
+that never presses the key pays nothing for it. `--sensor_first` opens on
+it.
+
+The comparison is the same one either way, and it is the point of the
+key: the mesh is what the sensor **measured**, the cubes beside it are
+what the model **completed**, and they are drawn at the same viewpoint in
+the same coordinates so the only thing that changes is the geometry.
 
 The handlers are verified by calling them directly — two `+` take the zoom to
 2.64 and redraw at the larger size — but this machine is a Wayland session

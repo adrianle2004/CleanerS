@@ -19,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inference.live_view import view_points
+from inference.live_view import GRID, VOX_UNIT_LOW, LiveView, view_points
 from inference.world_map import WorldMap
 
 
@@ -76,3 +76,59 @@ class TestViewPoints(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestFrameGeometry(unittest.TestCase):
+    """Which of the two layers the single-frame window draws.
+
+    `m` used to need --accumulate, because the mesh was the tracker's
+    volume and there was no tracker without the flag. A plain --display
+    run now builds the frame's OWN surface instead, so the key has to
+    choose between that and the prediction -- and has to fall back to the
+    prediction when the surface for this frame does not exist yet, which
+    is the state the window is in for one frame after the key is pressed.
+
+    LiveView.__init__ imports open3d and opens a window; the chooser
+    touches neither, so it is built without them.
+    """
+
+    def view(self, show_mesh, recon):
+        v = LiveView.__new__(LiveView)
+        v.show_mesh, v.recon = show_mesh, recon
+        v._build = lambda idx, colours: 'the prediction'
+        v._build_frame_recon = lambda loader: 'the sensor surface'
+        return v
+
+    def test_the_prediction_is_what_it_draws_by_default(self):
+        v = self.view(False, 'a mesh')
+        self.assertEqual(v._frame_geometry(None, None, None),
+                         'the prediction')
+
+    def test_m_draws_the_frames_own_surface(self):
+        v = self.view(True, 'a mesh')
+        self.assertEqual(v._frame_geometry(None, None, None),
+                         'the sensor surface')
+
+    def test_m_before_a_surface_exists_still_draws_something(self):
+        """The key may be pressed before run_live has built one -- it is
+        built on the NEXT frame. Drawing nothing would read as a crash."""
+        v = self.view(True, None)
+        self.assertEqual(v._frame_geometry(None, None, None),
+                         'the prediction')
+
+
+class TestFrameSurfacePlacement(unittest.TestCase):
+    """The frame's surface arrives in the same metres as its voxel grid,
+    and has to land on the same cubes."""
+
+    def test_a_voxel_centre_lands_on_its_own_cube(self):
+        origin = np.array([-2.4, 0.0, -0.05])
+        pivot = GRID[2] - 1
+        for idx in ((0, 0, 0), (13, 7, 41), (59, 35, 59)):
+            # world metres of that voxel's CENTRE: the grid is indexed
+            # (X, Z, Y) -- see README's coordinate conventions
+            centre = origin + (np.array([idx[0], idx[2], idx[1]]) + 0.5) \
+                * VOX_UNIT_LOW
+            got = view_points(centre[None, :], origin, VOX_UNIT_LOW, pivot)[0]
+            want = np.array([idx[0], idx[1], pivot - idx[2]], np.float64)
+            np.testing.assert_allclose(got, want, atol=1e-9)

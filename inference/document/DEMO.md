@@ -189,9 +189,12 @@ geometry. **The mesh stops where the depth stopped**, so every hole in it
 is somewhere the sensor could not see — and that is exactly what the room
 beside it is filling in.
 
-It is free: the tracker already integrates a 2 cm TSDF to align each frame
-against, which is the same structure `fuse_scan` carves ground truth out
-of. Extracting a mesh from it takes 3–7 ms. It is a thing to **look at**,
+With `--accumulate` it is free: the tracker already integrates a 2 cm
+TSDF to align each frame against, which is the same structure `fuse_scan`
+carves ground truth out of, and extracting a mesh from it takes 3–7 ms.
+Without `--accumulate` the key still works and shows **this frame's own
+surface** — the one depth image integrated into a volume of its own and
+thrown away after, 6–7 ms a frame, built only while `m` is showing. It is a thing to **look at**,
 not a measurement — no checks are run on it, and
 `reconstruction_GT/fuse_scan.py` remains what produces the committed
 `room.ply`.

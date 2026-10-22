@@ -16,7 +16,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inference.tracker import Belief, Tracker, reject
+from inference.tracker import (Belief, Tracker, _marching_cubes,
+                               reject)
 
 
 def turn_about_z(deg):
@@ -282,6 +283,23 @@ class TestExtractFallback(unittest.TestCase):
         t = self.tracker(StubModel(raises='the volume is on fire'))
         with self.assertRaises(RuntimeError):
             t._extract(3.0)
+
+
+class TestMarchingCubesIsShared(unittest.TestCase):
+    """The fallback is one function now, because the card runs out for
+    the same reason whether the volume is a whole sweep's or one
+    frame's -- Tracker.mesh and FrameSurface.build both go through it,
+    and each keeps its own count of how often it fired."""
+
+    def test_it_says_when_the_host_did_the_work(self):
+        self.assertEqual(_marching_cubes(StubModel(), 3.0),
+                         ('gpu mesh', False))
+        self.assertEqual(_marching_cubes(StubModel(raises=VRAM_ERROR), 3.0),
+                         ('host mesh', True))
+
+    def test_it_does_not_swallow_an_unrelated_failure(self):
+        with self.assertRaises(RuntimeError):
+            _marching_cubes(StubModel(raises='the volume is on fire'), 3.0)
 
 
 if __name__ == '__main__':
