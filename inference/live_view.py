@@ -367,6 +367,12 @@ class LiveView:
         """
         if self.closed:
             return False
+        if world is None:
+            # --display without --accumulate: there is no room, the frame
+            # path owns the window, and holding it is just answering the
+            # compositor. Pressing space used to come through here and
+            # reach for world.shape.
+            return self.pump()
         if self._wpivot is None:
             # The orbit pivot is the MAP's centre, so it never moves as the
             # room fills. The proxy the camera is fitted to is the smaller
@@ -425,7 +431,7 @@ class LiveView:
         run can sit here for as long as someone wants to look -- while
         frozen half way, or after the last frame.
         """
-        if not self._wforce:
+        if world is None or not self._wforce:
             return self.pump()
         rec, self.record_dir = self.record_dir, None
         try:

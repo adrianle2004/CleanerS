@@ -83,6 +83,13 @@ class Frame:
 class CameraSource:
     name = 'base'
 
+    # Does this source go on without us? A camera's frames arrive whether
+    # anything is reading them or not, and the scene they show has moved on;
+    # a file waits. run_live needs to know which, because holding the display
+    # on a live camera and then resuming hands the tracker a view that has
+    # JUMPED -- see run_live's `hold`.
+    live = False
+
     def frames(self) -> Iterator[Frame]:
         raise NotImplementedError
 
@@ -169,6 +176,7 @@ class RealSenseSource(CameraSource):
     """
 
     name = 'realsense'
+    live = True
 
     # Gravity smoothing, shared with BagSource. At 15-30 Hz a 0.25 weight is
     # a ~0.2 s time constant on the DIRECTION: long enough to average out a
@@ -584,6 +592,10 @@ class BagSource(RealSenseSource):
     """
 
     name = 'bag'
+    # a file waits for us, however long the display is held -- which is why
+    # `realtime=True` has to be asked for, and why holding the window on a
+    # replay resumes on the frame it stopped at
+    live = False
 
     # EMA_UP / EMA_MAG / MAG_TOL and _gravity() live on RealSenseSource: the
     # same smoothing serves the device, and this path is what measured it.

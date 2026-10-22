@@ -96,6 +96,10 @@ except ImportError:
 log = logging.getLogger('run_live')
 _STOP = False
 
+# what the held window says, in the panel. One string, because the hold is
+# entered from two places -- a frame that was used and one that was not.
+FROZEN_NOTE = 'FROZEN -- space to carry on, m for the sensor alone'
+
 
 def _reconstruct(view, tracker, when):
     """Extract the sensor's own mesh from the tracker and hand it to the
@@ -575,7 +579,55 @@ def main():
                      args.colour,
                      '' if args.sync_display or args.colour == 'class'
                      else ', one frame behind') if view else '')
-        for frame in src.frames():
+        live = bool(getattr(src, 'live', False))
+        frames = src.frames()
+
+        def hold(frame, note):
+            """Sit on the held room until space is pressed again.
+            -> False once the run should stop.
+
+            Nothing is pulled from a REPLAY while it holds, so it carries
+            on at the frame it stopped at. A live camera is not a replay:
+            its frames arrive whether anything reads them or not, and the
+            camera keeps moving in someone's hand while they look. Drop
+            those frames and the tracker is handed a view that has JUMPED
+            when the hold ends -- which is what costs it the pose, and
+            used to end the run (tracker.Belief). So they are taken and
+            TRACKED, and nothing else: nothing is integrated, measured,
+            predicted, drawn or recorded, so the room on screen is still
+            the one that was frozen.
+            """
+            said, pull = False, live
+            while view.frozen and not _STOP:
+                if not view.hold_step(world, frame.depth, frame.rgb,
+                                      name=frame.name, note=note):
+                    return False
+                if not (pull and tracker is not None):
+                    time.sleep(0.03)
+                    continue
+                if not said:
+                    said = True
+                    log.info('the camera is still being TRACKED while the '
+                             'window is held -- nothing is going into the '
+                             'room, but the pose keeps up, so it carries '
+                             'on from where it is when you let it go')
+                try:
+                    held = next(frames, None)
+                except (RuntimeError, StopIteration) as e:
+                    # a camera that stalls while the window is held must
+                    # not take the held window down with it
+                    log.warning('the camera stopped delivering while the '
+                                'window was held (%s); holding without it, '
+                                'and the pose may have to be re-acquired', e)
+                    pull = False
+                    continue
+                if held is None:        # unplugged, or the stream ended
+                    return False
+                if held.depth is not None:
+                    tracker.step(held.depth, held.rgb, integrate=False)
+            return not (view.closed or _STOP)
+
+        for frame in frames:
             if _STOP:
                 break
             if frame.rgb is None:
@@ -667,8 +719,35 @@ def main():
                 track_s += time.time() - ta
                 if world_T_cam is None:
                     # a bad pose does not degrade the map, it permanently
-                    # corrupts it -- so an unsure frame touches nothing
+                    # corrupts it -- so an unsure frame touches nothing.
+                    #
+                    # The WINDOW is a different matter. Skipping straight
+                    # to the next frame here left it unpumped, so after a
+                    # jump it went grey and stopped answering keys for the
+                    # rest of the run: no panels to aim the camera back
+                    # with, no space, no close. It is drawn from the room
+                    # as it stands, with the live depth and colour beside
+                    # it, which is exactly what someone re-acquiring needs
+                    # to see.
                     untracked += 1
+                    if view is not None:
+                        if not view.update_world(
+                                world, frame.depth, frame.rgb,
+                                name=frame.name,
+                                note='TRACKING LOST -- point the camera '
+                                     'back at what it was looking at'
+                                     if tracker.lost else
+                                     'pose unsure -- this frame was not '
+                                     'used'):
+                            log.info('display window closed; stopping')
+                            break
+                        if view.frozen and not hold(frame, FROZEN_NOTE):
+                            break
+                    # frames nothing was done with still count against
+                    # --max_frames, or a run that loses the pose for good
+                    # would never reach it
+                    if args.max_frames and n + untracked >= args.max_frames:
+                        break
                     continue
                 poses.append(world_T_cam.copy())
                 ta = time.time()
@@ -763,20 +842,13 @@ def main():
                              'to carry on, m for the sensor\'s own '
                              'reconstruction, or close it to stop here',
                              frame.name)
-                    _reconstruct(view, tracker, 'frozen at %s' % frame.name)
-                    view.update_world(world, frame.depth, frame.rgb,
-                                      name=frame.name, force=True,
-                                      note='FROZEN -- space to carry on, '
-                                           'm for the sensor alone')
-                    while view.frozen and not _STOP:
-                        if not view.hold_step(
-                                world, frame.depth, frame.rgb,
-                                name=frame.name,
-                                note='FROZEN -- space to carry on, '
-                                     'm for the sensor alone'):
-                            break
-                        time.sleep(0.03)
-                    if view.closed or _STOP:
+                    if world is not None:
+                        _reconstruct(view, tracker,
+                                     'frozen at %s' % frame.name)
+                        view.update_world(world, frame.depth, frame.rgb,
+                                          name=frame.name, force=True,
+                                          note=FROZEN_NOTE)
+                    if not hold(frame, FROZEN_NOTE):
                         n += 1
                         break
 
