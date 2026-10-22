@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inference.tracker import Belief, reject
+from inference.tracker import Belief, Tracker, reject
 
 
 def turn_about_z(deg):
@@ -179,12 +179,109 @@ class TestBelief(unittest.TestCase):
         self.assertEqual(b.see(0.9, step(0.01))[0], 'integrate')
 
     def test_nothing_is_integrated_while_it_is_confirming(self):
-        b = Belief(confirm=3)
+        b = Belief(confirm=3, lost_after=2)
         self.run_of(b, 10)
-        b.see(0.01, step())
+        for _ in range(2):
+            b.see(0.01, step())
+        self.assertTrue(b.lost)
         held = b.held
         self.assertEqual(b.see(0.9, step())[0], 'confirm')
         self.assertEqual(b.held, held + 1)
+
+    def test_a_hiccup_is_not_a_relocalisation(self):
+        """One dropped frame out of a good run costs one frame, not four.
+        Asking for three agreeing frames there fed itself on a live
+        camera: the confirming frames are not integrated, so the model
+        stopped keeping up, so the next frame matched worse."""
+        b = Belief(confirm=3, lost_after=15)
+        self.run_of(b, 10)
+        self.assertEqual(b.see(0.01, step())[0], 'drop')
+        self.assertFalse(b.lost)
+        self.assertEqual(b.see(0.9, step(0.01))[0], 'integrate')
+        self.assertEqual(b.run_lost, 0)
+        self.assertEqual(b.reacquired, 0)
+
+    def test_a_hiccup_still_has_to_pass_the_jump_gate(self):
+        """The gate is only dropped for a frame coming back from LOST,
+        where the gap really is unknowable."""
+        b = Belief(confirm=3, lost_after=15)
+        self.run_of(b, 10)
+        b.see(0.01, step())
+        self.assertIn('jump', b.see(0.9, step(3.0))[1])
+
+
+VRAM_ERROR = (
+    '[Open3D Error] (void open3d::t::geometry::kernel::voxel_grid::'
+    'ExtractTriangleMeshCUDA(...)) /root/Open3D/cpp/open3d/t/geometry/'
+    'kernel/VoxelBlockGridImpl.h:1334: Unable to allocate assistance mesh '
+    'structure for Marching Cubes with 463 active voxel blocks. Please '
+    'consider using a larger voxel size (currently 0.02) for TSDF '
+    'integration, or using tsdf_volume.cpu() to perform mesh extraction '
+    'on CPU.')
+
+
+class StubGrid:
+    """Stands in for open3d's VoxelBlockGrid. The host path is one call."""
+
+    def __init__(self, mesh):
+        self.mesh = mesh
+        self.copied = 0
+
+    def hashmap(self):
+        return self
+
+    def size(self):
+        return 463
+
+    def cpu(self):
+        self.copied += 1
+        return self
+
+    def extract_triangle_mesh(self, weight):
+        return self.mesh
+
+
+class StubModel:
+    def __init__(self, raises=None, mesh='gpu mesh'):
+        self.raises, self.mesh = raises, mesh
+        self.voxel_grid = StubGrid('host mesh')
+
+    def extract_trianglemesh(self, weight):
+        if self.raises:
+            raise RuntimeError(self.raises)
+        return self.mesh
+
+
+class TestExtractFallback(unittest.TestCase):
+    """A 4 GB card holding the network, the encoder, the tracking volume
+    and the window has nothing left for the marching cubes' scratch
+    structure, and open3d says so rather than returning a worse mesh."""
+
+    def tracker(self, model):
+        t = Tracker.__new__(Tracker)      # no open3d, no GPU, no bag
+        t.model, t.on_host = model, 0
+        return t
+
+    def test_the_card_is_used_when_it_will_have_it(self):
+        t = self.tracker(StubModel())
+        self.assertEqual(t._extract(3.0), 'gpu mesh')
+        self.assertEqual(t.on_host, 0)
+        self.assertEqual(t.model.voxel_grid.copied, 0)
+
+    def test_no_room_on_the_card_means_the_host(self):
+        t = self.tracker(StubModel(raises=VRAM_ERROR))
+        self.assertEqual(t._extract(3.0), 'host mesh')
+        self.assertEqual(t.on_host, 1)
+        self.assertEqual(t.model.voxel_grid.copied, 1)
+
+    def test_plain_cuda_oom_is_also_the_host(self):
+        t = self.tracker(StubModel(raises='CUDA error: out of memory'))
+        self.assertEqual(t._extract(3.0), 'host mesh')
+
+    def test_anything_else_is_not_swallowed(self):
+        t = self.tracker(StubModel(raises='the volume is on fire'))
+        with self.assertRaises(RuntimeError):
+            t._extract(3.0)
 
 
 if __name__ == '__main__':

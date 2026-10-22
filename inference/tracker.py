@@ -187,8 +187,19 @@ class Belief:
 
     @property
     def confirming(self):
-        """Is this a tracker trying to find itself again?"""
-        return bool(self.run_lost)
+        """Is this a tracker trying to find itself again?
+
+        Only once it has actually LOST the pose. A frame or two dropped
+        out of a good run is a hiccup, not a relocalisation: the pose the
+        next frame is measured against is one frame old, the jump gate
+        still covers it, and asking for three frames of agreement there
+        costs three more frames for every one dropped. On a live camera
+        that fed itself -- the confirming frames are not integrated, so
+        the model stops keeping up with the camera, so the next frame
+        matches worse, so it drops again. The window logged "re-acquired
+        ... after 1 that did not" over and over and the room crawled.
+        """
+        return bool(self.lost)
 
     def floor(self):
         """The fitness this frame has to reach. Until there is a run to
@@ -209,7 +220,10 @@ class Belief:
         """
         reason = error
         if reason is None:
-            gate = None if (self.confirming and not self.good) else step_T
+            # the jump gate is meaningless on the first frame back from a
+            # LOST run: how far the camera went while nothing was believed
+            # is exactly what is not knowable. Agreement replaces it.
+            gate = None if (self.lost and not self.good) else step_T
             reason = reject(fitness, gate, dt=self.dt,
                             min_fitness=self.floor())
         if reason is not None:
@@ -290,6 +304,7 @@ class Tracker:
         self.id = 0           # steps the model holds a pose for
         self.seen = 0         # frames handed to step(), believed or not
         self.pose_only = 0    # steps tracked but deliberately not integrated
+        self.on_host = 0      # meshes the card had no room to extract
 
     # the counters run_live and the window read. They live on Belief, which
     # owns the rule, and are surfaced here because the tracker is what the
@@ -420,7 +435,7 @@ class Tracker:
         if not self.n:
             return None
         import numpy as np
-        m = self.model.extract_trianglemesh(min_weight).to_legacy()
+        m = self._extract(min_weight).to_legacy()
         if not len(m.vertices):
             return None
         m.transform(self.W)
@@ -429,12 +444,49 @@ class Tracker:
             m.vertex_colors = self._o3d.utility.Vector3dVector(c)
         return m
 
+    def _extract(self, min_weight):
+        """The marching cubes, on the card if it will have it.
+
+        *** AND ON THE HOST WHEN IT WILL NOT ***
+        Marching cubes wants a scratch structure the size of the active
+        blocks, allocated on the same device, and this runs on a 4 GB card
+        that is already holding the network, the encoder, the tracking
+        volume and the window -- measured 3.4 GB of 4.0 with the room up.
+        So the allocation fails, and open3d raises:
+
+            Unable to allocate assistance mesh structure for Marching
+            Cubes with 463 active voxel blocks
+
+        which is not a big volume at all -- 463 blocks of 16^3 voxels is
+        about 19 MB of TSDF. There is simply nothing left to put the
+        scratch in. The fix is open3d's own suggestion: copy the volume to
+        the host and mesh it there. It costs the copy and a slower
+        marching cubes, and it cannot fail for want of VRAM.
+        """
+        try:
+            return self.model.extract_trianglemesh(min_weight)
+        except RuntimeError as e:
+            if 'assistance mesh structure' not in str(e) \
+                    and 'out of memory' not in str(e).lower():
+                raise
+            self.on_host += 1
+            if self.on_host == 1:
+                log.info('no room on the card for the marching cubes '
+                         '(%s blocks): meshing on the host instead, which '
+                         'is slower and cannot run out of VRAM',
+                         self.model.voxel_grid.hashmap().size())
+            return self.model.voxel_grid.cpu().extract_triangle_mesh(
+                min_weight)
+
     def report(self):
         b = self.belief
         bits = ['tracker: %d frames tracked' % self.n]
         if self.pose_only:
             bits.append('%d tracked without being integrated (the window '
                         'was held)' % self.pose_only)
+        if self.on_host:
+            bits.append('%d meshes extracted on the host, the card being '
+                        'full' % self.on_host)
         if b.dropped:
             bits.append('%d dropped (%s)' % (b.dropped,
                                              '; '.join(b.reasons)))

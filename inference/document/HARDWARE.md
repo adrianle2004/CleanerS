@@ -492,6 +492,23 @@ A long sweep does not creep up on the card. `--track_device cpu` is the
 escape if something else wants the GPU, and it costs 41 ms a frame,
 which against a ~480 ms frame is a tenth of the rate.
 
+**683 MB is not enough for the marching cubes, though.** Extracting the
+sensor's reconstruction needs a scratch structure the size of the active
+blocks, allocated on the same device, and with the room up a live run
+ran out of it:
+
+    Unable to allocate assistance mesh structure for Marching Cubes
+    with 463 active voxel blocks
+
+463 blocks is about 19 MB of TSDF — the volume is not the problem, the
+headroom is. Two things answer it. The mesh is now rebuilt on the same
+cadence as the room (`--mesh_every`, default 3) instead of every frame
+while `m` is showing it; and when the card still refuses, the volume is
+copied to the host and meshed there, which gives the identical mesh
+(60 742 triangles either way on room07's first 40 frames, same vertex
+count) for 16 ms of host marching cubes plus the copy, instead of 3 ms
+and a lost picture.
+
 **Architecture.** `get_arch_list()` is `sm_37 50 60 61 70 75 80 86 compute_37`.
 
 | arch | status |

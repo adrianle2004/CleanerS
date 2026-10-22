@@ -71,6 +71,7 @@ Useful variants:
 | `--amp off` | numbers that do not move between runs |
 | `--record` | every drawn frame into `<out_dir>/frames/`, for a video |
 | `--no_hold` | do not hold the window open at the end (scripted runs) |
+| `--view_extent 6x6x2.88` | a wider opening view: the default frames on the single-frame volume, 4.8 m, so a wider sweep runs off the edges until you press `-` |
 
 ### A live camera
 

@@ -668,7 +668,20 @@ from where they belong. `fuse_scan` is right not to care — it reads a
 file, where frame 200 never follows frame 59. So the floor here is **60%
 of the median of the last 30 believed frames**, capped at 0.55, which also
 carries over to a sensor or a scene that simply matches worse. On both
-full sweeps it still drops nothing.
+full sweeps it still drops nothing. `--track_floor` moves that fraction,
+and the run's periodic line now carries the drop rate, so a camera that
+is dropping frames it should not shows up while it is happening rather
+than in the report at the end.
+
+*One dropped frame is a hiccup, not a relocalisation.* The confirmation
+below is asked for only once the pose has actually been declared LOST.
+Asking for it after every single drop fed itself on a live camera: the
+confirming frames are not integrated, so the model stopped keeping up
+with the camera, so the next frame matched worse and dropped too. The
+window logged `re-acquired ... after 1 that did not` over and over and
+one frame in four reached the room. A frame or two dropped out of a good
+run is covered by the jump gate on its own — the pose it is measured
+against is a frame old.
 
 *And being lost is no longer the end of the run.* Frame-to-model tracking
 compares every frame with a raycast of the model from the last believed
@@ -707,6 +720,15 @@ the readout.
 2 473 MB at the cost of 41 ms a frame, and is the thing to reach for if
 something else wants the card.
 
+It is also not enough for the **marching cubes**, which wants a scratch
+structure on the same device: with the room up, a live run could not
+allocate it for 463 active blocks (about 19 MB of TSDF — the headroom is
+the problem, not the volume). So the mesh is rebuilt on the `--mesh_every`
+cadence rather than every frame while `m` is showing it, and if the card
+still refuses, the volume is copied to the host and meshed there — the
+identical mesh, 16 ms instead of 3, and it cannot run out of VRAM. The run
+says so once and the final report counts them.
+
 **It needs a measured `--camera_height`.** The world is anchored on the
 first frame and everything is fused into it, so a height revised later
 would move the world out from under everything already in it.
@@ -720,6 +742,16 @@ afterwards (see [What it does not do](#what-it-does-not-do)); fitting it to
 the whole 16 m map left the room a smudge in the middle of the window. The
 orbit pivot is the map's centre either way, so it never moves as the room
 fills.
+
+`--view_extent` defaults to **4.8 × 4.8 × 2.88 m — the single-frame volume**,
+which at 8 cm is the 60 × 36 × 60 box a run *without* `--accumulate` is
+framed on. So a room opens at the same size on screen as the same scene
+does there, and the first frustum of a fresh run looks like a frame rather
+than a chip of one. It was 8 m, which left everything small and far away:
+the map is 16 m because the camera has to be able to walk around in it,
+which is no reason to look at the room from across it. The cost of the
+tighter box is that a sweep wider than 4.8 m runs off the edges — press
+`-`, or pass a bigger one.
 
 **What it costs**, on the dev box, against a 331 ms frame, measured over
 room07's 808-frame sweep:

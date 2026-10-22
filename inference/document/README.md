@@ -1397,7 +1397,7 @@ changing one here cannot silently move the annotation there.
 | `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d. `step_T=None` gates on fitness alone |
 | `Belief(fps=None, fraction=0.6, window=30, cap=0.55, confirm=3)` | the rule around it: `.floor()`, and `.see(fitness, step_T)` → `integrate` / `confirm` / `drop`. Also pure |
 | `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb, integrate=True)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost`, `.confirming`, `.n`, `.pose_only` and `.report()` |
-| `.mesh(min_weight=3.0)` | the sensor's own reconstruction of what it has seen, in world metres |
+| `.mesh(min_weight=3.0)` | the sensor's own reconstruction of what it has seen, in world metres; falls back to host-side marching cubes when the card has no room for the scratch structure |
 
 **`Belief` is what makes a live run survivable, and it is why the floor is
 not `fuse_scan`'s 0.1.** Measured over both captures end to end, 1 871
@@ -1410,6 +1410,13 @@ after frame 59 reads 0.15–0.23, passes a 0.1 floor, and then tracks on at
 move it, or a slide of marginal ones would talk it down to meet itself —
 capped at 0.55, a tenth below the worst good frame ever measured. Both
 full sweeps still drop nothing.
+
+The confirmation below is asked for only once the pose has been declared
+LOST. A single dropped frame is a hiccup — the pose the next frame is
+measured against is one frame old and the jump gate covers it — and
+asking for three agreeing frames there fed itself on a live camera: the
+confirming frames are not integrated, so the model stopped keeping up,
+so the next frame matched worse and dropped too.
 
 Being lost is then recoverable, which it was not: frame-to-model tracking
 compares every frame with the model seen from the last believed pose, so
@@ -1443,6 +1450,18 @@ are run on it, and `fuse_scan` remains what produces the committed
 ground truth. Its colours come out BGR, because `step` only has to give
 `integrate` a colour channel for tracking's sake, and `mesh()` swaps
 them back.
+
+It will not always fit on the card. Marching cubes wants a scratch
+structure the size of the active blocks on the same device, and on a 4 GB
+card already holding the network, the encoder, the tracking volume and the
+window, open3d raises *"Unable to allocate assistance mesh structure for
+Marching Cubes with 463 active voxel blocks"* — 19 MB of TSDF, with
+nothing left to put the scratch in. `_extract` then copies the volume to
+the host and meshes it there, which gives the identical mesh (60 742
+triangles either way, same vertex count) for 16 ms instead of 3, and
+counts it in `.on_host`. `run_live` also rebuilds on the `--mesh_every`
+cadence rather than every frame while `m` is up, which is what tipped the
+card over in the first place.
 
 Extracting does not disturb the volume, so it can be pulled as often as
 anyone wants to look: measured on room07, 60 frames with a mesh pulled

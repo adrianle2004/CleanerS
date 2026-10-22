@@ -79,6 +79,7 @@ try:
     from . import world_map
     from .world_map import (WorldMap, ColourSettle, observe,
                             gather_prediction)
+    from . import tracker as tracker_mod
     from .tracker import Tracker
     from .utils import get_device, setup_logging, ensure_dir
 except ImportError:
@@ -90,6 +91,7 @@ except ImportError:
     import world_map
     from world_map import (WorldMap, ColourSettle, observe,
                            gather_prediction)
+    import tracker as tracker_mod
     from tracker import Tracker
     from utils import get_device, setup_logging, ensure_dir
 
@@ -99,6 +101,9 @@ _STOP = False
 # what the held window says, in the panel. One string, because the hold is
 # entered from two places -- a frame that was used and one that was not.
 FROZEN_NOTE = 'FROZEN -- space to carry on, m for the sensor alone'
+
+# one warning per run, not one per frame -- see _reconstruct
+_SAID_NO_MESH = []
 
 
 def _reconstruct(view, tracker, when):
@@ -114,8 +119,13 @@ def _reconstruct(view, tracker, when):
     try:
         mesh = tracker.mesh()
     except Exception as e:
-        # a picture to look at is never worth losing a finished run over
-        log.warning('could not extract the reconstruction: %s', e)
+        # a picture to look at is never worth losing a finished run over.
+        # Said once: this is called every few frames while `m` is up, and
+        # whatever stopped it is unlikely to have changed by the next one
+        if not _SAID_NO_MESH:
+            _SAID_NO_MESH.append(1)
+            log.warning('could not extract the reconstruction, and will '
+                        'not say so again: %s', e)
         return None
     if mesh is None:
         if when:
@@ -271,12 +281,19 @@ def parse_args():
     p.add_argument('--world_extent', default='16x16x3.04', metavar='XxYxZ',
                    help='the accumulated box in metres (default '
                         '16x16x3.04, i.e. 200x200x38 voxels, ~80 MB)')
-    p.add_argument('--view_extent', default='8x8x3.04', metavar='XxYxZ',
+    p.add_argument('--view_extent', default='4.8x4.8x2.88', metavar='XxYxZ',
                    help='--accumulate: what the OPENING view is framed on, '
                         'metres. Separate from --world_extent, which only '
                         'has to be big enough for the camera to walk '
                         'around in; this only has to show the room. The '
-                        'orbit pivot stays the map centre either way.')
+                        'default is the single-frame volume, 4.8x4.8x2.88, '
+                        'so the room opens at the same size on screen as '
+                        'the same scene without --accumulate -- at the 8 m '
+                        'this used to be, one frustum of a fresh run sits '
+                        'tiny in the middle of a black window. A sweep '
+                        'wider than 4.8 m runs off the edges: press - or '
+                        'pass a bigger box. The orbit pivot stays the map '
+                        'centre either way.')
     p.add_argument('--pred_seen_min', type=int, default=None,
                    help='--accumulate: how many frames must have been '
                         'able to see a voxel before the model is allowed '
@@ -350,6 +367,21 @@ def parse_args():
     p.add_argument('--record', action='store_true',
                    help='--accumulate: write every drawn frame to '
                         '<out_dir>/frames/, to make the fill-in video')
+    p.add_argument('--track_floor', type=float,
+                   default=tracker_mod.FITNESS_FRACTION, metavar='FRACTION',
+                   help='--accumulate: how much worse than this run is '
+                        'already managing a frame may match the model and '
+                        'still be believed, as a fraction of the median of '
+                        'the last %d believed frames (default %.2f, capped '
+                        'so it never asks for more than %.2f). Both '
+                        'committed sweeps ran at 0.65 and better '
+                        'throughout, and a pose discontinuity reads '
+                        '0.15-0.51, which is the gap this sits in. Lower '
+                        'it if a live camera is dropping frames it should '
+                        'not; 0 falls back to fuse_scan\'s bare %.1f.'
+                        % (tracker_mod.FITNESS_WINDOW,
+                           tracker_mod.FITNESS_FRACTION,
+                           tracker_mod.FITNESS_CAP, tracker_mod.MIN_FITNESS))
     p.add_argument('--track_device', default='auto',
                    choices=['auto', 'cpu', 'cuda'],
                    help='cpu if the card cannot hold the tracker and the '
@@ -697,7 +729,10 @@ def main():
                         initial_pose=loader.cam_pose.astype(np.float64),
                         fps=args.track_fps, voxel=args.track_voxel,
                         block_count=args.track_blocks,
-                        device=args.track_device)
+                        device=args.track_device,
+                        belief=tracker_mod.Belief(
+                            fps=args.track_fps,
+                            fraction=args.track_floor))
                     log.info('accumulating into %dx%dx%d voxels of %.0f cm '
                              '(%.1f x %.1f x %.1f m), world anchored on '
                              'this frame', world.shape[0], world.shape[1],
@@ -821,9 +856,14 @@ def main():
                                                  '%s.ply' % frame.name))
             if view is not None:
                 hz = 1.0 / max(1e-6, time.time() - t0)
-                if args.accumulate and view.show_mesh:
-                    # 3-7 ms on room07, so while someone is actually
-                    # looking at it the mesh keeps up with the room
+                if (args.accumulate and view.show_mesh
+                        and n % max(1, args.mesh_every) == 0):
+                    # On the same cadence as the room, not every frame.
+                    # Extracting is 3-7 ms, so time was never the reason
+                    # to hold back -- but each one allocates a scratch
+                    # structure on a card that is already at 3.4 GB of
+                    # 4.0 with the room up, and doing it every frame is
+                    # what tipped it over. See Tracker._extract.
                     _reconstruct(view, tracker, None)
                 if args.accumulate:
                     alive = view.update_world(
@@ -864,9 +904,15 @@ def main():
             n += 1
             if args.log_every and n % args.log_every == 0:
                 dt = time.time() - t_window
-                log.info('%d frames | %.1f fps | encode %.0f ms | infer %.0f ms',
+                log.info('%d frames | %.1f fps | encode %.0f ms | infer '
+                         '%.0f ms%s',
                          n, args.log_every / dt if dt > 0 else 0.0,
-                         1000 * enc_s / n, 1000 * inf_s / n)
+                         1000 * enc_s / n, 1000 * inf_s / n,
+                         # a drop rate is a thing to watch, not a thing to
+                         # find out about at the end of the run
+                         ' | %d frames not tracked (%.0f%%)'
+                         % (untracked, 100.0 * untracked / (n + untracked))
+                         if untracked else '')
                 t_window = time.time()
             if args.max_frames and n >= args.max_frames:
                 break

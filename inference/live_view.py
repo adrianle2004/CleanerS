@@ -228,7 +228,15 @@ class LiveView:
         # metres; what the opening view is framed on. Independent of how
         # big the map is -- the map has to be large enough for the camera
         # to walk around in, the framing only has to show the room.
-        self.view_extent = (8.0, 8.0, 3.04)
+        #
+        # The default is the SINGLE-FRAME volume, which at 8 cm is 60x36x60
+        # cells: exactly the box a run without --accumulate is framed on,
+        # so the room opens at the same size on screen as the same scene
+        # does there. It was 8 m, and one frustum of a fresh run sat tiny
+        # in the middle of a black window -- the map is 16 m because the
+        # camera has to be able to walk around in it, which is not a
+        # reason to look at the room from 16 m away.
+        self.view_extent = (4.8, 4.8, 2.88)
         self.mesh_every = 3
         self.record_dir = None
         # The sensor's own reconstruction, in world metres -- what the
