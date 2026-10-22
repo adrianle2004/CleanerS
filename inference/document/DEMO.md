@@ -307,7 +307,9 @@ is what makes a completion a completion.
 
 **The pose comes from a tracker in the loop** (`inference/tracker.py`),
 the tracking half of `reconstruction_GT/fuse_scan.py`, frame-to-model so
-error does not compound. Not from the committed `trajectory.txt`: that
+error does not compound — and if someone asks how it knows where the
+camera is, [WORLD_BUILDING.md](WORLD_BUILDING.md) answers that from
+nothing, with diagrams. Not from the committed `trajectory.txt`: that
 file indexes poses by every frameset after a 1 s skip, while the reader
 here counts only framesets that survive processing and skips nothing, so
 the two disagree by a data-dependent offset and nothing would have

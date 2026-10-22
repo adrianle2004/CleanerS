@@ -646,7 +646,9 @@ the confirmed count.
 **Where the pose comes from.** A tracker in the loop
 (`inference/tracker.py`), which is the tracking half of
 `reconstruction_GT/fuse_scan.py` — frame-to-model, so error does not
-compound frame over frame. It is *not* `scan/trajectory.txt`: that file
+compound frame over frame. How that works, rather than what it does:
+[WORLD_BUILDING.md](WORLD_BUILDING.md), which is also where the 0.21 m
+convergence basin behind every rule below is measured. It is *not* `scan/trajectory.txt`: that file
 indexes poses by every frameset the bag reader yields after skipping 1 s,
 while `BagSource` counts only framesets that survive `_process` and skips
 nothing, so `live_000000` is not bag frame 0 and nothing reports the

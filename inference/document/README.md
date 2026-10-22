@@ -21,6 +21,10 @@ including why SC has to be read against its own baseline — see
 For running the accumulating room in front of someone — the commands, the
 keys, what each mode answers, what both captures scored and what had to be
 built to get there — see [DEMO.md](DEMO.md).
+For how the camera knows where it is as the room grows — frame-to-model ICP
+from first principles, with the convergence basin measured and the
+accelerometer's one job spelled out — see
+[WORLD_BUILDING.md](WORLD_BUILDING.md).
 For why furniture gets extruded through the wall behind it — measured over all
 1449 NYU frames — see [OCCLUSION.md](OCCLUSION.md). For what the model is
 actually reliable at, which classes to distrust, how to hold the camera and
@@ -1402,6 +1406,11 @@ walks world Y, so a world-order index `(iX, iY, iZ)` addresses the array at
 `[iX, iZ, iY]` and the grid's world extent is 60×60×36, not 60×36×60.
 
 ### `tracker.py` — where the pose comes from
+
+**For how the tracking actually works, rather than what its knobs do, read
+[WORLD_BUILDING.md](WORLD_BUILDING.md)** — a depth frame as 300 000 points,
+ICP against a raycast of the model, the pose chain back to frame 0, and the
+measured point past which a jump is not recoverable.
 
 The tracking half of `reconstruction_GT/fuse_scan.py` and nothing else: no
 mesh, no files. Frame-to-model, so error does not compound frame over
