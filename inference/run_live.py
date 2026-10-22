@@ -287,13 +287,13 @@ def parse_args():
                         'has to be big enough for the camera to walk '
                         'around in; this only has to show the room. The '
                         'default is the single-frame volume, 4.8x4.8x2.88, '
-                        'so the room opens at the same size on screen as '
-                        'the same scene without --accumulate -- at the 8 m '
-                        'this used to be, one frustum of a fresh run sits '
-                        'tiny in the middle of a black window. A sweep '
-                        'wider than 4.8 m runs off the edges: press - or '
-                        'pass a bigger box. The orbit pivot stays the map '
-                        'centre either way.')
+                        'the same box a run WITHOUT --accumulate is framed '
+                        'on. It is a weak lever next to --zoom and the '
+                        'framing being centred on the room rather than on '
+                        'the camera (live_view.anchor); 0 in the window '
+                        'fits whatever has been built so far, which is '
+                        'what a sweep that has outgrown its opening view '
+                        'wants.')
     p.add_argument('--pred_seen_min', type=int, default=None,
                    help='--accumulate: how many frames must have been '
                         'able to see a voxel before the model is allowed '
@@ -971,6 +971,10 @@ def main():
                 and not _STOP and n):
             view.show_mesh = recon is not None
             view.frozen = True
+            # the opening framing is a frame's, which a whole sweep has
+            # long outgrown -- so the last thing anyone looks at is the
+            # whole room rather than the middle of it
+            view.fit()
             log.info('the sweep is done. The window is showing %s -- press '
                      'm to flip between it and the room, c to change what '
                      'the room is coloured by, and close the window to '

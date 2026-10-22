@@ -71,7 +71,7 @@ Useful variants:
 | `--amp off` | numbers that do not move between runs |
 | `--record` | every drawn frame into `<out_dir>/frames/`, for a video |
 | `--no_hold` | do not hold the window open at the end (scripted runs) |
-| `--view_extent 6x6x2.88` | a wider opening view: the default frames on the single-frame volume, 4.8 m, so a wider sweep runs off the edges until you press `-` |
+| `--zoom 1.2` | a wider opening view; `0` in the window fits whatever is there, and a finished run does it for you |
 
 ### A live camera
 
@@ -105,7 +105,8 @@ the camera can slide along it without the alignment error changing.
 | `space` or `f` | freeze / carry on |
 | `m` | flip between the room and the sensor's own reconstruction (needs `--accumulate`) |
 | `c` | cycle `photo` → `verdict` → `class` |
-| `+` `-` `0` | zoom |
+| `+` `-` | zoom in and out |
+| `0` | fit what has been built so far into the window |
 | `s` | screenshot into `--out_dir` |
 | drag / scroll | orbit and zoom |
 | close the window | end the run there — it still writes everything |

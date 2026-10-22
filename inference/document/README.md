@@ -1222,8 +1222,25 @@ rebuilds every frame anyway:
 open3d's fit frames the bounding *sphere*, hence the factor: at `zoom=1.0` a
 live frame fills 31% of the window height, at 2.0 it fills 65%. An NYU frame
 is tighter in the volume and reaches the edges at 2.0, so `--zoom 1.7` suits
-replay. `+`/`-`/`0` step it in the window, and `_repaint` redraws the frame
-already on screen rather than waiting for the next one.
+replay. `+`/`-` step it in the window, `0` calls `fit()`, and `_repaint`
+redraws the frame already on screen rather than waiting for the next one.
+
+With `--accumulate` the anchor is not the grid's centre. The map is centred
+on the camera's STARTING POINT and a frame's volume lies in front of it
+(`vox_origin` is `[-2.4, 0, -0.05]`), so a box centred on the map puts the
+scene in its far half — measured on room07, the first five frames' voxels
+sit 25.7 cells, 2.06 m, forward of the map centre, which is what made a
+fresh run look small and far away. `update_world` therefore anchors half
+the view's depth forward, and both the proxy box and the zoom scaling use
+that point. It is still fixed: the first frame decides it and it does not
+move as the room fills.
+
+`fit()` sets the zoom so that what has been built so far is in the window —
+`FIT_CELLS / half-extent about the anchor`, where 75 is between the 63 and
+84 measured by rendering room07's first 120 frames and its whole sweep at a
+range of zooms and finding where the content starts touching the edges. It
+is a convenience, not a measurement. `run_live` calls it when a run ends, so
+the last thing on screen is the whole room rather than the middle of it.
 
 #### `_draw_panels(depth, rgb, name, fps)`
 

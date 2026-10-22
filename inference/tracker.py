@@ -485,8 +485,8 @@ class Tracker:
             bits.append('%d tracked without being integrated (the window '
                         'was held)' % self.pose_only)
         if self.on_host:
-            bits.append('%d meshes extracted on the host, the card being '
-                        'full' % self.on_host)
+            bits.append('%d mesh%s extracted on the host, the card being '
+                        'full' % (self.on_host, 'es' * (self.on_host != 1)))
         if b.dropped:
             bits.append('%d dropped (%s)' % (b.dropped,
                                              '; '.join(b.reasons)))

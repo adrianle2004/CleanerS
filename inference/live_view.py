@@ -194,6 +194,15 @@ class LiveView:
         # the grid's centre in view-index coordinates: the camera's pivot
         # after the proxy fit, and what every frame is scaled about
         self.centre = np.array([(g - 1) / 2.0 for g in GRID], dtype=np.float64)
+        # What the opening view is framed on and what --zoom scales about.
+        # In frame mode that is the grid's own centre, which is where the
+        # frame's volume is. In a ROOM it is not: the map is centred on the
+        # camera's starting point and the first frame's volume lies in
+        # FRONT of it, so a box centred on the map puts the scene in its
+        # far half, half the size and off to one side. Measured on room07:
+        # the first five frames' voxels sit 25.7 cells (2.06 m) forward of
+        # the map centre. update_world moves the anchor there.
+        self.anchor = self.centre
         self.out_dir = out_dir
         self.frames = 0
         self.colour_ms = 0.0
@@ -254,6 +263,7 @@ class LiveView:
         # exactly what they did.
         self.can_reconstruct = True
         self._wpivot = None
+        self._wworld = None        # the room last drawn, for the fit key
         self._wframe = 0
         self._wmesh = None
         self._wstatus = []
@@ -388,6 +398,7 @@ class LiveView:
             # compositor. Pressing space used to come through here and
             # reach for world.shape.
             return self.pump()
+        self._wworld = world
         if self._wpivot is None:
             # The orbit pivot is the MAP's centre, so it never moves as the
             # room fills. The proxy the camera is fitted to is the smaller
@@ -399,6 +410,16 @@ class LiveView:
             self.proxy = tuple(
                 min(d, max(1, int(round(e / world.vox))))
                 for d, e in zip(dims, (ex, ez, ey)))
+            # half the view's depth FORWARD of the camera's start, so the
+            # box lands on the room the way a frame's grid lands on the
+            # frame: vox_origin is [-2.4, 0, -0.05], 4.8 m of depth
+            # starting AT the camera plane, and the world's +Y is that
+            # same forward (the map is anchored on the first frame). View
+            # depth runs the other way -- it is `pivot - y` -- hence the
+            # minus. Still a fixed point: it is decided by the first
+            # frame and never moves as the room fills.
+            self.anchor = self.centre - np.array(
+                [0.0, 0.0, self.proxy[2] / 2.0])
             self._wpivot = int(world.shape[1]) - 1
 
         # The room changes by a handful of voxels a frame, and rebuilding a
@@ -569,7 +590,7 @@ class LiveView:
         src = self.recon
         pts = view_points(np.asarray(src.vertices), world.origin, world.vox,
                           self._wpivot)
-        pts = (pts - self.centre) * self.zoom + self.centre
+        pts = (pts - self.anchor) * self.zoom + self.anchor
         m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(pts),
                                       src.triangles)
         # the axis swap is a permutation AND a reflection, so orientation
@@ -625,7 +646,7 @@ class LiveView:
         if self.zoom != 1.0:
             pts = np.asarray(mesh.vertices)
             mesh.vertices = o3d.utility.Vector3dVector(
-                (pts - self.centre) * self.zoom + self.centre)
+                (pts - self.anchor) * self.zoom + self.anchor)
         return mesh
 
     def pump(self):
@@ -803,7 +824,7 @@ class LiveView:
         if self.zoom != 1.0:
             v = np.asarray(mesh.vertices)
             mesh.vertices = self.o3d.utility.Vector3dVector(
-                (v - self.centre) * self.zoom + self.centre)
+                (v - self.anchor) * self.zoom + self.anchor)
         return mesh
 
     def _swap(self, mesh):
@@ -818,7 +839,7 @@ class LiveView:
             # camera is free to wander inside
             box = self.o3d.geometry.TriangleMesh.create_box(
                 *[float(g) for g in self.proxy]).translate(
-                    self.centre - np.asarray(self.proxy, np.float64) / 2.0)
+                    self.anchor - np.asarray(self.proxy, np.float64) / 2.0)
             self.vis.add_geometry(box)
             self.geom = mesh
             self.vis.add_geometry(self.geom, reset_bounding_box=False)
@@ -875,8 +896,36 @@ class LiveView:
     def _zoom_out(self, _vis):
         return self._set_zoom(self.zoom / 1.15)
 
+    # A zoom of 1 draws a voxel one grid cell across, and the window is
+    # fitted to the proxy box; this is how many cells of half-extent fit
+    # across it at that zoom, measured by rendering room07 at a range of
+    # zooms and finding where the content starts touching the edges --
+    # 63 for the first 120 frames, 84 for the whole sweep, the spread
+    # being how far the sweep has wandered off the first frame's axis.
+    # It is a convenience, not a measurement: + and - adjust from there.
+    FIT_CELLS = 75.0
+
+    def fit(self):
+        """Set the zoom so that what has been built so far is in the
+        window. -> the zoom chosen.
+
+        The camera is aimed once and cannot be re-aimed (open3d 0.17's
+        view control hands back a copy), so this is the only way a room
+        that has outgrown its opening framing gets back in frame.
+        """
+        w = self._wworld
+        if w is None or self._wpivot is None:
+            return self._set_zoom(2.0)
+        v = w.verdicts()
+        i = np.argwhere(v['measured'] | (v['predicted'] & ~v['in_free']))
+        if not len(i):
+            return self._set_zoom(self.zoom)
+        view = self._to_view(i).astype(np.float64)
+        half = np.maximum(view.max(0) - self.anchor, self.anchor - view.min(0))
+        return self._set_zoom(self.FIT_CELLS / max(1.0, half[0], half[2]))
+
     def _zoom_reset(self, _vis):
-        return self._set_zoom(2.0)
+        return self.fit()
 
     def _repaint(self):
         """Redraw with the current settings, rather than making the user

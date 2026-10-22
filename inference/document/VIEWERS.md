@@ -385,7 +385,7 @@ viewpoint `display_solid` opens with.
 | --- | --- |
 | mouse | orbit, pan, zoom — the viewpoint survives every frame update |
 | `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
-| `+` / `-` | step the zoom by 15%; `0` resets it to 2.0 |
+| `+` / `-` | step the zoom by 15%; `0` fits what has been built so far |
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
 
@@ -743,15 +743,31 @@ the whole 16 m map left the room a smudge in the middle of the window. The
 orbit pivot is the map's centre either way, so it never moves as the room
 fills.
 
-`--view_extent` defaults to **4.8 × 4.8 × 2.88 m — the single-frame volume**,
-which at 8 cm is the 60 × 36 × 60 box a run *without* `--accumulate` is
-framed on. So a room opens at the same size on screen as the same scene
-does there, and the first frustum of a fresh run looks like a frame rather
-than a chip of one. It was 8 m, which left everything small and far away:
-the map is 16 m because the camera has to be able to walk around in it,
-which is no reason to look at the room from across it. The cost of the
-tighter box is that a sweep wider than 4.8 m runs off the edges — press
-`-`, or pass a bigger one.
+**What was making the room look far away was not the box, it was where
+the box was.** The map is centred on the camera's *starting point*, and
+the first frame's volume lies in FRONT of that — `vox_origin` is
+`[-2.4, 0, -0.05]`, 4.8 m of depth starting at the camera plane. A proxy
+centred on the map therefore put the whole scene in its far half, half
+the size and off to one side. Measured on room07, the first five frames'
+voxels sit **25.7 cells — 2.06 m — forward of the map centre**. The view
+is now anchored half its own depth forward, which is where a frame's grid
+sits relative to a frame's camera, and the same anchor is what `--zoom`
+scales about. Rendered at 1280 × 800, that took a 120-frame sweep from a
+patch in the middle of a black window to filling it.
+
+`--view_extent` itself is a weak lever — 2.4 m and 4.8 m render within 5%
+of each other, and 16 m only 30% smaller, because the legacy visualiser's
+fit is dominated by the geometry rather than the proxy. It defaults to
+**4.8 × 4.8 × 2.88 m, the single-frame volume**, because that is the box
+a run without `--accumulate` is framed on and the honest value to start
+from. `--zoom` is the strong one: at 1280 × 800 the first 120 frames of
+room07 fill 10% of the window at zoom 1.0, 43% at 2.0 and 52% at 2.2.
+
+**`0` fits what has been built so far**, which is how a sweep that has
+outgrown its opening framing gets back in frame — room07's whole sweep
+comes out at zoom 1.06 against the 2.38 its first 120 frames want. A run
+does it for you when it finishes, so the last thing anyone looks at is
+the whole room.
 
 **What it costs**, on the dev box, against a 331 ms frame, measured over
 room07's 808-frame sweep:
