@@ -422,6 +422,14 @@ processed at all, so a surface built only in the loop would never
 appear. A run that never presses the key pays nothing for it.
 `--sensor_first` opens on it.
 
+A surface belongs to **one frame**, and the window treats it that way:
+it is cleared as soon as the next frame arrives with `m` off, and
+pressing `m` always rebuilds rather than reusing what is lying around.
+Both matter for the same sequence — freeze, `m` on, `m` off, play a
+hundred frames to somewhere else, freeze, `m` on. Reusing the held mesh
+there showed the scene the camera had long since left, with nothing on
+screen to say so.
+
 If the frame measured no surface whatever, the key says so and stays on
 the prediction rather than blanking the window.
 

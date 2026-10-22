@@ -92,29 +92,38 @@ class TestFrameGeometry(unittest.TestCase):
     touches neither, so it is built without them.
     """
 
-    def view(self, show_mesh, recon):
+    def view(self, show_mesh):
         v = LiveView.__new__(LiveView)
-        v.show_mesh, v.recon = show_mesh, recon
+        v.show_mesh = show_mesh
         v._build = lambda idx, colours: 'the prediction'
-        v._build_frame_recon = lambda loader: 'the sensor surface'
+        v._build_frame_recon = lambda loader, recon: recon
         return v
 
     def test_the_prediction_is_what_it_draws_by_default(self):
-        v = self.view(False, 'a mesh')
-        self.assertEqual(v._frame_geometry(None, None, None),
+        v = self.view(False)
+        self.assertEqual(v._frame_geometry(None, None, None, 'a mesh'),
                          'the prediction')
 
     def test_m_draws_the_frames_own_surface(self):
-        v = self.view(True, 'a mesh')
-        self.assertEqual(v._frame_geometry(None, None, None),
-                         'the sensor surface')
+        v = self.view(True)
+        self.assertEqual(v._frame_geometry(None, None, None, 'a mesh'),
+                         'a mesh')
 
     def test_m_before_a_surface_exists_still_draws_something(self):
         """The key may be pressed before run_live has built one -- it is
         built on the NEXT frame. Drawing nothing would read as a crash."""
-        v = self.view(True, None)
-        self.assertEqual(v._frame_geometry(None, None, None),
+        v = self.view(True)
+        self.assertEqual(v._frame_geometry(None, None, None, None),
                          'the prediction')
+
+    def test_the_surface_drawn_is_the_one_that_came_with_the_frame(self):
+        """Not whatever self.recon happens to hold. The window is a
+        frame behind by design, so reading the live attribute at draw
+        time pairs this frame's cubes with the NEXT frame's surface."""
+        v = self.view(True)
+        v.recon = 'the next frame already built this one'
+        self.assertEqual(v._frame_geometry(None, None, None, 'this frame'),
+                         'this frame')
 
 
 class TestFrameSurfacePlacement(unittest.TestCase):
@@ -168,13 +177,17 @@ class TestMBuildsOnDemand(unittest.TestCase):
         v._flip_mesh(None)
         self.assertEqual(seen, [('loader', 'rgb')])
 
-    def test_an_existing_surface_is_not_rebuilt(self):
+    def test_m_always_rebuilds_rather_than_reusing(self):
+        """Reported: freeze, m on, m off, play a hundred frames to
+        somewhere else, freeze, m on -- and the surface was still the
+        one built before the camera moved. A per-frame surface belongs
+        to one frame, so a held one is stale, not spare."""
         calls = []
-        v = self.view(lambda loader, rgb: calls.append(1) or 'new', 
-                      recon='already here')
+        v = self.view(lambda loader, rgb: calls.append(1) or 'rebuilt',
+                      recon='built a hundred frames ago')
         v._flip_mesh(None)
-        self.assertEqual(calls, [])
-        self.assertEqual(v.recon, 'already here')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(v.recon, 'rebuilt')
 
     def test_a_frame_that_measured_nothing_does_not_leave_m_on(self):
         """Showing nothing at all reads as a crash, so it says so and

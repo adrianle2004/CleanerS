@@ -930,8 +930,13 @@ def main():
                     # 4.0 with the room up, and doing it every frame is
                     # what tipped it over. See Tracker._extract.
                     _reconstruct(view, tracker, None)
-                if not args.accumulate and view.show_mesh:
-                    view.recon = frame_surface(loader, frame.rgb)
+                if not args.accumulate:
+                    # Rebuilt per frame while m is up, and CLEARED when it
+                    # is not: a surface is one frame's, so keeping the last
+                    # one around would make `m` pressed later show the
+                    # scene the camera has since left.
+                    view.recon = (frame_surface(loader, frame.rgb)
+                                  if view.show_mesh else None)
                 if args.accumulate:
                     alive = view.update_world(
                         world, frame.depth, frame.rgb, name=frame.name,

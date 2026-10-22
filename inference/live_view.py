@@ -628,7 +628,7 @@ class LiveView:
                           self._wpivot)
         return self._shaded(pts, src)
 
-    def _build_frame_recon(self, loader):
+    def _build_frame_recon(self, loader, recon=None):
         """The SENSOR's surface for one frame, in that frame's own view
         coordinates -- what `m` shows without --accumulate.
 
@@ -640,9 +640,10 @@ class LiveView:
         both layers reflect about the same constant and the surface sits
         on the prediction rather than a few voxels off it.
         """
-        pts = view_points(np.asarray(self.recon.vertices), loader.vox_origin,
+        src = self.recon if recon is None else recon
+        pts = view_points(np.asarray(src.vertices), loader.vox_origin,
                           VOX_UNIT_LOW, self.ds.FIXED_PIVOT)
-        return self._shaded(pts, self.recon)
+        return self._shaded(pts, src)
 
     def _shaded(self, pts, src):
         """One mesh, zoomed about the anchor and lit like the cubes.
@@ -745,6 +746,11 @@ class LiveView:
             rgb = rgb.copy()
         return {'idx': idx, 'cls': cls, 'loader': loader, 'rgb': rgb,
                 'depth': loader.depth, 'name': name, 'fps': fps,
+                # the surface is this FRAME's, so it travels with the
+                # frame. The window is one frame behind by design, and
+                # reading self.recon at draw time would pair this frame's
+                # cubes with the next frame's surface.
+                'recon': self.recon,
                 'colours': None, 'future': None}
 
     def _paint_timed(self, job):
@@ -762,7 +768,7 @@ class LiveView:
             self._draw_panels(job['depth'], job['rgb'], job['name'],
                               job['fps'])
         self._swap(self._frame_geometry(job['idx'], job['colours'],
-                                        job['loader']))
+                                        job['loader'], job['recon']))
         alive = self._draw()
         self._last = (job['idx'], job['cls'], job['loader'], job['rgb'])
         self.frames += 1
@@ -895,12 +901,12 @@ class LiveView:
                 (v - self.anchor) * self.zoom + self.anchor)
         return mesh
 
-    def _frame_geometry(self, idx, colours, loader):
+    def _frame_geometry(self, idx, colours, loader, recon):
         """What the window draws in single-frame mode: the model's
-        completion, or -- with `m` down and a surface to hand -- what the
-        sensor alone measured of the same frame."""
-        if self.show_mesh and self.recon is not None:
-            return self._build_frame_recon(loader)
+        completion, or -- with `m` down and a surface for THIS frame --
+        what the sensor alone measured of it."""
+        if self.show_mesh and recon is not None:
+            return self._build_frame_recon(loader, recon)
         return self._build(idx, colours)
 
     def _swap(self, mesh):
@@ -962,8 +968,15 @@ class LiveView:
                          'freeze (space) and again when the run ends')
             return False
         self.show_mesh = not self.show_mesh
-        if self.show_mesh and self.recon is None and self._last is not None \
+        if self.show_mesh and self._last is not None \
                 and self.make_surface is not None:
+            # ALWAYS rebuild, never reuse. A per-frame surface belongs to
+            # one frame, and `m` off then on again across a hundred frames
+            # of playback would otherwise show the one built before the
+            # camera moved -- reported exactly that way. The accumulate
+            # path keeps the old rule below: there recon is the whole
+            # sweep's mesh and a keypress must not rebuild it.
+            self.recon = None
             # built on demand, for the frame being shown -- see make_surface.
             # Drained first: this runs on the GUI thread and is about to
             # touch the card, and the painter must not be mid-frame.
@@ -1048,7 +1061,7 @@ class LiveView:
             return
         idx, cls, loader, rgb = self._last
         self._swap(self._frame_geometry(
-            idx, self._paint(idx, cls, loader, rgb), loader))
+            idx, self._paint(idx, cls, loader, rgb), loader, self.recon))
         self._draw()
 
     def _cycle(self, _vis):

@@ -1446,6 +1446,15 @@ by the window itself through `LiveView.make_surface` when `m` is
 pressed while the window is frozen, where no frame is being processed and
 a surface built only in the loop would never arrive.
 
+Because it is one frame's, it is also **thrown away** with that frame:
+`run_live` clears `view.recon` on every frame `m` is not showing, the
+mesh travels in the draw job rather than being read off the view at draw
+time (the window is deliberately a frame behind, so reading it live
+pairs one frame's cubes with the next frame's surface), and `m` rebuilds
+rather than reuses. Without the first and last of those, `m` off, a
+hundred frames of playback and `m` on again redisplayed the surface
+built before the camera moved.
+
 It also has to be **released explicitly**, by `.close()`: open3d's cached
 allocator checks itself at teardown and aborts the process — *"N leaking
 memory blocks on CUDA:0"* — if anything still holds device memory, and
