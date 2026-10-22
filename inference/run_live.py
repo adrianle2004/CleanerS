@@ -321,6 +321,23 @@ def parse_args():
                    help='how far the depth frame is believed, metres. The '
                         'prediction reaches 4.8 m, so beyond this a '
                         'completion stays untested until you walk to it.')
+    p.add_argument('--track_range', type=float, default=3.0,
+                   help='how far the TRACKER believes the depth, metres '
+                        '(default 3.0). This is the one that decides where '
+                        "the sensor's own mesh -- the m key -- stops, "
+                        'because the mesh is carved out of the volume the '
+                        'tracker builds. Raising it reaches further; the '
+                        'D455 noise grows with the SQUARE of range, so far '
+                        'geometry comes in rougher and tracking has more '
+                        'of it to disagree about. Separate from '
+                        '--meas_range, which is what the ROOM believes.')
+    p.add_argument('--mesh_min_views', type=float, default=None,
+                   help='how many frames must have seen a surface before '
+                        "the m key's mesh draws it (default %.0f). The "
+                        'point of it is that one frame of depth noise is '
+                        'not a surface. Drop it to 1 and a sweep fills in '
+                        'as fast as it is made, with the speckle that '
+                        'implies.' % tracker_mod.Tracker.MIN_WEIGHT)
     p.add_argument('--track_voxel', type=float, default=0.02,
                    help='the tracker only has to track, not make a mesh')
     p.add_argument('--track_blocks', type=int, default=8000)
@@ -729,6 +746,8 @@ def main():
                         initial_pose=loader.cam_pose.astype(np.float64),
                         fps=args.track_fps, voxel=args.track_voxel,
                         block_count=args.track_blocks,
+                        depth_max=args.track_range,
+                        min_weight=args.mesh_min_views,
                         device=args.track_device,
                         belief=tracker_mod.Belief(
                             fps=args.track_fps,

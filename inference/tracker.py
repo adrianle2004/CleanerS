@@ -267,7 +267,7 @@ class Tracker:
     def __init__(self, cam_K, width, height, initial_pose, fps=None,
                  voxel=0.02, block_count=8000, depth_scale=1000.0,
                  depth_max=3.0, depth_diff=0.07, trunc=8.0, device='auto',
-                 belief=None):
+                 belief=None, min_weight=None):
         import open3d as o3d
         import open3d.core as o3c
         self._o3d, self._o3c = o3d, o3c
@@ -305,6 +305,12 @@ class Tracker:
         self.seen = 0         # frames handed to step(), believed or not
         self.pose_only = 0    # steps tracked but deliberately not integrated
         self.on_host = 0      # meshes the card had no room to extract
+        # how many frames must have seen a surface before mesh() draws it.
+        # An instance attribute rather than only the class constant,
+        # because what is right for a mesh someone is LOOKING at and what
+        # is right for one being swept past are not the same number.
+        self.min_weight = (float(min_weight) if min_weight is not None
+                           else self.MIN_WEIGHT)
 
     # the counters run_live and the window read. They live on Belief, which
     # owns the rule, and are surfaced here because the tracker is what the
@@ -403,7 +409,7 @@ class Tracker:
     # meshed, which is what drops one-frame depth noise from the surface.
     MIN_WEIGHT = 3.0
 
-    def mesh(self, min_weight=MIN_WEIGHT):
+    def mesh(self, min_weight=None):
         """The sensor's OWN reconstruction of what it has seen, in world
         metres -- or None if nothing has been integrated yet.
 
@@ -435,6 +441,8 @@ class Tracker:
         if not self.n:
             return None
         import numpy as np
+        if min_weight is None:
+            min_weight = self.min_weight
         m = self._extract(min_weight).to_legacy()
         if not len(m.vertices):
             return None
