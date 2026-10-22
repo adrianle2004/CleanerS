@@ -229,6 +229,16 @@ source kind, only on which optional fields are populated.
 `vox_origin is None` is the switch consumers use: populated means "this frame
 carries its own registration"; `None` means "build a floor-anchored grid".
 
+#### `CameraSource.live`
+
+A class attribute, `True` only on `RealSenseSource`: does this source go on
+without us? A camera's frames arrive whether anything reads them or not and
+the scene they show has moved on; a file waits. `run_live` needs to know
+which, because holding the display on a live camera and letting go hands the
+tracker a view that has *jumped* — see `tracker.Belief`. `BagSource`
+overrides it back to `False` even though it subclasses `RealSenseSource`,
+which is also why `realtime=True` has to be asked for.
+
 #### `CameraSource`
 
 Base class. `frames()` is a generator, `close()` releases hardware, and it is a
@@ -1384,9 +1394,41 @@ changing one here cannot silently move the annotation there.
 
 | | |
 | --- | --- |
-| `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d |
-| `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost` and `.report()` |
+| `reject(fitness, step_T, fps=None, dt=None)` | why a step is not believable, or `None`. Pure, so it is tested without open3d. `step_T=None` gates on fitness alone |
+| `Belief(fps=None, fraction=0.6, window=30, cap=0.55, confirm=3)` | the rule around it: `.floor()`, and `.see(fitness, step_T)` → `integrate` / `confirm` / `drop`. Also pure |
+| `Tracker(cam_K, w, h, initial_pose, fps=None, voxel=0.02, ...)` | `.step(depth_m, rgb, integrate=True)` → `world_T_cam`, or `None` when the frame must not be integrated; plus `.lost`, `.confirming`, `.n`, `.pose_only` and `.report()` |
 | `.mesh(min_weight=3.0)` | the sensor's own reconstruction of what it has seen, in world metres |
+
+**`Belief` is what makes a live run survivable, and it is why the floor is
+not `fuse_scan`'s 0.1.** Measured over both captures end to end, 1 871
+frames, the ICP fitness never fell below **0.647**, median 0.90 — good
+tracking is emphatic. A discontinuity is not: resuming room07 at frame 200
+after frame 59 reads 0.15–0.23, passes a 0.1 floor, and then tracks on at
+0.44–0.51 welding twenty frames of room a quarter of a metre out.
+`fuse_scan` is right not to care, because it reads a file. So the floor is
+60% of the median of the last 30 *believed* frames — dropped frames never
+move it, or a slide of marginal ones would talk it down to meet itself —
+capped at 0.55, a tenth below the worst good frame ever measured. Both
+full sweeps still drop nothing.
+
+Being lost is then recoverable, which it was not: frame-to-model tracking
+compares every frame with the model seen from the last believed pose, so
+one jump used to mean every later frame failed against a viewpoint the
+camera had left. `confirm=3` frames in a row, each at that floor and each
+within one plausible step of the last, put it back to work — and nothing
+is integrated until all three agree, because one lucky match welds the
+room into the wrong place for good. The jump gate is dropped for the
+first frame back: how far the camera went while nothing was believed is
+exactly what is not knowable, and the agreement is what replaces it.
+
+**`integrate=False` tracks a frame without putting it in the map**, which
+is what a held window wants. `run_live` holds the room while someone looks
+at it, and on a live camera the frames keep arriving and the camera keeps
+moving; dropping them hands the tracker a jump when the hold ends. Tracked
+instead, a four-second hold on room07 goes from *15 frames and lost* to 45
+of 45 tracked. It buys seconds, not minutes — nothing is integrated, so
+the model being tracked against stops growing, and 142 frames of continued
+sweeping through a hold exhausted it.
 
 **`mesh()` is the other half of the picture, and it is already paid
 for.** The TSDF the tracker integrates to track against is the same
@@ -1401,6 +1443,13 @@ are run on it, and `fuse_scan` remains what produces the committed
 ground truth. Its colours come out BGR, because `step` only has to give
 `integrate` a colour channel for tracking's sake, and `mesh()` swaps
 them back.
+
+Extracting does not disturb the volume, so it can be pulled as often as
+anyone wants to look: measured on room07, 60 frames with a mesh pulled
+every 10 ends at 61 203 triangles against 61 193 for the same frames
+extracted once at the end — a ten-triangle marching-cubes tie-break — and
+the ICP fitness of the frames after an extraction matches to three
+decimals.
 
 `world_T_cam = W @ T`, `fuse_scan`'s composition verbatim
 (`fuse_scan.py:484,542`): `T` accumulates from the identity and

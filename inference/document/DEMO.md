@@ -109,10 +109,22 @@ the camera can slide along it without the alignment error changing.
 | drag / scroll | orbit and zoom |
 | close the window | end the run there — it still writes everything |
 
-Freezing takes no more frames and holds the room exactly as it is, with
-the window live so it can be orbited. Nothing is pulled from the source
-while it holds: a camera's frames are dropped by the driver as usual, a
-replay carries on at the frame it stopped at.
+Freezing puts nothing more into the room and holds it exactly as it is,
+with the window live so it can be orbited. A **replay** pulls nothing
+while it holds and carries on at the frame it stopped at. A **live
+camera** keeps being read and *tracked* — nothing is integrated, measured,
+predicted or drawn, so the room on screen is the one that was frozen, but
+the pose keeps up with the camera in your hand. Without that, letting go
+after a few seconds handed the tracker a view that had jumped, and the
+room stopped growing for the rest of the run.
+
+Hold a live camera for a few seconds, not a few minutes: nothing is being
+integrated while it holds, so the model the pose is tracked against stops
+growing, and a hold long enough to walk somewhere new will lose it.
+
+**If the readout says `TRACKING LOST`, point the camera back at what it
+was looking at.** It re-acquires in three frames and the room carries on
+from where it stopped. The window stays live and keyed throughout.
 
 At the end of a run **the window stays up**, frozen, showing the sensor's
 reconstruction — so a replay finishes on something rather than vanishing.
@@ -297,6 +309,27 @@ reported it — the room would just have come out quietly smeared.
 **A frame the tracker is unsure of contributes nothing at all.** A bad
 pose does not degrade the map, it permanently corrupts it.
 
+**Being unsure stopped being fatal.** Frame-to-model tracking compares
+every frame with the model as seen from the last believed pose, so one
+discontinuity used to end a run: the reference never moved again and every
+later frame failed against a viewpoint the camera had left. Two things
+cause that discontinuity, and both are now handled. Holding the window on
+a live camera no longer throws its frames away — they are tracked while
+the room stays frozen, which took a four-second hold from *15 frames and
+lost* to 45 of 45 tracked. And when the pose does go, pointing the camera
+back at what it was looking at re-acquires it in three agreeing frames,
+4 mm from where it stopped on room07. The window used to go grey and stop
+answering keys the moment that happened; it now draws every frame, grown
+or not.
+
+**And what counts as unsure is measured against the run itself.** Over
+both captures end to end, 1 871 frames, the fitness never fell below
+0.647 — but resuming room07 at frame 200 after frame 59 reads 0.15–0.23
+and `fuse_scan`'s 0.1 floor waves it through, welding twenty frames a
+quarter of a metre from where they belong. The floor is now 60% of the
+median of the last 30 believed frames, capped at 0.55. Both full sweeps
+still drop nothing.
+
 Four silent bugs, each of which produced a plausible-looking wrong answer:
 
 | | |
@@ -366,6 +399,17 @@ saved `.ply` in `display_solid.py` for per-voxel labels.
 verified by calling them directly, but this machine has no way to
 synthesise a key press. If a key turns out dead, `--world_colour`,
 `--sensor_first` and `--zoom` do the same jobs from the command line.
+
+**A pose that cannot be believed stops the room, and that is deliberate.**
+Geometry welded into the wrong place never washes out, so an unsure frame
+contributes nothing. What is unsure is measured against the run itself —
+the floor is 60% of the median fitness of the last 30 believed frames,
+where both committed sweeps ran at 0.65 and better throughout — and it is
+recoverable: bring the view back and three agreeing frames put the room
+back to work. Nothing goes in until all three agree.
+
+**A hold is not a pause for a live camera.** See the note under
+[The window](#the-window): the room freezes, the tracking does not.
 
 **The reconstruction carries the camera's early white balance**, unlike
 the room — the tracker has to hand `integrate` a colour channel from the

@@ -501,15 +501,33 @@ drawn. `auto`, the default, decides per mode, and it has to:
 
 A number forces one answer for every mode.
 
-**Stopping half way.** `SPACE` (or `f`) freezes: no more frames are taken
-and the room holds exactly as it is, with the window still live so you can
-orbit what the model had at that moment. Press again to carry on, or close
-the window to end the run there — it writes the map as usual.
+**Stopping half way.** `SPACE` (or `f`) freezes: nothing more goes into
+the room and it holds exactly as it is, with the window still live so you
+can orbit what the model had at that moment. Press again to carry on, or
+close the window to end the run there — it writes the map as usual.
 
-The wait sits *after* a frame rather than before one, so nothing is pulled
-from the source while it holds. A camera's frames are dropped by the
-driver as they always are; a replay carries on at the frame it stopped at
+The wait sits *after* a frame rather than before one, so a **replay**
+pulls nothing while it holds and carries on at the frame it stopped at
 rather than skipping ahead.
+
+A **live camera cannot be held like that**, and pretending it could cost
+whole runs. Its frames arrive whether anything is reading them or not, and
+the camera keeps moving in the hand of whoever is looking at the window —
+so letting go handed the tracker a view that had *jumped*, and a jump is
+what costs it the pose. While a live window is held its frames are
+therefore taken, and **tracked, and nothing else**: nothing is integrated,
+measured, predicted, drawn or recorded, so the room on screen is still the
+one that was frozen while the pose keeps up with the camera. Measured by
+holding a replay dressed up as a camera — room07, four seconds of
+continued sweeping through the hold — **45 of 45 frames tracked** either
+side of it and nothing dropped, where the same hold before this left the
+tracker with 15 frames and LOST for the rest of the run.
+
+That buys seconds, not minutes. Nothing is being integrated, so the model
+the pose is tracked against stops growing, and a hold long enough to sweep
+somewhere genuinely new runs out of it — 142 frames, 9.5 s of recorded
+motion, on the same test. Then the pose is lost, and getting it back is
+*Where the pose comes from*, further down this section.
 
 **And `m` shows what the sensor alone had.** Freezing also extracts the
 **sensor's own reconstruction** — a triangle mesh of everything the depth
@@ -631,8 +649,41 @@ mismatch — the room would just come out quietly smeared.
 A frame the tracker is not sure of **contributes nothing at all**, neither
 measurement nor prediction. A bad pose does not degrade the map, it
 permanently corrupts it: geometry welded into the wrong place never washes
-out. After a second of consecutive drops the map freezes where it is and
-the readout says **TRACKING LOST** rather than smearing the room.
+out. After a second of consecutive drops the readout says **TRACKING
+LOST** and the map stops growing rather than smearing.
+
+*What counts as unsure is measured against the run itself.* Over both
+committed captures end to end — 1 871 frames — the ICP fitness was never
+below **0.647**, median 0.90. Good tracking is emphatic, not marginal. A
+discontinuity is not: resuming room07 at frame 200 after frame 59 reads
+**0.15–0.23**, which `fuse_scan`'s 0.1 floor passes happily, and then
+tracks on at 0.44–0.51 welding twenty frames of room a quarter of a metre
+from where they belong. `fuse_scan` is right not to care — it reads a
+file, where frame 200 never follows frame 59. So the floor here is **60%
+of the median of the last 30 believed frames**, capped at 0.55, which also
+carries over to a sensor or a scene that simply matches worse. On both
+full sweeps it still drops nothing.
+
+*And being lost is no longer the end of the run.* Frame-to-model tracking
+compares every frame with a raycast of the model from the last believed
+pose. That is what stops drift compounding, and it is also why one jump
+used to end everything: the reference never moved again, so every later
+frame was compared with a viewpoint the camera had left, failed, and the
+room never grew however the operator waved it about. Now **point the
+camera back at what it was looking at** and it picks itself up — three
+frames in a row, each matching the model at the floor above, each placing
+the camera within one plausible step of the last. Nothing is integrated
+until all three agree, because one lucky match welds the room into the
+wrong place for good. Measured on room07: a 140-frame discontinuity is
+dropped frame by frame, and when the view comes back the tracker
+re-acquires within three frames, at a pose **4 mm** from where it stopped.
+
+*The window stays alive while that happens.* It used to go grey and stop
+answering keys the moment the pose was lost, because the loop skipped
+straight to the next frame — no panels to aim the camera back with, no
+`space`, no way to close it. The room is now drawn every frame whether or
+not it grew, with the live depth and colour beside it and the reason in
+the readout.
 
 **On a live camera it is the same code and it has been run on one.**
 `--source realsense` against an attached D455 (fw 5.17.0.10, USB 3.2,
