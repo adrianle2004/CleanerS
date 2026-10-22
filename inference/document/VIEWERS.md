@@ -389,6 +389,15 @@ viewpoint `display_solid` opens with.
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
 
+Every key but the zoom pair acts on the **press**, not on the key being
+down. X11 repeats a held key and open3d hands on every repeat, so `m`
+held for a moment used to flip the window between its two modes dozens
+of times a second — each flip a full repaint, which is where the lag
+that came with it was from — and even an ordinary press was long enough
+to catch one repeat and toggle twice, so the mode looked unchanged.
+`+` and `-` are deliberately left repeating, because holding them to go
+on zooming is the point.
+
 With `--accumulate` the same keys mean the room instead: `c` cycles
 `photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` flips
 between the room and the sensor's own reconstruction.

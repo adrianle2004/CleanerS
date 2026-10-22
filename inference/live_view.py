@@ -320,16 +320,26 @@ class LiveView:
         opt.mesh_color_option = o3d.visualization.MeshColorOption.Color
         opt.mesh_show_back_face = True
         opt.background_color = np.array([0.08, 0.08, 0.09])
-        self.vis.register_key_callback(ord('C'), self._cycle)
-        self.vis.register_key_callback(ord('M'), self._flip_mesh)
-        self.vis.register_key_callback(ord('S'), self._screenshot)
+        # TOGGLES ARE BOUND TO THE PRESS EDGE, NOT THE KEY BEING DOWN.
+        # X11 repeats a held key at the system repeat rate and open3d
+        # hands every repeat to a plain key callback, so holding `m`
+        # flipped between the two modes dozens of times a second -- each
+        # flip a full repaint -- and even a normal press was long enough
+        # to land a repeat and toggle twice. The zoom keys deliberately
+        # stay on the plain callback: there, holding the key down to go
+        # on zooming is the whole point.
+        for key in 'CMS0':
+            self.vis.register_key_action_callback(
+                ord(key), self._press_only(
+                    {'C': self._cycle, 'M': self._flip_mesh,
+                     'S': self._screenshot, '0': self._zoom_reset}[key]))
         for key in (' ', 'F'):
-            self.vis.register_key_callback(ord(key), self._freeze)
+            self.vis.register_key_action_callback(
+                ord(key), self._press_only(self._freeze))
         for key in ('=', '+'):
             self.vis.register_key_callback(ord(key), self._zoom_in)
         for key in ('-', '_'):
             self.vis.register_key_callback(ord(key), self._zoom_out)
-        self.vis.register_key_callback(ord('0'), self._zoom_reset)
         if panels:
             # NORMAL, not AUTOSIZE: AUTOSIZE pins the window to the image and
             # refuses to be resized, so a panel taller than the screen cannot
@@ -918,6 +928,21 @@ class LiveView:
         self.geom.triangles = mesh.triangles
         self.geom.vertex_colors = mesh.vertex_colors
         self.vis.update_geometry(self.geom)
+
+    # GLFW: 0 is release, 1 is press, 2 is the auto-repeat of a held key
+    GLFW_PRESS = 1
+
+    @classmethod
+    def _press_only(cls, fn):
+        """-> a key ACTION callback that runs fn once per actual press.
+
+        Pure, so tests/test_live_view.py can check it without a window:
+        what it has to get right is that a held key does nothing after
+        the first event.
+        """
+        def on_action(vis, action, _mods):
+            return fn(vis) if action == cls.GLFW_PRESS else False
+        return on_action
 
     def _flip_mesh(self, _vis):
         """Flip between the room and the sensor's reconstruction.

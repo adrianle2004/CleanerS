@@ -197,3 +197,47 @@ class TestMBuildsOnDemand(unittest.TestCase):
         v = self.view(None, live=False)
         v._flip_mesh(None)
         self.assertFalse(v.show_mesh)
+
+
+class TestHeldKeys(unittest.TestCase):
+    """A held key must not keep firing a toggle.
+
+    Reported as the window "jumping between 2 modes": X11 repeats a held
+    key and open3d delivers every repeat, so holding `m` flipped the
+    display dozens of times a second, each flip a full repaint -- which
+    is where the lag came from too. A quick press was also long enough
+    to catch one repeat and toggle twice, so the mode appeared not to
+    change at all.
+    """
+
+    RELEASE, PRESS, REPEAT = 0, 1, 2
+
+    def test_only_the_press_fires(self):
+        fired = []
+        cb = LiveView._press_only(lambda vis: fired.append(vis) or False)
+        cb('vis', self.PRESS, 0)
+        self.assertEqual(fired, ['vis'])
+
+    def test_holding_the_key_fires_nothing_more(self):
+        fired = []
+        cb = LiveView._press_only(lambda vis: fired.append(1) or False)
+        cb(None, self.PRESS, 0)
+        for _ in range(40):              # ~a second of X11 auto-repeat
+            cb(None, self.REPEAT, 0)
+        cb(None, self.RELEASE, 0)
+        self.assertEqual(len(fired), 1)
+
+    def test_pressing_twice_fires_twice(self):
+        """Suppressing the repeat must not suppress a real second press."""
+        fired = []
+        cb = LiveView._press_only(lambda vis: fired.append(1) or False)
+        cb(None, self.PRESS, 0)
+        cb(None, self.RELEASE, 0)
+        cb(None, self.PRESS, 0)
+        self.assertEqual(len(fired), 2)
+
+    def test_it_passes_the_callbacks_answer_through(self):
+        """open3d reads the return value as 'redraw needed'."""
+        cb = LiveView._press_only(lambda vis: True)
+        self.assertTrue(cb(None, self.PRESS, 0))
+        self.assertFalse(cb(None, self.REPEAT, 0))
