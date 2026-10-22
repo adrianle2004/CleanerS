@@ -238,6 +238,13 @@ class LiveView:
         # what the model is claiming to fill.
         self.recon = None
         self.show_mesh = False
+        # Is there anything that COULD build one? The mesh comes out of
+        # the tracker's TSDF, and the tracker only exists under
+        # --accumulate -- so in a plain --display run `m` has nothing to
+        # show and never will. run_live sets this, and the difference
+        # matters: "not yet" sends someone to press space again, which is
+        # exactly what they did.
+        self.can_reconstruct = True
         self._wpivot = None
         self._wframe = 0
         self._wmesh = None
@@ -824,8 +831,15 @@ class LiveView:
         other rather than side by side.
         """
         if self.recon is None:
-            log.info('no reconstruction yet -- it is built when you freeze '
-                     '(space) and again when the run ends')
+            if not self.can_reconstruct:
+                log.info("the sensor's own reconstruction needs "
+                         '--accumulate. That flag is what puts a tracker '
+                         'in the loop, and the mesh is the TSDF it builds '
+                         'to track against; without it there is no volume '
+                         'to extract and pressing space will not make one')
+            else:
+                log.info('no reconstruction yet -- it is built when you '
+                         'freeze (space) and again when the run ends')
             return False
         self.show_mesh = not self.show_mesh
         log.info('showing %s', 'the SENSOR\'s reconstruction (the holes in '

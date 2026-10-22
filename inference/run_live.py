@@ -562,6 +562,7 @@ def main():
                             width=w3d, height=h3d,
                             panel_width=args.panel_width,
                             overlap=not args.sync_display)
+            view.can_reconstruct = bool(args.accumulate)
             if args.accumulate:
                 view.mesh_every = args.mesh_every
                 view.world_colour = args.world_colour
@@ -741,8 +742,15 @@ def main():
                                      'used'):
                             log.info('display window closed; stopping')
                             break
-                        if view.frozen and not hold(frame, FROZEN_NOTE):
-                            break
+                        if view.frozen:
+                            # the pose being unsure is no reason to
+                            # withhold the mesh: it is what the sensor has
+                            # already measured, and looking at it is how
+                            # someone works out where to point the camera
+                            _reconstruct(view, tracker,
+                                         'frozen at %s' % frame.name)
+                            if not hold(frame, FROZEN_NOTE):
+                                break
                     # frames nothing was done with still count against
                     # --max_frames, or a run that loses the pose for good
                     # would never reach it
@@ -838,10 +846,11 @@ def main():
                 # instead of skipping ahead. The window keeps answering
                 # the compositor throughout, so the state can be orbited.
                 if view.frozen:
-                    log.info('frozen at %s -- press space in the window '
-                             'to carry on, m for the sensor\'s own '
-                             'reconstruction, or close it to stop here',
-                             frame.name)
+                    log.info('frozen at %s -- press space in the window to '
+                             'carry on%s, or close it to stop here',
+                             frame.name,
+                             ", m for the sensor's own reconstruction"
+                             if args.accumulate else '')
                     if world is not None:
                         _reconstruct(view, tracker,
                                      'frozen at %s' % frame.name)

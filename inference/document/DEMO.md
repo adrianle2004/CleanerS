@@ -102,7 +102,7 @@ the camera can slide along it without the alignment error changing.
 | key | |
 | --- | --- |
 | `space` or `f` | freeze / carry on |
-| `m` | flip between the room and the sensor's own reconstruction |
+| `m` | flip between the room and the sensor's own reconstruction (needs `--accumulate`) |
 | `c` | cycle `photo` → `verdict` → `class` |
 | `+` `-` `0` | zoom |
 | `s` | screenshot into `--out_dir` |
@@ -128,6 +128,11 @@ from where it stopped. The window stays live and keyed throughout.
 
 At the end of a run **the window stays up**, frozen, showing the sensor's
 reconstruction — so a replay finishes on something rather than vanishing.
+
+**The reconstruction comes from the tracker, and the tracker only runs
+under `--accumulate`.** Without that flag `space` still freezes the frame
+on screen, but there is no volume to extract and no amount of freezing
+will make one. If `m` says so, restart with the flag.
 
 The counts live in the small camera panel window, not in the 3D window;
 the legacy renderer cannot draw text. `--no_panels` turns both off.

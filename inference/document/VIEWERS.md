@@ -393,6 +393,12 @@ With `--accumulate` the same keys mean the room instead: `c` cycles
 `photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` flips
 between the room and the sensor's own reconstruction.
 
+`space` works in both modes, but **`m` needs `--accumulate`**: the mesh is
+the TSDF the tracker builds to track against, and the tracker only exists
+under that flag. In a plain `--display` run there is no volume to extract
+and freezing will not make one — the key says so rather than saying "not
+yet".
+
 The handlers are verified by calling them directly — two `+` take the zoom to
 2.64 and redraw at the larger size — but this machine is a Wayland session
 with no way to synthesise a key press, so **the dispatch itself is untested**.
