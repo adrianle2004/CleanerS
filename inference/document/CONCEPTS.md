@@ -1,12 +1,15 @@
-# The six terms in HARDWARE.md, explained
+# The terms the other pages lean on, explained
 
 [HARDWARE.md](HARDWARE.md) says what the fast path costs.
 [README.md](README.md#tsdf_torchpy--the-fast-tsdf-encode) says how it is
-written. This page answers what its words mean: why 12 voxels, what a 1-D pass
-is, what slabbing and projection are, and what fp16 and AMP are.
+written. [WORLD_BUILDING.md](WORLD_BUILDING.md) says where the live room's
+pose comes from. This page answers what their words mean: why 12 voxels,
+what a 1-D pass is, what slabbing and projection are, what fp16 and AMP
+are, and what a raycast is.
 
-Nothing here is new work. Every claim is in the code — `inference/tsdf_torch.py`
-and `inference/frame_loader.py` — and this is the reading of it.
+Nothing here is new work. Every claim is in the code — `inference/tsdf_torch.py`,
+`inference/frame_loader.py` and `inference/tracker.py` — and this is the
+reading of it.
 
 ---
 
@@ -225,3 +228,157 @@ SC 74.9528 -> 74.9530, the fourth decimal.
 It is CUDA-only. `torch.cpu.amp` exists in 1.10 but is bfloat16-only and runs
 into the same cast, which is why `--amp` resolves to off on a machine with no
 card.
+
+---
+
+## 7. What a raycast is
+
+This one is not from [HARDWARE.md](HARDWARE.md) but from
+[WORLD_BUILDING.md](WORLD_BUILDING.md), where the live room gets its pose.
+It is the step that turns the accumulated volume back into something that
+looks like a camera frame, and it is what makes frame-to-model tracking
+possible at all: to compare this frame with the model, you need the model
+*as a frame*.
+
+**The word.** To *cast a ray* is to shoot a line out of the camera through
+one pixel and ask what it hits first. Doing that for every pixel is
+rendering — turning a stored 3-D thing into a 2-D image. So the raycast
+runs the pipeline backwards: depth images went in to build the volume, and
+a depth image comes back out of it, from any pose you care to ask about.
+
+**Careful — two different truncations.** §1 above is the *encoder's* TSDF,
+the network's input: 12 voxels of 2 cm, 24 cm, in `tsdf_torch.py`. The
+volume being raycast here is the *tracker's*, a separate thing in open3d
+with its own truncation of 8 voxels of 2 cm, 16 cm. Same idea, different
+volume, different number.
+
+**Why a ray can find a surface in it at all.** Each voxel holds a
+truncated signed distance: how far to the nearest surface, and which side
+of it this voxel is on. The surface is never stored as triangles or
+points — it is the **zero level set**, the place where the stored number
+changes sign. A ray finds it by watching for that change:
+
+```
+  camera
+    ●──── the ray through one pixel ────────────────────────►
+
+  stored:  +1.0     +1.0     +0.6     +0.2  │ −0.3     −1.0
+           ░░░░     ░░░░     ▒▒▒▒     ▓▓▓▓  │ ████     ████
+           far from a surface    closing in │  behind it
+                                            ▲
+                                            │
+          the zero crossing, found by interpolating
+          between the last + and the first −
+```
+
+**The naive version, and why nobody runs it.** March every ray from 0.1 m
+to 3 m in 2 cm steps: 145 samples a pixel, 307 200 pixels, **44.5 M
+lookups a frame**, nearly all of them in empty space. Three things cut
+that down, and all three are visible in the call.
+
+**Cut 1 — only consider the blocks in front of you.** The volume is a hash
+map of 16³ blocks, not a dense array, and
+`compute_unique_block_coordinates` returns just the blocks whose
+projection lands inside this camera's frustum. Measured, 31 frames into
+room07: **203 blocks of the 236 active**. Early in a sweep nearly
+everything is still in view, which is the worst case for this cut; by the
+end of a room it is a small fraction.
+
+**Cut 2 — build a coarse map of how far to march.** Before any ray moves,
+open3d projects those blocks and builds a **range map**: for each tile of
+8×8 pixels, the nearest and farthest depth at which any block lies. It is
+literally in the output of the call —
+
+```
+  render_attributes=['depth', 'vertex', 'normal']
+
+    -> {'depth':  (480, 640, 1),
+        'vertex': (480, 640, 3),
+        'normal': (480, 640, 3),
+        'range':  ( 60,  80, 2)}      <- 480/8 x 640/8, (near, far)
+```
+
+so each ray starts at its tile's near bound and stops at its far bound,
+instead of sweeping the whole 0.1–3 m. What that is worth, measured on the
+host with depth and normals rendered:
+
+| `range_map_down_factor` | range map | cost |
+| ---: | --- | ---: |
+| 1 | 480×640 | 250.0 ms |
+| 2 | 240×320 | 87.4 ms |
+| **8** — the default, and ours | **60×80** | **24.9 ms** |
+| 16 | 30×40 | 20.0 ms |
+
+A tenfold difference out of nothing but knowing where to start and stop.
+And once it exists, the nominal clip distance barely matters —
+`depth_max` of 1 m costs 22.3 ms, 3 m costs 17.0 ms, 6 m costs 18.6 ms —
+because it is the range map, not the clip, that decides how far a ray is
+really marched.
+
+**Cut 3 — the stored value tells you how big a step is safe.** This is
+§1's truncation earning its keep a second time. If a voxel reads "0.16 m
+from the nearest surface", the ray can jump 0.16 m in one stride with no
+risk of passing through anything. So the truncation band doubles as the
+step size, which is measurable: widen it and the march gets cheaper while
+finding the same surfaces.
+
+| truncation | band | cost | pixels filled |
+| ---: | --- | ---: | ---: |
+| 1 voxel | 0.02 m | 38.5 ms | 86.8% |
+| 2 voxels | 0.04 m | 28.4 ms | 86.8% |
+| 4 voxels | 0.08 m | 23.3 ms | 86.7% |
+| **8 voxels — ours** | **0.16 m** | **19.2 ms** | **86.8%** |
+| 16 voxels | 0.32 m | 19.4 ms | 86.7% |
+
+Past 8 voxels it plateaus: the strides are no longer what the cost is made
+of. Note the last column — the band changes the *speed*, not the answer.
+
+**What comes out.** Three images, not one:
+
+| | |
+| --- | --- |
+| `depth` | the distance to the zero crossing, per pixel |
+| `vertex` | the same thing as a 3-D point — the unprojection already done |
+| `normal` | the gradient of the stored field, normalised: which way the surface faces |
+
+The ICP in [WORLD_BUILDING.md §10.1](WORLD_BUILDING.md#101-icp-six-numbers-from-a-6x6-system)
+needs exactly `vertex` and `normal`, which is why it takes them from the
+raycast rather than deriving them from the rendered depth.
+
+**What a hole in it means.** Measured on room07: **94.5%** of pixels filled
+after one frame, **85.8%** after twenty, 86.5% after thirty-one. It goes
+*down*, and that is the interesting part. After one frame the raycast is
+taken from the pose that just integrated that frame, so the model is
+exactly what the camera saw. Once the camera moves, some rays cross space
+nobody has looked at yet, find no sign change anywhere, and return
+nothing. **An empty pixel in a raycast is not a failure, it is the model
+saying "I have never seen this."**
+
+**One knob where tracking and the mesh disagree.** The call takes a
+`weight_threshold` — ignore voxels seen fewer than this many times:
+
+```
+  weight_threshold = −1   ->  96.3% filled      what the tracker uses
+  weight_threshold =  3   ->  86.8% filled      what the mesh uses
+  weight_threshold = 10   ->  83.1% filled
+```
+
+The mesh uses 3 (`Tracker.MIN_WEIGHT`) because one-frame depth noise in
+something a person is looking at is just wrong. The tracker leaves it off,
+so a voxel seen once is already a legitimate thing to track against. That
+is the right trade for tracking — the model keeps up with the camera as it
+moves into new space, and ICP's own 7 cm gate plus the fitness floor deal
+with the noise — and the wrong one for a mesh on screen.
+
+**Where it is called.** `inference/tracker.py`, at the end of every
+`step()`, believed frame or not:
+
+```python
+self.model.synthesize_model_frame(self.raycast, self.scale, 0.1,
+                                  self.depth_max, self.trunc, False)
+```
+
+— the frame to render into, the depth scale, a 0.1 m near clip, the 3 m
+far clip, the 8-voxel truncation, and `enable_color=False`, because
+tracking is depth-only geometry and rendering the colour would be work
+thrown away.

@@ -69,7 +69,7 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
 - [OCCLUSION.md](OCCLUSION.md) — what the model does behind what it cannot see
 - [EVALUATION_SCANNET.md](EVALUATION_SCANNET.md) — zero-shot transfer to Occ-ScanNet val, against ISO/MonoScene, and what the scoring protocol does to the numbers
 - [HARDWARE.md](HARDWARE.md) — what a frame costs on what: the per-stage timings, the VRAM floor, the minimum card, and the CPU-only case
-- [CONCEPTS.md](CONCEPTS.md) — the terms HARDWARE.md uses, explained from the code: why the truncation is 12 voxels, what a 1-D pass of the distance transform actually does, what slabbing and projection are, and what fp16 and AMP are
+- [CONCEPTS.md](CONCEPTS.md) — the terms the other pages use, explained from the code: why the truncation is 12 voxels, what a 1-D pass of the distance transform actually does, what slabbing and projection are, what fp16 and AMP are, and what a raycast is — what the word means, the three cuts that take it from 44.5 M lookups a frame to 25 ms, and what an empty pixel in one means
 - [What to notice](#what-to-notice)
 - [Verified device numbers](#verified-device-numbers)
 - [Documentation drift](#documentation-drift)

@@ -154,7 +154,9 @@ believed pose** — a ray through every pixel, stopped where the stored
 distance crosses zero. The result is a synthetic depth image of what the
 camera *would* see from where it last was, and after 60 frames of room07
 **93.9% of its pixels hit a surface**. That clean synthetic frame, not the
-previous raw frame, is what ICP aligns against.
+previous raw frame, is what ICP aligns against. (What a raycast is, and the
+three cuts that make one affordable thirty times a second, are
+[CONCEPTS.md §7](CONCEPTS.md#7-what-a-raycast-is).)
 
 ```
      ┌───────────────────────────────────────────────────────────┐
