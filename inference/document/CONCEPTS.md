@@ -271,9 +271,10 @@ changes sign. A ray finds it by watching for that change:
           between the last + and the first −
 ```
 
-**The naive version, and why nobody runs it.** March every ray from 0.1 m
-to 3 m in 2 cm steps: 145 samples a pixel, 307 200 pixels, **44.5 M
-lookups a frame**, nearly all of them in empty space. Three things cut
+**The naive version, and why nobody runs it.** March every ray from the
+near clip to the far one — 0.1 m to 4.8 m — in 2 cm steps: 235 samples a
+pixel, 307 200 pixels, **72 M lookups a frame**, nearly all of them in
+empty space. Three things cut
 that down, and all three are visible in the call.
 
 **Cut 1 — only consider the blocks in front of you.** The volume is a hash
@@ -378,7 +379,8 @@ self.model.synthesize_model_frame(self.raycast, self.scale, 0.1,
                                   self.depth_max, self.trunc, False)
 ```
 
-— the frame to render into, the depth scale, a 0.1 m near clip, the 3 m
-far clip, the 8-voxel truncation, and `enable_color=False`, because
+— the frame to render into, the depth scale, a 0.1 m near clip, the far
+clip (`--track_range`), the 8-voxel truncation, and `enable_color=False`,
+because
 tracking is depth-only geometry and rendering the colour would be work
 thrown away.

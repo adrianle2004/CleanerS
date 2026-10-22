@@ -317,20 +317,33 @@ def parse_args():
                         'chromaticity and starts when it stops moving; a '
                         'number waits that many frames; off colours from '
                         'the first frame. Geometry is never held back.')
-    p.add_argument('--meas_range', type=float, default=3.5,
-                   help='how far the depth frame is believed, metres. The '
-                        'prediction reaches 4.8 m, so beyond this a '
-                        'completion stays untested until you walk to it.')
-    p.add_argument('--track_range', type=float, default=3.0,
+    p.add_argument('--meas_range', type=float, default=4.8,
+                   help='how far the depth frame is believed by the ROOM, '
+                        'metres. The prediction reaches 4.8 m, and so now '
+                        'does this: a completion you are looking straight '
+                        'at gets tested instead of waiting for you to walk '
+                        'to it. It is the one range here that is not free '
+                        '-- the frustum grows with the CUBE of it, and '
+                        "room07's first 200 frames went from 24 to 35 ms a "
+                        'frame fusing, 2.62 to 2.54 fps end to end. Drop '
+                        'it back to 3.5 to have those frames back in a '
+                        'room small enough not to need the reach.')
+    p.add_argument('--track_range', type=float, default=4.8,
                    help='how far the TRACKER believes the depth, metres '
-                        '(default 3.0). This is the one that decides where '
-                        "the sensor's own mesh -- the m key -- stops, "
-                        'because the mesh is carved out of the volume the '
-                        'tracker builds. Raising it reaches further; the '
-                        'D455 noise grows with the SQUARE of range, so far '
-                        'geometry comes in rougher and tracking has more '
-                        'of it to disagree about. Separate from '
-                        '--meas_range, which is what the ROOM believes.')
+                        '(default 4.8, the distance the prediction '
+                        'reaches). This is the one that decides where the '
+                        "sensor's own mesh -- the m key -- stops, because "
+                        'the mesh is carved out of the volume the tracker '
+                        'builds. open3d defaults to 3.0 and that is what '
+                        'this used to be; measured over room07 end to end, '
+                        '4.8 tracks BETTER rather than worse (fitness '
+                        'median 0.903 -> 0.933, worst frame 0.712 -> '
+                        '0.818, nothing dropped either way), costs the '
+                        'same 12 ms a frame, and takes the volume from 592 '
+                        'blocks to 698 of the 8000 available -- about '
+                        '100 MB more on the card. More of the room to '
+                        'match against is simply worth more than the far '
+                        'depth is noisy.')
     p.add_argument('--mesh_min_views', type=float, default=None,
                    help='how many frames must have seen a surface before '
                         "the m key's mesh draws it (default %.0f). The "

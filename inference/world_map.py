@@ -342,8 +342,8 @@ class WorldMap:
         just in front of every wall reads free; at 8 cm, with ~1 voxel of
         trajectory drift and a half-voxel hit margin, a disagreement that
         touches a surface is below the resolution of the question. On
-        room07 that skin is 2469 of 3276 such voxels, and painting it red
-        turns an entire wall red and says nothing. The 807 that remain are
+        room07 that skin is 2484 of 3309 such voxels, and painting it red
+        turns an entire wall red and says nothing. The 825 that remain are
         matter floating in open space the camera saw through.
         """
         from scipy import ndimage

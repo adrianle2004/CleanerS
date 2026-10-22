@@ -481,11 +481,11 @@ That skin is not an error this comparison can resolve. The model's
 surfaces come out about a voxel thicker than the measurement, so the cell
 just in front of every wall reads free; at 8 cm, with ~1 voxel of
 trajectory drift and a half-voxel hit margin, a disagreement that touches
-a surface is below the resolution of the question. On room07 it is 2 248
-of 2 700 such voxels, and painting it red turns a whole wall red and says
-nothing. The 452 left over are matter floating in open space.
+a surface is below the resolution of the question. On room07 it is 2 325
+of 2 805 such voxels, and painting it red turns a whole wall red and says
+nothing. The 480 left over are matter floating in open space.
 
-The other modes drop **all** 2 700, skin included — see above. Red is for
+The other modes drop **all** 2 805, skin included — see above. Red is for
 the question "did the model get it wrong"; `photo` is answering "what is
 there", and there the skin is simply a wall drawn a voxel too thick.
 
@@ -500,7 +500,7 @@ drawn. `auto`, the default, decides per mode, and it has to:
 - in **`verdict`** it is a *comparison*, and whole cubes hide it. Faces
   between two occupied voxels are culled, so you only ever see the
   outermost shell — and that shell is the model's unverified claims
-  wrapped around the real room. On room07 all 3 561 proved voxels are
+  wrapped around the real room. On room07 all 3 485 proved voxels are
   measured surfaces inside it and **not one of them is visible**. So there
   the model's unmeasured claims are drawn smaller and the room reads
   through the gaps.
@@ -589,12 +589,12 @@ once **three** frames could see it and **60%** of them agreed
 
 | | rule off | rule on |
 | --- | ---: | ---: |
-| voxels the model claims | 20 021 | **17 624** |
-| of those, confirmed by the sweep | 3 604 | **3 561** |
-| contradicted | 589 | **526** |
-| claims standing in measured-free space | 3 274 | **2 700** |
-| measured voxels the model never claimed | 134 | **192** |
-| proved share | 86.0% | **87.1%** |
+| voxels the model claims | 19 690 | **17 225** |
+| of those, confirmed by the sweep | 3 526 | **3 485** |
+| contradicted | 596 | **535** |
+| claims standing in measured-free space | 3 309 | **2 805** |
+| measured voxels the model never claimed | 261 | **322** |
+| proved share | 85.5% | **86.7%** |
 
 So 12% of the claimed matter was unstable and 1.2% of the proved went
 with it. `missed` rising is the honest cost: some of what goes was a real
@@ -794,21 +794,21 @@ the fill-in video.
 
 | | |
 | --- | ---: |
-| voxels the sensor measured | 6 392 |
-| voxels the model called occupied | 17 624 |
-| of those, completions — filled in where the sensor knew nothing | 12 754 |
-| completions the sweep went on to reach | 4 087 |
-| **of those, confirmed** | **3 561 (87.1%)** |
-| contradicted | 526 |
-| still untested when the sweep ended | 8 667 |
-| voxels the sensor found that the model never predicted | 192 |
-| claims standing in space the camera measured as empty | 2 700, of which 452 are clear of any surface |
+| voxels the sensor measured | 6 513 |
+| voxels the model called occupied | 17 225 |
+| of those, completions — filled in where the sensor knew nothing | 12 195 |
+| completions the sweep went on to reach | 4 020 |
+| **of those, confirmed** | **3 485 (86.7%)** |
+| contradicted | 535 |
+| still untested when the sweep ended | 8 175 |
+| voxels the sensor found that the model never predicted | 322 |
+| claims standing in space the camera measured as empty | 2 805, of which 480 are clear of any surface |
 
-`photo` draws 15 116 voxels: the 6 392 measured, plus the 8 724 claims
-that are not in measured-free space. `verdict` draws all 11 424 claims,
+`photo` draws 14 742 voxels: the 6 513 measured, plus the 8 229 claims
+that are not in measured-free space. `verdict` draws all 11 034 claims,
 the measured ones whole and the claims at 0.45.
 
-The 87.1% is the number worth quoting, and the 8 667 is the number that
+The 86.7% is the number worth quoting, and the 8 175 is the number that
 keeps it honest: the sensor reached under a third of what the model
 completed, and it never will reach most of the rest.
 
@@ -822,8 +822,8 @@ things this repo already committed. On room07:
 | check | result |
 | --- | --- |
 | `algebra` | 7 889 of 7 889 voxels placed, 0 missing, 0 extra — the composition collapses to the identity on the anchor frame |
-| `tracker` | median 46 mm from the committed trajectory, p90 96 mm — inside the 66–102 mm `DRIFT_AND_ALIGNMENT.md` measured |
-| `measured` | 87.9% of the map's measured voxels are in the fused sweep within one voxel (97.9% within two; 51.7% exact, which is the wrong question — both sides are 8 cm shells built from trajectories a voxel apart) |
+| `tracker` | median 39 mm from the committed trajectory, p90 85 mm — inside the 66–102 mm `DRIFT_AND_ALIGNMENT.md` measured |
+| `measured` | 89.8% of the map's measured voxels are in the fused sweep within one voxel (98.3% within two; 53.6% exact, which is the wrong question — both sides are 8 cm shells built from trajectories a voxel apart) |
 
 ### What it does not do
 

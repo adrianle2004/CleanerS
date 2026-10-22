@@ -210,11 +210,11 @@ not a measurement — no checks are run on it, and
    got there.
 4. **Press `c` to `verdict`.** Green is where it guessed blind and the
    sweep later proved it right. Red is where it was wrong. Give the
-   number: on room07, **87.1% of the completions the sweep could reach
+   number: on room07, **86.7% of the completions the sweep could reach
    were right**.
-5. **Then give the honest one.** 8 667 of its completions were never
+5. **Then give the honest one.** 8 175 of its completions were never
    tested and most never can be — inside the furniture, behind the walls.
-   The 87.1% is of the 4 087 that *were* reachable. Say this before
+   The 86.7% is of the 4 020 that *were* reachable. Say this before
    someone else asks it.
 
 In the first four seconds of any run, look at the geometry and not the
@@ -231,16 +231,16 @@ Both rooms, every frameset, none dropped by the tracker.
 | | room07 | room08 |
 | --- | ---: | ---: |
 | framesets | 808 | 1 065 |
-| voxels the **sensor measured** | 6 392 | 7 597 |
-| voxels the **model claims** | 17 624 | 25 701 |
-| of those, **completions** — filled in where the sensor knew nothing | 12 754 | 20 182 |
-| completions the sweep **reached** | 4 087 | 4 853 |
-| **confirmed** | **3 561 (87.1%)** | **3 685 (75.9%)** |
-| contradicted | 526 | 1 168 |
-| still untested when the sweep ended | 8 667 | 15 329 |
-| measured but never predicted | 192 | 974 |
-| claims in space the camera measured as empty | 2 700 | 3 666 |
-| reconstruction mesh | 156 k triangles | 190 k triangles |
+| voxels the **sensor measured** | 6 513 | 7 764 |
+| voxels the **model claims** | 17 225 | 26 000 |
+| of those, **completions** — filled in where the sensor knew nothing | 12 195 | 20 361 |
+| completions the sweep **reached** | 4 020 | 4 888 |
+| **confirmed** | **3 485 (86.7%)** | **3 716 (76.0%)** |
+| contradicted | 535 | 1 172 |
+| still untested when the sweep ended | 8 175 | 15 473 |
+| measured but never predicted | 322 | 1 108 |
+| claims in space the camera measured as empty | 2 805 | 3 790 |
+| reconstruction mesh | 168 k triangles | 205 k triangles |
 
 room08 scores lower and that is not noise: it is a longer sweep of a
 bigger space, so more of the completion became reachable and more of it
@@ -252,14 +252,14 @@ already committed:
 | | room07 | room08 |
 | --- | --- | --- |
 | `algebra` — the placement arithmetic | 7 889 of 7 889 voxels placed, 0 missing, 0 extra | — |
-| `tracker` — against `scan/trajectory.txt` | median **46 mm**, p90 96 mm, max 160 mm | median **54 mm**, p90 85 mm, max 125 mm |
-| `measured` — against `scan/room_cloud.ply` | **87.9%** within one voxel, 97.9% within two | **96.3%** within one voxel, 99.9% within two |
+| `tracker` — against `scan/trajectory.txt` | median **39 mm**, p90 85 mm, max 142 mm | median **53 mm**, p90 83 mm, max 121 mm |
+| `measured` — against `scan/room_cloud.ply` | **89.8%** within one voxel, 98.3% within two | **94.3%** within one voxel, 97.8% within two |
 
 Tolerance is 150 mm and
 [DRIFT_AND_ALIGNMENT.md](../../reconstruction_GT/document/DRIFT_AND_ALIGNMENT.md)
 documents 66–102 mm of
 drift for these captures, so both trackers are inside what the capture
-itself is worth. The exact-match figure (51.7% / 56.9%) is the wrong
+itself is worth. The exact-match figure (53.6% / 55.5%) is the wrong
 question — both sides are 8 cm shells built from trajectories about a
 voxel apart.
 
@@ -365,10 +365,10 @@ depth is unsteady, so there are plenty of those at every surface edge, and
 over a sweep they became spurs on the furniture. A claim now needs three
 frames to have seen the voxel and 60% of them to agree: 12% of the claimed
 matter goes, 1.2% of the proved goes with it, and the proved share rises
-from 86.0% to 87.1%.
+from 85.5% to 86.7%.
 
 **The sensor outranks the model about space it has measured.** Outside
-`verdict`, a claim standing in measured-free space is not drawn — 2 700
+`verdict`, a claim standing in measured-free space is not drawn — 2 805
 voxels on room07, including the one-voxel skin that was making every wall
 a voxel too thick.
 
