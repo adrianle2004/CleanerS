@@ -23,6 +23,10 @@ drift, and none of them is needed.
 - [7. Fitness, and why everything is gated on it](#7-fitness-and-why-everything-is-gated-on-it)
 - [8. What this explains about the window](#8-what-this-explains-about-the-window)
 - [9. Where the code is](#9-where-the-code-is)
+- [10. The math](#10-the-math) — ICP, the TSDF and the accelerometer, written out
+  - [10.1 ICP: six numbers from a 6x6 system](#101-icp-six-numbers-from-a-6x6-system)
+  - [10.2 The TSDF: a running mean of signed distances](#102-the-tsdf-a-running-mean-of-signed-distances)
+  - [10.3 The accelerometer: one vector, once](#103-the-accelerometer-one-vector-once)
 
 ## 1. A depth frame is a cloud of 300 000 points
 
@@ -77,11 +81,16 @@ and then using the guess to improve itself:
    frames is **8.9 mm** (p90 20 mm, worst 40 mm over the whole 808-frame
    sweep), so the guess is wrong by about a centimetre. That is the entire
    reason this works.
-2. **Assume the nearest thing is the matching thing.** Transform the new
-   points by the current guess, and pair each one with the closest point
-   on the known surface.
+2. **Pair the points up using the guess.** Move each new point by the
+   current guess and see which pixel of the model it lands on; whatever
+   surface sits at that pixel is taken to be what it was looking at. This
+   is a *projection*, not a search — classical ICP hunts the nearest
+   neighbour in a tree, but against a depth image the answer comes out of
+   a division by z, which is what makes 300 000 points affordable. See
+   [§10.1](#101-icp-six-numbers-from-a-6x6-system).
 3. **Solve.** Given those pairs, the rigid motion that minimises the
-   leftover distances has a closed form. Apply it.
+   leftover distances has a closed form — six unknowns, one 6x6 system.
+   Apply it.
 4. **Repeat.** With a better alignment the pairings are better, so the next
    solve is better.
 
@@ -113,6 +122,9 @@ surface normal**:
                                               nothing at all
 ```
 
+Written out, with the degeneracy made exact, that is
+[§10.1](#101-icp-six-numbers-from-a-6x6-system).
+
 That is physically honest. A flat patch of wall genuinely does not tell
 you how far you slid along it; only motion *through* the wall is
 observable. Penalising the sliding would invent information, and it
@@ -120,8 +132,9 @@ converges several times slower besides.
 
 The same honesty is the method's one failure mode, and it is written at the
 top of `tracker.py`: **a view of nothing but one flat wall is degenerate.**
-If every normal in the frame points the same way, two of the six numbers
-are unconstrained and the solve is free to slide. Keep a corner, a
+If every normal in the frame points the same way, three of the six
+numbers drop out of the equations entirely and the solve is free to slide
+— [§10.1](#101-icp-six-numbers-from-a-6x6-system) puts a number on it. Keep a corner, a
 doorway or some furniture in shot and the normals disagree, which is all
 the constraint it needs.
 
@@ -133,7 +146,8 @@ Every believed frame is integrated into a **TSDF volume**: 2 cm voxels in
 16³ blocks, each voxel storing the signed distance to the nearest surface,
 truncated at 8 voxels (16 cm), **averaged over every frame that has seen
 it**. One frame's depth is noisy. Fifty frames' average of the same patch
-of wall is not.
+of wall is not — the update rule, and the arithmetic that says by how much,
+are [§10.2](#102-the-tsdf-a-running-mean-of-signed-distances).
 
 Before each new frame arrives, that volume is **raycast from the last
 believed pose** — a ray through every pixel, stopped where the stored
@@ -193,7 +207,9 @@ accelerometer comes in and the only place it does:
   `EMA_MAG = 0.02`). On room07's bag, **798 of 808 samples** passed.
 - `live_cam_pose` turns that into world axes: **Z is up**, Y is the
   camera's heading flattened into the horizontal, X is Y × Z, and
-  `camera_height` puts Z = 0 on the floor.
+  `camera_height` puts Z = 0 on the floor. The Gram–Schmidt that does it,
+  and what the magnitude test is really worth, are
+  [§10.3](#103-the-accelerometer-one-vector-once).
 
 So gravity decides the *orientation of the world's axes at frame 0*. It is
 never integrated, never accumulated, and a reading that goes wrong halfway
@@ -303,3 +319,332 @@ is this mechanism showing through:
 
 Open3D's own documentation for the call this all comes down to:
 [`Model.track_frame_to_model`](https://www.open3d.org/docs/release/python_api/open3d.t.pipelines.slam.Model.html).
+
+## 10. The math
+
+Sections 1–9 are the mechanism. This is the same thing with the algebra
+left in, for anyone who has to change it rather than explain it. Every
+constant named here is the one the code passes.
+
+### 10.1 ICP: six numbers from a 6x6 system
+
+**What is being matched.** The new frame is unprojected into a *vertex
+map* `V_s` — §1's equation applied to every pixel, so `V_s[p]` is a 3-D
+point in camera coordinates. The raycast of the model gives the same thing
+for the target, `V_t`, plus a *normal map* `N_t`, the surface orientation
+at each of its pixels. Both are images, not point clouds, and that is the
+whole trick.
+
+**Correspondence is a projection, not a search.** For source pixel `p`,
+under the current estimate `T_k`:
+
+```
+  v' = T_k · V_s[p]                          the point, moved by the guess
+
+  u  = fx · v'_x / v'_z + cx                 where it lands in the model's
+  w  = fy · v'_y / v'_z + cy                 image
+
+  q  = (round u, round w)                    its partner pixel
+```
+
+and the pair is accepted only if the two agree in depth:
+
+```
+  | v'_z − V_t[q]_z |  ≤  depth_outlier_trunc  =  0.07 m
+```
+
+That threshold is `Tracker`'s `depth_diff`, and **the fraction of pixels
+that survive it is the fitness of §7**. No tree, no search, O(1) per
+pixel, every pixel independent — which is what makes a 300 000-point
+alignment a 13 ms operation on the card.
+
+**The objective.** With `n = N_t[q]` the model's normal at the partner
+pixel and `q_v = V_t[q]` its vertex:
+
+```
+  E(T)  =  Σ  ρ( ( T · V_s[p] − q_v ) · n )
+           p
+```
+
+`ρ` is the Huber norm, not a plain square — quadratic inside
+`depth_huber_delta = 0.05 m` and linear outside it, so a handful of badly
+paired pixels bend the answer instead of dictating it. The dot with `n` is
+the point-to-plane choice of §3: only the component along the surface
+normal is counted.
+
+**Linearise.** Between consecutive frames the rotation is under a degree
+(§3), so write it as a small-angle rotation vector `ω = (α, β, γ)`:
+
+```
+            ⎡  0  −γ   β ⎤
+  [ω]ₓ   =  ⎢  γ   0  −α ⎥          R ≈ I + [ω]ₓ       R·v ≈ v + ω × v
+            ⎣ −β   α   0 ⎦
+```
+
+One pixel's residual then collapses to something linear in the six
+unknowns:
+
+```
+  r  =  ( v + ω × v + t − q_v ) · n
+
+     =  (ω × v)·n  +  t·n  −  (q_v − v)·n
+
+     =  ω·(v × n)  +  t·n  −  b            b = (q_v − v)·n
+```
+
+— the middle step is the scalar triple product identity
+`(ω × v)·n = ω·(v × n)`, and it is the reason this is tractable at all:
+the rotation unknown comes out of the cross product as a plain dot.
+
+Stack the six unknowns, and each pixel's six coefficients beside them:
+
+```
+  x  =  (ω, t)       ∈ ℝ⁶           the answer
+  a  =  (v × n, n)   ∈ ℝ⁶           this pixel's row
+
+  r  =  aᵀx − b                     one linear equation per pixel
+```
+
+Minimising `Σ r²` gives the normal equations — a 6x6 solve, no matter how
+many pixels went into it:
+
+```
+  A x = c           A = Σ a aᵀ   (6x6)        c = Σ b a   (6x1)
+                        p                        p
+```
+
+(The Huber norm makes this *iteratively reweighted* least squares rather
+than plain least squares: each pixel enters the two sums with a weight
+`w = 1` when `|r| ≤ δ` and `w = δ/|r|` when it is larger, recomputed each
+iteration. The shape of the system is unchanged — still 6x6.)
+
+Built exactly as written above from 1 200 synthetic points on three
+planes, with a known motion applied, that solve returns the motion to
+**0.16 mm and 1.5 microradians** — the residual being the small-angle
+approximation and nothing else.
+
+**That sum is the only thing in the whole algorithm that touches all
+300 000 pixels.** It is a parallel reduction of 300 000 rank-1 outer
+products into one small matrix; everything after it is a 6x6 Cholesky.
+That is the shape of the 13 ms, and why the work belongs on a GPU.
+
+Solve, turn `ω` back into a proper rotation matrix, compose it onto the
+running estimate, and go round again — 6 iterations at quarter
+resolution, 3 at half, 1 at full (§3). The pyramid exists because step 1
+depends on `T_k`: a coarse image forgives a worse guess, because one pixel
+spans more room.
+
+**Degeneracy, exactly.** Suppose every normal in view is the same
+`n = (0, 0, 1)` — one flat wall, square on. Then for a point
+`v = (x, y, z)`,
+
+```
+  v × n  =  (y, −x, 0)          so    a  =  (y, −x, 0, 0, 0, 1)
+```
+
+The third, fourth and fifth entries are zero for *every* pixel in the
+frame, however many there are. `A = Σ a aᵀ` therefore has **rank 3, not
+6** — built from 1 200 such points its eigenvalues come out
+
+```
+  [ 0, 0, 0, 383.6, 392.4, 1201.6 ]        rank 3 of 6, cond = ∞
+```
+
+against rank 6 and a condition number of **1.56** for the same count of
+points spread over three mutually perpendicular planes, which is what a
+room corner is. Three of the six numbers are not merely ill-conditioned,
+they are absent from the equations: the two translations parallel to the
+wall, *and the rotation about its normal* — spin the camera about its own
+optical axis in front of a featureless plane and the depth image is
+unchanged.
+
+So "keep a corner in view" is the instruction and the eigenvalues of `A`
+are the measurement. Their ratio is the honest statement of how many of
+the six numbers the current view actually pins down.
+
+**And why convergence is local.** Step 1 pairs pixels using `T_k`. If the
+guess is far enough out that most pixels project onto the *wrong* surface,
+the residuals are perfectly consistent with a different pose, `A` is
+well-conditioned, and the iteration converges confidently to it. That is
+§6's 0.43 m row: fitness 0.463, 0.33 m out, nothing in the returned
+transform to say so.
+
+### 10.2 The TSDF: a running mean of signed distances
+
+**What is stored**, read out of the running volume rather than quoted from
+the paper: per voxel one `Float32` in `[−1, +1]` and one `UInt16` count,
+in 16³ blocks of 2 cm voxels, `--track_blocks` of them (8 000 by default).
+
+**The update.** For a voxel centre `x_w` in world coordinates, with this
+frame's pose:
+
+```
+  xc   =  (world_T_cam)⁻¹ · x_w        the voxel, in camera coordinates
+
+  u    =  fx · xc_x / xc_z + cx        the pixel it falls on
+  w    =  fy · xc_y / xc_z + cy
+
+  D    =  depth(u, w)                 what the sensor measured there
+
+  sdf  =  D − xc_z                    signed distance along the view ray
+```
+
+`sdf > 0` means the voxel is **in front of** the measured surface — free
+space the ray passed through. `sdf < 0` means behind it.
+
+```
+  skip if   D ≤ 0   or   xc_z ≤ 0   or   sdf < −τ
+
+  s  =  min(sdf, τ) / τ                      normalised, so s ∈ [−1, +1]
+
+  τ  =  trunc_voxel_multiplier × voxel  =  8 × 0.02  =  0.16 m
+```
+
+**That `sdf < −τ` skip is the honesty of the whole method.** The sensor
+measured one surface along that ray and knows nothing whatever about what
+lies more than 16 cm behind it, so nothing is written there — it stays
+unobserved rather than being declared solid or empty. (Compare
+[OCCLUSION.md](OCCLUSION.md): what the *network* does with that same
+unobserved space is a completely different question, and it is the one the
+room is drawing.)
+
+**The average**, with unit weights:
+
+```
+  TSDF  ←  ( W · TSDF  +  s ) / ( W + 1 )
+  W     ←  W + 1
+```
+
+Measured by integrating one frame of room07 repeatedly: the weight reads
+exactly 1, 10, 100, 400 and 1 000 after that many integrations. It is a
+plain running mean, and a voxel's stored value is the mean of every
+normalised signed distance ever measured for it.
+
+So if a single frame's depth error at that voxel is independent with
+standard deviation σ, the mean of `N` of them has standard deviation
+
+```
+  σ / √N
+```
+
+Fifty looks at a wall is a sevenfold reduction. §4's claim that the model
+is a quieter thing to match against than any raw frame is this, and
+nothing more. It matters most where the frame is worst, because stereo
+depth error grows with the square of range —
+`σ_Z = Z² · σ_D / (fx · B)`, [GEOMETRY.md](GEOMETRY.md).
+
+**The surface, and where the normals of §10.1 come from.** The surface is
+the level set `TSDF = 0`. The raycast marches a ray per pixel until the
+stored value changes sign and interpolates the crossing:
+
+```
+                                  TSDF(t₁)
+  t*  =  t₁  +  (t₂ − t₁) · ─────────────────────
+                             TSDF(t₁) − TSDF(t₂)
+```
+
+and the normal is the gradient of the same field, by central differences:
+
+```
+  n  =  ∇TSDF / ‖∇TSDF‖
+```
+
+That is `N_t`, handed straight to §10.1. Marching cubes — the `m` key —
+extracts the same zero level set as triangles, skipping voxels with
+`W < MIN_WEIGHT = 3`, which is what drops one-frame depth noise out of the
+mesh.
+
+### 10.3 The accelerometer: one vector, once
+
+**What it measures.** Not acceleration — *specific force*:
+
+```
+  f  =  a_lin  −  g
+```
+
+At rest `a_lin = 0`, so `f = −g`: a vector of magnitude ‖g‖ ≈ 9.81 m/s²
+pointing **up**. This is why no integration is involved anywhere. An
+accelerometer at rest reads the up direction directly; it is a gyroscope,
+integrated into an orientation, that drifts, and there is no gyroscope in
+this pipeline.
+
+**Why the magnitude test, and what it is actually worth.** Under motion
+the reading is contaminated. For linear acceleration perpendicular to
+gravity,
+
+```
+  ‖f‖  =  √( ‖g‖² + ‖a_lin‖² )          tilted by  θ = atan( ‖a_lin‖ / ‖g‖ )
+```
+
+`camera.py:_gravity` accepts a sample only when its magnitude has not
+wandered from a slow reference:
+
+```
+  | ‖f‖ − m |  ≤  MAG_TOL · m  =  0.08 · m
+```
+
+Work out what that admits: `‖a_lin‖/‖g‖ ≤ √(1.08² − 1) = 0.41`, so a
+single accepted sample may still be tilted by `atan(0.41) = 22°`. **The
+magnitude test is a coarse rejector, not a guarantee** — what does the
+real work is the smoothing underneath it:
+
+```
+  u  ←  (1 − 0.25) · u  +  0.25 · f         EMA_UP,  ~4 samples ≈ 0.3 s
+  m  ←  (1 − 0.02) · m  +  0.02 · ‖f‖       EMA_MAG, ~50 samples ≈ 3 s
+```
+
+The two rates do different jobs. `m` is deliberately slow so the reference
+stays near rest and a *sustained* acceleration cannot talk the band across
+to meet it. `u` is fast enough to follow a real re-orientation but long
+enough to average away the residual tilt of accepted samples, which over a
+handheld sweep is zero-mean. On room07's bag, **798 of 808 samples** were
+accepted.
+
+**From one vector to a world frame** — Gram–Schmidt, with `ẑ = (0, 0, 1)`
+the camera's own optical axis:
+
+```
+  e_z  =  f / ‖f‖                                    world Z: up
+
+  e_y  =  ( ẑ − (ẑ·e_z) e_z ) / ‖ ẑ − (ẑ·e_z) e_z ‖  world Y: where the
+                                                     camera looks, with the
+                                                     up-component removed
+
+  e_x  =  e_y × e_z                                  world X: right-handed
+
+
+         ⎡ — e_xᵀ — ⎤
+  R  =   ⎢ — e_yᵀ — ⎥        rows are the world axes in camera coordinates,
+         ⎣ — e_zᵀ — ⎦        so R maps a camera vector into world axes
+```
+
+The middle line is the only interesting one: subtracting `(ẑ·e_z) e_z`
+removes whatever part of the camera's forward direction points at the sky,
+which is exactly "flatten the heading into the horizontal". If the camera
+is aimed within a thousandth of straight up or down the projection
+vanishes and there is no heading to flatten; `live_cam_pose` falls back to
+the camera's −Y axis there.
+
+Then yaw and the floor:
+
+```
+         ⎡ cos ψ  −sin ψ  0 ⎤             ⎡               │  0 ⎤
+  R_z =  ⎢ sin ψ   cos ψ  0 ⎥      W  =   ⎢   R_z · R     │  0 ⎥
+         ⎣   0       0    1 ⎦             ⎢               │  h ⎥
+                                          ⎣  0    0    0  │  1 ⎦
+```
+
+with `h = camera_height`, which is what puts world Z = 0 on the floor
+rather than at the lens. This `W` is the one of §5, frozen at frame 0.
+
+**What the whole exercise buys.** A tilt error `θ` displaces a surface at
+range `d` by `d · sin θ`. Assuming the camera is level when it is pitched
+4° — ordinary for a handheld sweep, and NYU's own frames run 0.31° to
+7.65° — puts a wall 3 m away
+
+```
+  3 · sin 4°  =  0.21 m
+```
+
+from where the grid draws it: two and a half voxels of the 8 cm world map,
+on every surface in the room, for free and in the wrong direction.
