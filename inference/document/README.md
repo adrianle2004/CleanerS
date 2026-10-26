@@ -64,6 +64,7 @@ Occ-ScanNet — see [USING_THE_MODEL.md](USING_THE_MODEL.md).
 - [The `sample` dict](#the-sample-dict)
 - [Coordinate conventions](#coordinate-conventions)
 - [VIEWERS.md](VIEWERS.md) — every viewer button and mode, in one place
+- [VOXEL_SURFACE_MESH.md](VOXEL_SURFACE_MESH.md) — `m`'s middle layer, from the code: Surface Nets in pure numpy and why not marching cubes, the half-voxel the registration with the cubes rests on, the TSDF shrink onto the measurement, where a voxel's colour comes from and which of those is a photograph of anything, and the reach that comes off for the ones that are not
 - [EVALUATION.md](EVALUATION.md) — per-class metrics on both NYU splits, what `label_weight` is, whether each of the eleven classes' failures is the model's doing or the data's, and the groups its false positives and its misses fall into
 - [GEOMETRY.md](GEOMETRY.md) — the math: min-Z, align, undistort, FOV match
 - [OCCLUSION.md](OCCLUSION.md) — what the model does behind what it cannot see
