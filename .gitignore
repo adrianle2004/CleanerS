@@ -156,6 +156,9 @@ outputs/*_live/
 # which HF holds, and every number taken from them is in
 # inference/document/DEMO.md -- which is the thing that has to be in git.
 outputs/*_world/
+# an ad-hoc sweep recorded to look at something once, under a name that
+# does not match the rule above
+outputs/high_wall/
 custom_visual_pred/
 visual_pred/
 # guard.sh per-run scratch: which pid a job got, and the pause/stop flags
