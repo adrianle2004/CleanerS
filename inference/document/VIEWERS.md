@@ -313,6 +313,12 @@ it off and draws each frame in its own iteration: no lag, and the painting
 back on the clock. In `--colour class` the paint is free anyway, so the
 overlap switches itself off.
 
+**That line is absent under `--accumulate`,** and its absence is the
+answer: there the room is built on the loop by `update_world` and
+nothing is submitted to the pool, so none of the `colour` figure — which
+is the room's mesh, not a paint — is hidden behind anything. It is what
+the room costs you per frame.
+
 What it buys, concretely: with the window open and the card cool, `--colour
 all` now runs at the same fps as `--colour class` — 96 ms a frame of extra
 painting for nothing. Before, you paid all of it.
@@ -399,8 +405,9 @@ to catch one repeat and toggle twice, so the mode looked unchanged.
 on zooming is the point.
 
 With `--accumulate` the same keys mean the room instead: `c` cycles
-`photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` flips
-between the room and the sensor's own reconstruction.
+`photo` → `verdict` → `class`, `space` (or `f`) freezes, and `m` cycles
+the room as cubes → the room as one surface → the sensor's own
+reconstruction.
 
 **`m` works in both modes, and means a slightly different thing in
 each.** With `--accumulate` it is the whole sweep as one mesh — the TSDF
@@ -408,6 +415,13 @@ the tracker has been building to track against, extracted. Without it
 there is no tracker and no sweep, so it is **this frame's own surface**:
 the one depth image integrated into a volume of its own, marching-cubed,
 and thrown away when the next frame arrives.
+
+The **middle** layer uses that same per-frame surface for its COLOUR,
+which is why one is built whenever `m` lands on either of the two —
+without it the completion falls back to the model's own 8 cm colour and
+reads as a blurred copy of the layer beside it. Failing to build one
+costs the colour and never the layer: the middle one is meshed from the
+model's voxels and always has something to show.
 
 That per-frame surface is independent by construction, which is the right
 answer in a mode that is not accumulating — no pose, nothing joined to
@@ -576,16 +590,29 @@ motion, on the same test. Then the pose is lost, and getting it back is
 
 **And `m` shows what the sensor alone had.** Freezing also extracts the
 **sensor's own reconstruction** — a triangle mesh of everything the depth
-has measured so far — and `m` flips the window between it and the room,
-at the same viewpoint, so the only thing that changes is the geometry.
+has measured so far — and `m` cycles the window through it, the room as
+cubes, and the room as one **surface**, at the same viewpoint, so the only
+thing that changes is the geometry.
 
-That is the comparison the mode exists for, and it reads without a legend:
-the mesh **stops where the depth stopped**, so every hole in it is
-somewhere the sensor could not see, and the room is what the model puts
-there. Freeze after the first few frames, before the camera has moved,
-and the mesh is one frustum with a room-shaped hole around it; the room
-beside it already has walls and a floor. Carry on to the end of the sweep
-and the mesh closes up, except where it never can.
+The middle layer is the same voxels as the cubes, meshed by
+`inference/voxel_surface.py` (Surface Nets, pure numpy — see its header
+for why not marching cubes). It exists because 8 cm cubes are unreadable
+as a *room*: a wall is a staircase. A flat face comes out exactly on the
+cube face it was meshed from, so the layers stay registered, and the
+completion is still told from the measurement by colour rather than by
+being left out. Unlike the sensor's mesh it needs no tracker and no
+reconstruction, so it is the one layer that is always available — in a
+plain `--display` run `m` has something to show from the first frame.
+
+In `photo` it also **wears the sensor's own colour**, so that `m`
+changes the geometry and nothing else: each vertex takes the nearest
+point on that mesh within two voxels, and a voxel no photograph ever
+reached — on room07 the whole floor — takes it from however far away
+it has to, rather than keeping the dimmed class tint that is the only
+other answer. The surface is split once first, because the mesh
+carries 2 cm of texture and the lattice has a vertex every 8 cm. Both
+off with `--no_sensor_colour`, and both off in `verdict` and `class`,
+where the colour is the answer. See DEMO.md for the numbers.
 
 In the first four seconds, look at the **geometry** and not the colours:
 neither side has a usable one yet. The camera's white balance has not
@@ -862,7 +889,7 @@ things this repo already committed. On room07:
 | --- | --- |
 | `algebra` | 7 889 of 7 889 voxels placed, 0 missing, 0 extra — the composition collapses to the identity on the anchor frame |
 | `tracker` | median 39 mm from the committed trajectory, p90 85 mm — inside the 66–102 mm `DRIFT_AND_ALIGNMENT.md` measured |
-| `measured` | 89.8% of the map's measured voxels are in the fused sweep within one voxel (98.3% within two; 53.6% exact, which is the wrong question — both sides are 8 cm shells built from trajectories a voxel apart) |
+| `measured` | 89.8% of the map's measured voxels are in the fused sweep within one voxel (98.4% within two; 53.6% exact, which is the wrong question — both sides are 8 cm shells built from trajectories a voxel apart) |
 
 ### What it does not do
 

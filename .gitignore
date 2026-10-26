@@ -152,6 +152,10 @@ outputs/scannet*/
 # names. outputs/room07/ and room08/ are the EVALUATION csvs and stay tracked
 outputs/live_session/
 outputs/*_live/
+# --accumulate sweeps. Regenerable from the bag and the checkpoint, both of
+# which HF holds, and every number taken from them is in
+# inference/document/DEMO.md -- which is the thing that has to be in git.
+outputs/*_world/
 custom_visual_pred/
 visual_pred/
 # guard.sh per-run scratch: which pid a job got, and the pause/stop flags
@@ -167,3 +171,5 @@ captures/*/meta.json.preicp
 # not a description of the code. What they decide belongs in the commit
 # message and in inference/document/ once it is true.
 docs/superpowers/
+# Thesis report planning notes: personal, not part of the code
+/report.md

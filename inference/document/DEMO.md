@@ -103,7 +103,7 @@ the camera can slide along it without the alignment error changing.
 | key | |
 | --- | --- |
 | `space` or `f` | freeze / carry on |
-| `m` | flip between the room and the sensor's own reconstruction (needs `--accumulate`) |
+| `m` | cycle the room as cubes → the same voxels as one **surface** → the sensor's own reconstruction |
 | `c` | cycle `photo` → `verdict` → `class` |
 | `+` `-` | zoom in and out |
 | `0` | fit what has been built so far into the window |
@@ -181,13 +181,136 @@ around the real room, with every proved voxel hidden inside it.
 The NYU palette: floor, wall, bed, chair, and so on. Useful for the first
 few seconds of a run, before any colour is trustworthy.
 
-### `m` — what the sensor alone had
+### `m` — the same room, three ways
 
-A triangle mesh of everything the depth has measured, at the same
-viewpoint, so the only thing that changes when you press `m` is the
-geometry. **The mesh stops where the depth stopped**, so every hole in it
-is somewhere the sensor could not see — and that is exactly what the room
-beside it is filling in.
+Three layers at one viewpoint, so the only thing that changes when you
+press `m` is the geometry.
+
+**1. Cubes.** The room as 8 cm voxels. Honest about the resolution, and a
+staircase where the room has a wall.
+
+**2. Surface.** Exactly the same voxels, meshed into one continuous
+surface — the walls go flat and the bed reads as a bed. It is the same
+set of voxels and not a different answer: the cube mesh emits one face
+per occupied/empty boundary and the surface emits one quad per crossing
+edge, which is the same set, so on room07 both come out at **32 216
+triangles** from the same 14 052 voxels. The colour is unchanged, so
+`c` still works and what was measured is still told from what was filled
+in by **colour**, never by being quietly left out. Meshing and smoothing
+the room costs **26 ms**, on the same cadence as the cubes.
+
+**It is made to agree with the sensor layer, in extent and in colour.**
+The two are built from the same depth frames and disagree anyway: the
+TSDF resolves 2 cm cells and raises a surface wherever a weighted
+average of signed distance crosses zero, while the room samples ONE
+point per 8 cm voxel and needs two hits to outvote two passes. At a
+window that is the difference between a sheet of specular returns and a
+hole. So the room also covers every voxel the mesh passes through
+(`--no_match_sensor` to stop it, +460 voxels on room07), and the
+surface takes its colour from that mesh (`--no_sensor_colour`):
+
+| the voxel | where its colour comes from |
+|---|---|
+| the camera photographed it | the nearest point on the mesh **within two voxels**, else the colour it already had |
+| no photograph ever reached it | the nearest point on the mesh, **however far** |
+
+On room07 that is 49.2% of the surface's vertices within reach, 40.5%
+from further off and 10.3% keeping what they had, and it takes the
+layer's median brightness from 75 to 115 against the sensor's own 124.
+
+**The second row is the one that made the difference.** A voxel the
+camera never saw takes the colour of the nearest voxel of the SAME
+class, and failing that a dimmed class colour — and on room07 that is
+the whole FLOOR, never photographed by a sweep that was looking at the
+walls, so the layer laid palette green over it. A floor does not look
+like that. The two-voxel reach is there to stop a voxel that HAS a
+colour being handed a distant wall's; a voxel wearing a class tint has
+nothing to protect, and the nearest measured colour is at least a
+photograph of this room. It is the borrow `fill_hidden` already makes,
+from a better source.
+
+**And the surface is split once to carry it.** The mesh carries the
+TSDF's 2 cm texture and the lattice has a vertex every 8 cm, so asking
+it for a colour once per cell threw three quarters of it away — the
+layer arrived as a soft-focus copy of the same room, the window frame
+and the pattern on the bed and the flowers on the sill all washed out
+of it. One midpoint subdivision takes room07 from 15 691 vertices to
+63 318, against the sensor mesh's own 62 090, and nothing is smoothed
+after it, so what the sensor measured arrives as measured. Mesh,
+smooth, split and colour costs **212 ms** against 28 ms for the bare
+mesh — the split only happens where there is a sensor colour to carry,
+so `verdict`, `class` and the single-frame layer are unaffected.
+
+Both only ever ADD, and only from measurement. Pressing `m` then
+changes the geometry and not the room's appearance.
+
+**Read it in `photo` or `class`, not in `verdict`.** There the room is a
+*place*, which is what a surface is good at. `verdict` is a *comparison*,
+and it works in the cubes because the model's unmeasured claims are drawn
+at 45% size so you can see the proved ones through the gaps — a surface
+has no gaps, so the confirmed voxels end up sealed inside a shell of
+unverified claims and you see almost none of them. The cubes remain the
+layer for that question.
+
+The sensor's colour is taken in `photo` only. In `verdict` and `class`
+the colour IS the answer — which completions the sweep proved, and
+which class the model called each voxel — and painting the photo over
+either erases the question the mode exists to ask.
+
+**Without `--accumulate` the colour comes from the frame's own
+surface**, by the same rule and the same code — so `m` changes the
+geometry and not the room's appearance in that mode either. The mesh is
+the one depth image integrated into a volume of its own, built for the
+layer rather than only for the sensor layer it used to serve, and it
+costs 6-7 ms a frame. With `--colour all` nothing there is on a dimmed
+class tint to begin with (measured over 12 frames: 45.7% photographed,
+54.2% borrowed within class, 0.0% dimmed), so the second row of the
+table above almost never fires; under the `zbuffer` default, where
+76.7% ARE on one by design, it carries most of the layer. Off in
+`--colour class`, where the colour is the answer.
+
+The whole middle layer then costs `mesh+draw` 153 ms a frame against 33
+for the cubes and 36 for the sensor's own surface. `--no_sensor_colour`
+takes it back to the cubes' cadence and the model's own colour.
+
+**Without `--accumulate` it also shrinks onto the measurement.** The
+completion comes out about a voxel proud of what the depth actually
+measured, and the frame's own TSDF is the per-voxel signed distance that
+says by how much — so every surface vertex standing in FRONT of a
+measured surface (`tsdf > 0`) is stepped back onto it. On room07's first
+frame that is 22.3% of the vertices, moved 5.3 cm on average, and their
+distance from the sensor's own mesh drops from **6.9 cm to 2.3 cm**
+(median), 95.8% of them closer.
+
+The other 77.7% do not move at all, and that is the point: behind a
+surface, and out where nothing was measured and the TSDF saturates,
+there is no measurement to shrink onto and pulling anyway would be
+inventing one. `--surface_pull V` caps the step in voxels (default 1.5,
+`0` off). The room path has no per-voxel TSDF and is unaffected.
+
+The shrink happens BEFORE the split and before the colour, so the
+colour is sampled where the surface ends up rather than a voxel proud
+of it — which at a wall is the wrong side of the corner — and there is
+a quarter as much of it to do.
+
+It is a surface over the model's voxels, so it shows the model's lumps:
+4.7% of room07's occupied voxels have 6 or fewer of their 26 neighbours,
+and those are the spikes you can see around the window. They are in the
+cubes too — meshing just joins them up. `--surface_smooth N` is the
+knob (default 2); more passes will not remove them, because they are
+supported by real voxels, and will melt the bed trying. The same `N`
+smooths the **colour** along the surface, which matters more than it
+sounds: each vertex takes exactly one voxel's colour, so without it a
+smooth surface still wears a blocky 8 cm colour field, and every lone
+voxel gets outlined in its own colour. It runs BEFORE the sensor's
+colour is laid on, never after — smoothing that was what blurred the
+layer.
+
+**3. The sensor alone.** A triangle mesh of everything the depth has
+measured. **It stops where the depth stopped**, so every hole in it is
+somewhere the sensor could not see — and that is exactly what the two
+layers before it are filling in. Layers 2 and 3 are the same room with
+and without the model's contribution, which is the comparison to show.
 
 With `--accumulate` it is free: the tracker already integrates a 2 cm
 TSDF to align each frame against, which is the same structure `fuse_scan`
@@ -205,9 +328,12 @@ not a measurement — no checks are run on it, and
 
 1. **Start it and say nothing for ten seconds.** One frustum of room
    appears. Let them watch it grow as the camera pans.
-2. **Freeze early, press `m`.** The sensor's mesh is a single wedge with a
-   room-shaped hole around it. Press `m` again: the room already has
-   walls, a floor and a bed. *That difference is the model.*
+2. **Freeze early, press `m` twice** to reach the sensor's own mesh: a
+   single wedge with a room-shaped hole around it. Press `m` once more
+   and the room is back, with walls, a floor and a bed. *That difference
+   is the model.* If the cubes are the thing getting in the way, stop on
+   the **surface** layer in between — the same claim, as a room rather
+   than as a pile of bricks.
 3. **Carry on to the end.** The mesh closes up and the room fills. Say
    that the model guessed those walls hundreds of frames before the camera
    got there.
@@ -215,9 +341,9 @@ not a measurement — no checks are run on it, and
    sweep later proved it right. Red is where it was wrong. Give the
    number: on room07, **86.7% of the completions the sweep could reach
    were right**.
-5. **Then give the honest one.** 8 175 of its completions were never
+5. **Then give the honest one.** 8 178 of its completions were never
    tested and most never can be — inside the furniture, behind the walls.
-   The 86.7% is of the 4 020 that *were* reachable. Say this before
+   The 86.7% is of the 4 022 that *were* reachable. Say this before
    someone else asks it.
 
 In the first four seconds of any run, look at the geometry and not the
@@ -234,16 +360,16 @@ Both rooms, every frameset, none dropped by the tracker.
 | | room07 | room08 |
 | --- | ---: | ---: |
 | framesets | 808 | 1 065 |
-| voxels the **sensor measured** | 6 513 | 7 764 |
-| voxels the **model claims** | 17 225 | 26 000 |
-| of those, **completions** — filled in where the sensor knew nothing | 12 195 | 20 361 |
-| completions the sweep **reached** | 4 020 | 4 888 |
-| **confirmed** | **3 485 (86.7%)** | **3 716 (76.0%)** |
-| contradicted | 535 | 1 172 |
-| still untested when the sweep ended | 8 175 | 15 473 |
-| measured but never predicted | 322 | 1 108 |
-| claims in space the camera measured as empty | 2 805 | 3 790 |
-| reconstruction mesh | 168 k triangles | 205 k triangles |
+| voxels the **sensor measured** | 6 513 | 7 758 |
+| voxels the **model claims** | 17 229 | 25 976 |
+| of those, **completions** — filled in where the sensor knew nothing | 12 200 | 20 367 |
+| completions the sweep **reached** | 4 022 | 4 883 |
+| **confirmed** | **3 486 (86.7%)** | **3 709 (76.0%)** |
+| contradicted | 536 | 1 174 |
+| still untested when the sweep ended | 8 178 | 15 484 |
+| measured but never predicted | 321 | 1 115 |
+| claims in space the camera measured as empty | 2 805 | 3 772 |
+| reconstruction mesh | 168 k triangles | 204 k triangles |
 
 room08 scores lower and that is not noise: it is a longer sweep of a
 bigger space, so more of the completion became reachable and more of it
@@ -254,15 +380,15 @@ already committed:
 
 | | room07 | room08 |
 | --- | --- | --- |
-| `algebra` — the placement arithmetic | 7 889 of 7 889 voxels placed, 0 missing, 0 extra | — |
-| `tracker` — against `scan/trajectory.txt` | median **39 mm**, p90 85 mm, max 142 mm | median **53 mm**, p90 83 mm, max 121 mm |
-| `measured` — against `scan/room_cloud.ply` | **89.8%** within one voxel, 98.3% within two | **94.3%** within one voxel, 97.8% within two |
+| `algebra` — the placement arithmetic | 7 889 of 7 889 voxels placed, 0 missing, 0 extra | 5 884 of 5 884, 0 missing, 0 extra |
+| `tracker` — against `scan/trajectory.txt` | median **39 mm**, p90 85 mm, max 142 mm | median **53 mm**, p90 82 mm, max 121 mm |
+| `measured` — against `scan/room_cloud.ply` | **89.8%** within one voxel, 98.4% within two | **94.3%** within one voxel, 97.9% within two |
 
 Tolerance is 150 mm and
 [DRIFT_AND_ALIGNMENT.md](../../reconstruction_GT/document/DRIFT_AND_ALIGNMENT.md)
 documents 66–102 mm of
 drift for these captures, so both trackers are inside what the capture
-itself is worth. The exact-match figure (53.6% / 55.5%) is the wrong
+itself is worth. The exact-match figure (53.6% / 55.8%) is the wrong
 question — both sides are 8 cm shells built from trajectories about a
 voxel apart.
 
