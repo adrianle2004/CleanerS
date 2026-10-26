@@ -145,6 +145,22 @@ GRID = (60, 36, 60)
 VOX_UNIT_LOW = 0.08
 MODES = ('class', 'zbuffer', 'all')
 
+# What `m` cycles through, in order. Three answers to the same scene:
+#
+#   voxels    the completion as 8 cm cubes -- honest about the resolution,
+#             and a staircase where the room has a wall
+#   surface   the SAME voxels meshed into one surface, which reads as a
+#             room. The completion stays told apart from the measurement
+#             by COLOUR, never by being quietly left out -- see
+#             _world_colours and voxel_surface.py
+#   sensor    the sensor's own reconstruction, measured only: the same
+#             room with the model's contribution taken away, so the two
+#             middle layers are a before and after
+#
+# Only `sensor` can be unavailable (it needs a reconstruction), and the
+# cycle skips it rather than refusing -- see _cycle_layer.
+LAYERS = ('voxels', 'surface', 'sensor')
+
 
 def view_points(p_world, origin, vox, pivot):
     """World METRES -> the viewer's index frame, for the accumulating room.
@@ -214,6 +230,12 @@ class LiveView:
         self.colour_ms = 0.0
         self.draw_ms = 0.0
         self.wait_ms = 0.0
+        # frames whose colour was actually painted on the pool. Not the
+        # same question as _overlapping(), which only says whether
+        # overlap is CONFIGURED: --accumulate builds the room on the
+        # loop and never calls update() at all, so nothing of it is
+        # hidden behind anything. See report().
+        self.overlapped = 0
         self.closed = False
         self.geom = None
         self._last = None          # (idx, cls, loader, rgb), to recolour
@@ -260,7 +282,37 @@ class LiveView:
         # the mesh stops where the depth stopped, and the holes in it are
         # what the model is claiming to fill.
         self.recon = None
-        self.show_mesh = False
+        # which of the three layers is on screen -- see LAYERS
+        self.layer = 'voxels'
+        # Laplacian passes over the surface layer. A plane is its own
+        # neighbourhood average, so this rounds corners and specks and
+        # leaves flat walls exactly on the cubes they were meshed from;
+        # 2 is enough to stop the lattice reading as a staircase without
+        # eating the thin things (a chair leg is one voxel wide).
+        self.surface_smooth = 2
+        # How far, in VOXELS, the surface layer may step a vertex back
+        # onto the measurement it is standing in front of. The model's
+        # completion comes out about a voxel proud and the TSDF says by
+        # how much, per voxel; past about a voxel and a half the TSDF is
+        # saturating and is no longer a distance anyone measured. 0 is
+        # off -- see voxel_surface.pull_to_surface.
+        self.surface_pull = 1.5
+        # Cover what the SENSOR's own mesh covers. The voxel layers and
+        # that mesh are built from the same depth frames and disagree
+        # anyway -- 2 cm weighted averages against one sample per 8 cm
+        # voxel and a two-hit vote -- so at a window the mesh has a sheet
+        # where the room has a hole, and `m` moves the room instead of
+        # re-describing it. With this on, every voxel the mesh passes
+        # through is drawn too, wearing the mesh's own colour where the
+        # room has none. It only ever ADDS, and only from measurement.
+        self.match_sensor = True
+        # Take the surface layer's colour from the SENSOR's own mesh
+        # wherever it has one, so that `m` between the two changes the
+        # geometry and not the room's appearance. Where the mesh has no
+        # answer -- the completion -- the model's own colour stays. Off
+        # in `verdict`, where the colour is the answer. See
+        # _sensor_recolour.
+        self.sensor_colour = True
         # Is there anything that COULD build one? The mesh comes out of
         # the tracker's TSDF, and the tracker only exists under
         # --accumulate -- so in a plain --display run `m` has nothing to
@@ -284,6 +336,7 @@ class LiveView:
         self._wworld = None        # the room last drawn, for the fit key
         self._wframe = 0
         self._wmesh = None
+        self._tsdf = None        # this frame's TSDF, for the surface layer
         self._wstatus = []
         self._wforce = False
 
@@ -331,7 +384,7 @@ class LiveView:
         for key in 'CMS0':
             self.vis.register_key_action_callback(
                 ord(key), self._press_only(
-                    {'C': self._cycle, 'M': self._flip_mesh,
+                    {'C': self._cycle, 'M': self._cycle_layer,
                      'S': self._screenshot, '0': self._zoom_reset}[key]))
         for key in (' ', 'F'):
             self.vis.register_key_action_callback(
@@ -351,13 +404,17 @@ class LiveView:
             self._cv.moveWindow(self.panel_window, width + 20, 0)
 
     # ---- the frame loop calls this ----
-    def update(self, pred_label, mask, loader, rgb=None, name='', fps=None):
+    def update(self, pred_label, mask, loader, rgb=None, name='', fps=None,
+               tsdf=None):
         """-> False when the user has closed the window.
 
         pred_label/mask: what run_live already hands save_prediction_ply.
         loader: the FrameLoader, for cam_K / cam_pose / vox_origin / depth.
         rgb: the frame's colour image, BGR as the loader got it.
         name/fps: for the panel footer only.
+        tsdf: this frame's encoded TSDF, which the surface layer uses to
+            take the model's thickness off the front of what the depth
+            measured -- see _build_frame_surface.
 
         With `overlap` on (the default, except in `class` mode where there is
         nothing to hide), this DRAWS the previous frame and then starts
@@ -366,7 +423,8 @@ class LiveView:
         """
         if self.closed:
             return False
-        job = self._job_for(pred_label, mask, loader, rgb, name, fps)
+        job = self._job_for(pred_label, mask, loader, rgb, name, fps,
+                            tsdf)
 
         if not self._overlapping():
             self._drain()                     # mode may have just changed
@@ -381,6 +439,7 @@ class LiveView:
             t0 = time.time()
             done['colours'] = done['future'].result()
             self.wait_ms += 1000 * (time.time() - t0)
+            self.overlapped += 1
             alive = self._present(done)
         if not alive:
             return False
@@ -463,9 +522,7 @@ class LiveView:
             # verdicts() walks every voxel in the room, so it is computed
             # ONCE here and shared by the mesh and the readout
             v = world.verdicts()
-            self._wmesh = (self._build_recon(world)
-                           if self.show_mesh and self.recon is not None
-                           else self._build_world(world, v))
+            self._wmesh = self._world_geometry(world, v)
             self._wstatus = self._status_lines(v)
             self.colour_ms += 1000 * (time.time() - t0)
 
@@ -541,7 +598,8 @@ class LiveView:
         settled = n['confirmed'] + n['contradicted']
         pct = (' -- %.0f%% right' % (100.0 * n['confirmed'] / settled)
                if settled else '')
-        if self.show_mesh:
+        filled = n['confirmed'] + n['contradicted'] + n['untested']
+        if self.layer == 'sensor':
             return [
                 ('%sthe SENSOR only -- its own reconstruction, %d triangles'
                  % ('FROZEN  ' if self.frozen else '',
@@ -549,8 +607,17 @@ class LiveView:
                  (210, 210, 210)),
                 ('every hole in it is somewhere the depth could not reach',
                  (170, 170, 170)),
-                ('m: back to the room, which fills %d of them in'
-                 % (n['confirmed'] + n['contradicted'] + n['untested']),
+                ('m: back to the cubes, which fill %d of them in' % filled,
+                 (170, 170, 170)),
+            ]
+        if self.layer == 'surface':
+            return [
+                ('%sSURFACE, %s   measured %d   model filled in %d'
+                 % ('FROZEN  ' if self.frozen else '', self.world_colour,
+                    n['measured'], filled), (210, 210, 210)),
+                ('the same voxels as the cubes, meshed -- the colour is '
+                 'still what says which is which', (170, 170, 170)),
+                ('m: the sensor alone, the same room without the model',
                  (170, 170, 170)),
             ]
         return [
@@ -568,7 +635,8 @@ class LiveView:
         ]
 
     def _world_colours(self, world, v, i, view):
-        """One colour per occupied voxel, in the current mode.
+        """One colour per occupied voxel, and which of them a photograph
+        of THIS room actually coloured. -> (colours, photographed)
 
         `photo` is display_solid's `all` rule applied to a room: a voxel
         wears the mean colour of the pixels that measured it, and one the
@@ -577,6 +645,12 @@ class LiveView:
         standing in front of it. A class with no coloured member anywhere
         keeps a dimmed class colour, which reads as unseen. That is
         `fill_hidden`, imported, not reimplemented.
+
+        `photographed` is true for the first two -- the voxel's own
+        colour and a sibling's -- and false for the dimmed class tint,
+        which is the one case where the colour is not a photograph of
+        anything. The surface layer uses it to go looking for a better
+        source; see _sensor_recolour.
         """
         try:
             from .visualize import DEFAULT_COLORMAP
@@ -586,14 +660,16 @@ class LiveView:
         class_rgb = DEFAULT_COLORMAP[
             np.clip(k, 0, len(DEFAULT_COLORMAP) - 1)][:, :3].astype(np.int32)
         if self.world_colour == 'class':
-            return class_rgb
+            return class_rgb, np.zeros(len(i), bool)
         photo = world.colours()[i[:, 0], i[:, 1], i[:, 2]].astype(np.int32)
         seen = world.colour_n.reshape(world.shape)[
             i[:, 0], i[:, 1], i[:, 2]] > 0
-        out = self.ds.fill_hidden(photo, seen, class_rgb, view,
-                                  'nearest')[0].astype(np.int32)
+        out, borrowed = self.ds.fill_hidden(photo, seen, class_rgb, view,
+                                            'nearest')
+        out = out.astype(np.int32)
+        lit = seen | borrowed
         if self.world_colour != 'verdict':
-            return out
+            return out, lit
         # the comparison, laid over the photo: anything the model claims
         # and the sensor has not measured goes neutral FIRST, then the
         # three verdicts paint over it
@@ -605,7 +681,7 @@ class LiveView:
             m = v[name][i[:, 0], i[:, 1], i[:, 2]]
             if m.any():
                 out[m] = colour
-        return out
+        return out, lit
 
     # view units, pointing up and a little towards the viewer. The room's
     # cubes carry display_solid's baked face shading and the renderer is
@@ -652,23 +728,359 @@ class LiveView:
         renderer is unlit, so anything drawn beside them has to be shaded
         the same way or it arrives as a flat silhouette.
         """
+        return self._lit(pts, src.triangles,
+                         np.asarray(src.vertex_colors)
+                         if len(src.vertex_colors) else None)
+
+    def _lit(self, pts, tris, colours=None):
+        """The shading, over raw arrays: the surface layer has no source
+        mesh to take triangles and colours off."""
         o3d = self.o3d
         pts = (pts - self.anchor) * self.zoom + self.anchor
-        m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(pts),
-                                      src.triangles)
+        if not isinstance(tris, o3d.utility.Vector3iVector):
+            tris = o3d.utility.Vector3iVector(
+                np.ascontiguousarray(tris, dtype=np.int32))
+        m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(pts), tris)
         # the axis swap is a permutation AND a reflection, so orientation
         # survives it and the winding does not have to be flipped
         m.compute_vertex_normals()
         n = np.asarray(m.vertex_normals)
         L = self._LIGHT / np.linalg.norm(self._LIGHT)
         shade = 0.42 + 0.58 * (0.5 + 0.5 * (n @ L))
-        if len(src.vertex_colors):
-            c = np.asarray(src.vertex_colors)
-        else:
-            c = np.full((len(pts), 3), 0.72)
+        c = np.full((len(pts), 3), 0.72) if colours is None else colours
         m.vertex_colors = o3d.utility.Vector3dVector(
             np.clip(c * shade[:, None], 0, 1))
         return m
+
+    def _surface_mesh(self, occ, rows, colours, to_view, pull=None,
+                      recolour=None, unlit=None):
+        """The shared half of both surface layers. -> a mesh, or None.
+
+        occ      a dense boolean grid
+        rows     (N,3) the occupied indices `colours` is aligned to
+        colours  (N,3) ints 0..255, one per occupied voxel
+        to_view  maps (M,3) FRACTIONAL grid indices to view coordinates
+        unlit    (N,) which of those colours no photograph ever made
+        recolour where the sensor's own mesh has a better answer; given
+                 one, the surface is split so it can carry it
+
+        The colour comes back through voxel_surface's `owner`: every
+        vertex names the voxel whose surface it sits on, so the surface
+        wears exactly the colours the cubes would have worn -- no second
+        palette, and the measured/completed distinction the room is read
+        by survives being meshed.
+        """
+        try:
+            from .voxel_surface import smooth, subdivide, surface_nets
+        except ImportError:
+            from voxel_surface import smooth, subdivide, surface_nets
+        verts, tris, owner = surface_nets(occ)
+        if not len(tris):
+            return None
+        row_of = np.full(occ.shape, -1, np.int64)
+        row_of[rows[:, 0], rows[:, 1], rows[:, 2]] = np.arange(len(rows))
+        # one colour per VOXEL, read out once per VERTEX: `unlit` is in
+        # voxels too, so it has to make the same trip or it would be
+        # read against the wrong array
+        own = row_of[owner[:, 0], owner[:, 1], owner[:, 2]]
+        vcol = np.asarray(colours, np.float64)[own]
+        vunlit = None if unlit is None else np.asarray(unlit)[own]
+        # The COLOUR is smoothed with the geometry, by the same function
+        # over the same connectivity. `owner` gives each vertex exactly
+        # one voxel's colour, so without this a smooth surface still
+        # wears a blocky 8 cm colour field, and every lone voxel is
+        # outlined in its own colour, which made the model's lumps
+        # shout.
+        vcol = smooth(vcol, tris, passes=self.surface_smooth)
+        verts = smooth(verts, tris, passes=self.surface_smooth)
+        if pull is not None:
+            # AFTER smoothing: smoothing would otherwise average the
+            # shrunk vertices back out towards the lattice they came
+            # from. BEFORE the split, so the shrink is done once per
+            # cell rather than four times, and before the colour, so
+            # the colour is sampled where the surface ends up.
+            verts = pull(verts)
+        if recolour is not None:
+            # Split first, and recolour AFTER the smoothing, because
+            # both of those were throwing the sensor's texture away:
+            # the lattice can only be asked about colour once per 8 cm
+            # cell, and then the smoothing blurred what came back. The
+            # layer arrived as a soft-focus copy of the same room --
+            # the window frame, the pattern on the bed and the flowers
+            # on the sill all washed out of it. See voxel_surface's
+            # subdivide: the split moves nothing, it only gives the
+            # mesh somewhere to put the other three quarters of its
+            # colour. Nothing is smoothed after it, so what the sensor
+            # measured arrives as measured.
+            verts, tris, parents = subdivide(verts, tris)
+            vcol = vcol[parents].mean(axis=1)
+            if vunlit is not None:
+                # a midpoint is only unphotographed if both ends are
+                vunlit = vunlit[parents].all(axis=1)
+            vcol = recolour(verts, vcol, vunlit)
+        return self._lit(to_view(verts), tris, np.clip(vcol / 255.0, 0, 1))
+
+    def _build_world_surface(self, world, v):
+        """The ROOM's occupancy as one surface. -> a mesh, or None.
+
+        Exactly the voxels _build_world draws as cubes, including its
+        rule that a claim the sensor has measured through is dropped
+        outside `verdict` mode -- so `m` re-describes the room without
+        changing what is in it.
+        """
+        occ, srgb, sonly = self._world_occupancy(world, v)
+        rows = np.argwhere(occ)
+        if not len(rows):
+            return None
+        colours, lit = self._world_colours(world, v, rows,
+                                           self._to_view(rows))
+        colours = self._sensor_colours(colours, rows, srgb, sonly)
+        if sonly is not None:
+            # the mesh's own colour, which is as photographed as it gets
+            lit = lit | sonly[rows[:, 0], rows[:, 1], rows[:, 2]]
+        return self._surface_mesh(occ, rows, colours, self._to_view,
+                                  recolour=self._sensor_recolour(world),
+                                  unlit=~lit)
+
+    def _build_frame_surface(self, idx, colours, tsdf=None, lit=None,
+                             loader=None, recon=None):
+        """One FRAME's completion as a surface. -> a mesh, or None.
+
+        With the surface measured for this frame it also takes its
+        COLOUR from it, the way the room takes its from the sweep's --
+        so `m` changes the geometry and not the room's appearance here
+        either. `lit` says which voxels a photograph actually coloured;
+        the rest may reach as far as they have to. See _frame_recolour.
+
+        With this frame's TSDF it also SHRINKS the surface onto the
+        measurement wherever it stands in front of one: the completion
+        comes out about a voxel proud, and the TSDF is the per-voxel
+        signed distance that says by how much. Only the front moves --
+        tsdf > 0 -- because behind a surface, and out where nothing was
+        measured, there is nothing to shrink onto. See
+        voxel_surface.pull_to_surface.
+
+        The frame's grid is 60x36x60 and its up axis is index 1, so the
+        view transform is display_solid's own to_view_index rather than
+        the room's _to_view -- a reflection with no permutation. Pinned
+        to FIXED_PIVOT, like every other layer in this window.
+        """
+        try:
+            from .voxel_surface import pull_to_surface
+        except ImportError:
+            from voxel_surface import pull_to_surface
+        idx = np.asarray(idx)
+        if not len(idx):
+            return None
+        occ = np.zeros(GRID, bool)
+        occ[idx[:, 0], idx[:, 1], idx[:, 2]] = True
+        pull = None
+        if tsdf is not None and self.surface_pull:
+            field = np.asarray(tsdf).reshape(GRID)
+
+            def pull(verts):
+                return pull_to_surface(verts, field,
+                                       max_step=self.surface_pull)
+
+        recolour = (None if loader is None
+                    else self._frame_recolour(loader, recon))
+        return self._surface_mesh(
+            occ, idx, colours,
+            lambda p: self.ds.to_view_index(p, self.ds.FIXED_PIVOT),
+            pull=pull, recolour=recolour,
+            unlit=None if lit is None else ~np.asarray(lit))
+
+    def _sensor_grid(self, world):
+        """The sensor's mesh on the room's grid. -> (covered, rgb) or None.
+
+        Cached on the mesh it was built from: the room is re-meshed every
+        `mesh_every` frames and the reconstruction only changes when the
+        sweep is re-extracted, so rasterising 62 k vertices every time
+        would be work for nothing.
+        """
+        if not self.match_sensor or self.recon is None:
+            return None
+        if getattr(self, '_sgrid_of', None) is id(self.recon):
+            return self._sgrid
+        try:
+            from .voxel_surface import voxelise
+        except ImportError:
+            from voxel_surface import voxelise
+        verts = np.asarray(self.recon.vertices)
+        if not len(verts):
+            return None
+        cols = (np.asarray(self.recon.vertex_colors) * 255.0
+                if len(self.recon.vertex_colors) else None)
+        self._sgrid = voxelise((verts - world.origin) / world.vox,
+                               world.shape, values=cols)
+        self._sgrid_of = id(self.recon)
+        return self._sgrid
+
+    def _world_occupancy(self, world, v):
+        """Every voxel the room draws, and where its colour comes from.
+
+        -> (occ, sensor_rgb or None, sensor_only or None). `sensor_only`
+        is the voxels that exist ONLY because the mesh covers them, which
+        are the ones the room has no colour for.
+        """
+        occ = v['measured'] | self._world_claim(v)
+        grid = self._sensor_grid(world)
+        if grid is None:
+            return occ, None, None
+        covered, rgb = grid
+        return occ | covered, rgb, covered & ~occ
+
+    # How far a surface vertex may reach for the sensor's own colour,
+    # in VOXELS. Two: far enough to cross the half-voxel the layers can
+    # differ by and the lattice's own roughness, near enough that a
+    # voxel the camera DID colour is never given a distant wall's
+    # instead of its own.
+    SENSOR_COLOUR_REACH = 2.0
+
+    @staticmethod
+    def _mesh_points(mesh):
+        """One mesh's vertices, its colours 0..255 and a tree over them.
+
+        -> (verts, colours, tree), all None when there is nothing to
+        ask: no mesh, no vertices, or a mesh carrying no colour.
+        """
+        if mesh is None:
+            return None, None, None
+        verts = np.asarray(mesh.vertices)
+        if not len(verts) or not len(mesh.vertex_colors):
+            return None, None, None
+        from scipy.spatial import cKDTree
+        return (verts, np.asarray(mesh.vertex_colors) * 255.0,
+                cKDTree(verts))
+
+    def _sensor_points(self):
+        """The same, for the SWEEP's mesh, cached on the mesh it was
+        built from -- like _sensor_grid. The room is recoloured every
+        `mesh_every` frames against the same 62 k vertices, and a tree
+        over them costs more than the lookups that use it.
+
+        The frame path does not come here: its mesh is a different one
+        every frame, so there is nothing to cache and an id() that an
+        old mesh has released could be handed straight back to a new
+        one.
+        """
+        if getattr(self, '_spts_of', None) is id(self.recon):
+            return self._spts
+        self._spts = self._mesh_points(self.recon)
+        self._spts_of = id(self.recon)
+        return self._spts
+
+    def _recolour_from(self, points, to_world, vox):
+        """The colour rule itself, over one mesh. -> a callback, or None.
+
+        points    (verts, colours, tree), from _mesh_points
+        to_world  FRACTIONAL grid indices -> world metres
+        vox       that grid's voxel size, which the reach is counted in
+
+        Shared by the room and the frame ON PURPOSE. They differ only in
+        which mesh they ask and how their grid reaches metres; two
+        copies of the rule would drift, and `m` would change the room's
+        appearance in one mode and not the other.
+        """
+        verts, cols, tree = points
+        if tree is None:
+            return None
+        reach = self.SENSOR_COLOUR_REACH * vox
+        try:
+            from .voxel_surface import nearest_colour
+        except ImportError:
+            from voxel_surface import nearest_colour
+
+        def recolour(v, base, unlit=None):
+            w = to_world(np.asarray(v, np.float64))
+            if unlit is None:
+                return nearest_colour(w, verts, cols, reach, base,
+                                      tree=tree)[0]
+            # A voxel no photograph ever coloured is wearing a DIMMED
+            # CLASS TINT, and that is not what anything looks like: in
+            # the room it is the whole floor, which the sweep never saw
+            # from above, drawn in palette green. So for those the reach
+            # comes off and the nearest measured colour wins however far
+            # away it is -- the same borrow fill_hidden already makes
+            # across a class, from a better source. Nothing else moves:
+            # a voxel with a colour of its own keeps the cap.
+            limit = np.where(np.asarray(unlit), np.inf, reach)
+            return nearest_colour(w, verts, cols, limit, base,
+                                  tree=tree)[0]
+
+        return recolour
+
+    def _frame_recolour(self, loader, recon):
+        """The same rule, over the surface built for THIS frame.
+
+        The frame's grid is indexed (x, UP, depth) and its metres are
+        (x, depth, UP) -- the swap view_points inverts -- so the two
+        axes change places on the way out. Without it every lookup
+        lands somewhere else in the room and the surface comes back
+        wearing whatever was there.
+        """
+        if not self.sensor_colour or self.colour == 'class':
+            return None
+        return self._recolour_from(
+            self._mesh_points(recon),
+            lambda v: (loader.vox_origin
+                       + (v[:, [0, 2, 1]] + 0.5) * VOX_UNIT_LOW),
+            VOX_UNIT_LOW)
+
+    def _sensor_recolour(self, world):
+        """-> a callback that recolours surface vertices from the mesh.
+
+        None when there is no mesh to ask, or when the colours are
+        deliberately not the sensor's: in `verdict` the colour IS the
+        answer -- green for a completion the sweep proved, red for one
+        it disproved -- and in `class` it is which class the model
+        called each voxel. Painting the sensor's photo over either one
+        erases the question the mode exists to ask.
+        """
+        if (not self.sensor_colour or self.recon is None
+                or self.world_colour != 'photo'):
+            return None
+        # surface_nets puts a voxel CENTRE at its integer index, so the
+        # half-voxel is what makes this land in the same metres the mesh
+        # is already in. The room's grid is in world axis order, so
+        # unlike the frame's there is nothing to swap.
+        return self._recolour_from(
+            self._sensor_points(),
+            lambda v: world.origin + (v + 0.5) * world.vox,
+            world.vox)
+
+    def _sensor_colours(self, colours, rows, srgb, sonly):
+        """Give the mesh-only voxels the mesh's own colour.
+
+        The room has no photo colour for them -- they are there because
+        the SENSOR's mesh covers them, not because the room's hit/pass
+        vote ever called them a surface, so nothing ever coloured them.
+        Left to _world_colours they would fall back to a class colour,
+        and for the ones the model never claimed either that class is
+        `empty`, which paints a window pane bright teal.
+        """
+        if srgb is None or sonly is None or not sonly.any():
+            return colours
+        take = sonly[rows[:, 0], rows[:, 1], rows[:, 2]]
+        if not take.any():
+            return colours
+        out = np.array(colours, np.int32, copy=True)
+        out[take] = np.clip(
+            srgb[rows[take, 0], rows[take, 1], rows[take, 2]], 0, 255)
+        return out
+
+    def _world_claim(self, v):
+        """Which of the model's claims the room is currently drawing.
+
+        Shared by the cubes and the surface ON PURPOSE: `m` is supposed
+        to re-describe the room, not change what is in it, and two copies
+        of this rule would eventually disagree about one voxel and make
+        the layers impossible to read against each other.
+        """
+        claim = v['predicted']
+        if self.world_colour != 'verdict':
+            claim = claim & ~v['in_free']
+        return claim
 
     def _build_world(self, world, v):
         """One mesh of the whole room.
@@ -681,14 +1093,14 @@ class LiveView:
         is asking how the model did, and the mistakes are the answer.
         """
         ds, o3d = self.ds, self.o3d
-        claim = v['predicted']
-        if self.world_colour != 'verdict':
-            claim = claim & ~v['in_free']
-        i = np.argwhere(v['measured'] | claim)
+        claim = self._world_claim(v)
+        occ, srgb, sonly = self._world_occupancy(world, v)
+        i = np.argwhere(occ)
         if not len(i):
             return None
         view = self._to_view(i)
-        colours = self._world_colours(world, v, i, view)
+        colours = self._world_colours(world, v, i, view)[0]
+        colours = self._sensor_colours(colours, i, srgb, sonly)
 
         shrink = (self.MODE_SHRINK[self.world_colour]
                   if self.shrink is None else self.shrink)
@@ -733,7 +1145,8 @@ class LiveView:
         # nothing and still cost a frame of lag
         return self.overlap and self.colour != 'class'
 
-    def _job_for(self, pred_label, mask, loader, rgb, name, fps):
+    def _job_for(self, pred_label, mask, loader, rgb, name, fps,
+                 tsdf=None):
         """Everything one frame needs, or None when there is nothing to draw."""
         idx, cls = occupied(pred_label, mask)
         if len(idx) == 0:
@@ -751,6 +1164,9 @@ class LiveView:
                 # reading self.recon at draw time would pair this frame's
                 # cubes with the next frame's surface.
                 'recon': self.recon,
+                # the TSDF is this frame's too, and travels with it for
+                # the same reason the surface does
+                'tsdf': tsdf,
                 'colours': None, 'future': None}
 
     def _paint_timed(self, job):
@@ -767,10 +1183,13 @@ class LiveView:
         if self.panels:
             self._draw_panels(job['depth'], job['rgb'], job['name'],
                               job['fps'])
-        self._swap(self._frame_geometry(job['idx'], job['colours'],
-                                        job['loader'], job['recon']))
+        colours, lit = job['colours']
+        self._swap(self._frame_geometry(job['idx'], colours,
+                                        job['loader'], job['recon'],
+                                        job['tsdf'], lit))
         alive = self._draw()
         self._last = (job['idx'], job['cls'], job['loader'], job['rgb'])
+        self._tsdf = job['tsdf']
         self.frames += 1
         self.draw_ms += 1000 * (time.time() - t0)
         self._record()
@@ -858,7 +1277,7 @@ class LiveView:
         bits = ['%d frames' % self.frames,
                 'colour %.0f ms' % (self.colour_ms / self.frames),
                 'mesh+draw %.0f ms' % (self.draw_ms / self.frames)]
-        if self._overlapping():
+        if self.overlapped:
             hidden = max(0.0, self.colour_ms - self.wait_ms) / self.frames
             bits.append('%.0f of it hidden behind inference' % hidden)
         bits.append('mode %s' % self.colour)
@@ -866,9 +1285,16 @@ class LiveView:
 
     # ---- colour ----
     def _paint(self, idx, cls, loader, rgb):
+        """-> (colours, photographed), one per occupied voxel.
+
+        `photographed` is false exactly where the colour is a dimmed
+        class tint and not a photograph of anything -- what the surface
+        layer needs in order to go looking for a better source. See
+        _recolour_from.
+        """
         class_rgb = self.ds.DEFAULT_COLORMAP[cls]
         if self.colour == 'class' or rgb is None:
-            return class_rgb
+            return class_rgb, np.zeros(len(idx), bool)
         # display_solid's photo rules want RGB; the pipeline carries BGR
         image = np.ascontiguousarray(
             np.asarray(rgb)[:, :, ::-1]).astype(np.uint8)
@@ -880,9 +1306,10 @@ class LiveView:
         # colour reads better than dimming; 'zbuffer' misses too many for that
         # to be anything but a smear, so those stay dimmed class colour.
         hidden = 'nearest' if self.colour == 'all' else 'class'
-        out, _ = self.ds.fill_hidden(photo, visible, class_rgb,
-                                     self.ds.to_view_index(idx), hidden)
-        return out
+        out, borrowed = self.ds.fill_hidden(photo, visible, class_rgb,
+                                            self.ds.to_view_index(idx),
+                                            hidden)
+        return out, visible | borrowed
 
     # ---- window plumbing ----
     def _build(self, idx, colours):
@@ -901,13 +1328,33 @@ class LiveView:
                 (v - self.anchor) * self.zoom + self.anchor)
         return mesh
 
-    def _frame_geometry(self, idx, colours, loader, recon):
-        """What the window draws in single-frame mode: the model's
-        completion, or -- with `m` down and a surface for THIS frame --
-        what the sensor alone measured of it."""
-        if self.show_mesh and recon is not None:
+    def _frame_geometry(self, idx, colours, loader, recon, tsdf=None,
+                        lit=None):
+        """Which of the three layers single-frame mode draws: the model's
+        completion as cubes, the same completion meshed, or -- with a
+        surface for THIS frame -- what the sensor alone measured of it.
+
+        Both of the last two fall back to the cubes rather than drawing
+        nothing, which reads as a crash.
+        """
+        if self.layer == 'sensor' and recon is not None:
             return self._build_frame_recon(loader, recon)
+        if self.layer == 'surface':
+            mesh = self._build_frame_surface(idx, colours, tsdf, lit,
+                                             loader, recon)
+            if mesh is not None:
+                return mesh
         return self._build(idx, colours)
+
+    def _world_geometry(self, world, v):
+        """The same choice for the accumulating room."""
+        if self.layer == 'sensor' and self.recon is not None:
+            return self._build_recon(world)
+        if self.layer == 'surface':
+            mesh = self._build_world_surface(world, v)
+            if mesh is not None:
+                return mesh
+        return self._build_world(world, v)
 
     def _swap(self, mesh):
         if self.geom is None:
@@ -950,51 +1397,84 @@ class LiveView:
             return fn(vis) if action == cls.GLFW_PRESS else False
         return on_action
 
-    def _flip_mesh(self, _vis):
-        """Flip between the room and the sensor's reconstruction.
+    # what the log says each layer is, once it is on screen
+    _LAYER_SAID = {
+        'voxels': "the MODEL's completion, as 8 cm cubes",
+        'surface': 'the same completion MESHED into a surface -- the '
+                   'colour still says what was measured and what was '
+                   'filled in',
+        'sensor': "the SENSOR's own surface (the holes in it are what "
+                  'the model is filling in)',
+    }
 
-        Same window, same viewpoint, so the two are read against each
-        other rather than side by side.
+    def _cycle_layer(self, _vis):
+        """`m`: advance one layer. Same window, same viewpoint, so the
+        three are read against each other rather than side by side.
+
+        The sensor's layer is the only one that can be missing, and when
+        it is the cycle carries straight on to the cubes. Refusing to
+        move is what sent someone to press space again.
         """
-        if self.recon is None and not self.live_recon:
-            if not self.can_reconstruct:
-                log.info("the sensor's own reconstruction needs "
-                         '--accumulate. That flag is what puts a tracker '
-                         'in the loop, and the mesh is the TSDF it builds '
-                         'to track against; without it there is no volume '
-                         'to extract and pressing space will not make one')
-            else:
-                log.info('no reconstruction yet -- it is built when you '
-                         'freeze (space) and again when the run ends')
-            return False
-        self.show_mesh = not self.show_mesh
-        if self.show_mesh and self._last is not None \
-                and self.make_surface is not None:
-            # ALWAYS rebuild, never reuse. A per-frame surface belongs to
-            # one frame, and `m` off then on again across a hundred frames
-            # of playback would otherwise show the one built before the
-            # camera moved -- reported exactly that way. The accumulate
-            # path keeps the old rule below: there recon is the whole
-            # sweep's mesh and a keypress must not rebuild it.
-            self.recon = None
-            # built on demand, for the frame being shown -- see make_surface.
-            # Drained first: this runs on the GUI thread and is about to
-            # touch the card, and the painter must not be mid-frame.
-            self._drain()
-            _, _, loader, rgb = self._last
-            try:
-                self.recon = self.make_surface(loader, rgb)
-            except Exception as e:       # never lose the window over it
-                log.warning("could not build this frame's surface: %s", e)
-        if self.show_mesh and self.recon is None:
-            self.show_mesh = False
-            log.info('nothing to show: this frame measured no surface')
-            return False
-        log.info('showing %s', "the SENSOR's own surface (the holes in it "
-                 'are what the model is filling in)' if self.show_mesh
-                 else ('the room' if self.live_recon is False
-                       else "the MODEL's completion"))
+        nxt = LAYERS[(LAYERS.index(self.layer) + 1) % len(LAYERS)]
+        if nxt == 'sensor' and not self._enter_sensor():
+            nxt = LAYERS[(LAYERS.index(nxt) + 1) % len(LAYERS)]
+        elif nxt == 'surface':
+            # it takes its COLOUR from the surface measured for this
+            # frame, so it wants one before it draws -- but it is built
+            # from the model's own voxels and always has something to
+            # show, so failing to get one costs the colour and never
+            # the layer. _rebuild_frame_surface returns at once under
+            # --accumulate, where recon is the whole sweep's mesh.
+            self._rebuild_frame_surface()
+        self.layer = nxt
+        log.info('showing %s', self._LAYER_SAID[nxt])
         self._repaint()
+        return False
+
+    def _rebuild_frame_surface(self):
+        """Build this frame's own measured surface into self.recon.
+
+        ALWAYS rebuild, never reuse. A per-frame surface belongs to one
+        frame, and cycling away and back across a hundred frames of
+        playback would otherwise show the one built before the camera
+        moved -- reported exactly that way. The accumulate path never
+        comes here: there recon is the whole sweep's mesh and a keypress
+        must not rebuild it.
+        """
+        if self.make_surface is None or self._last is None:
+            return
+        self.recon = None
+        # Drained first: this runs on the GUI thread and is about to
+        # touch the card, and the painter must not be mid-frame.
+        self._drain()
+        _, _, loader, rgb = self._last
+        try:
+            self.recon = self.make_surface(loader, rgb)
+        except Exception as e:           # never lose the window over it
+            log.warning("could not build this frame's surface: %s", e)
+
+    def _enter_sensor(self):
+        """Can the sensor's own surface be shown? Builds one if it can be.
+
+        -> True once self.recon holds a mesh for what is on screen.
+        """
+        if self.make_surface is not None and self._last is not None:
+            self._rebuild_frame_surface()
+            if self.recon is None:
+                log.info('nothing to show: this frame measured no surface')
+                return False
+            return True
+        if self.recon is not None:
+            return True
+        if not self.can_reconstruct:
+            log.info("the sensor's own reconstruction needs --accumulate. "
+                     'That flag is what puts a tracker in the loop, and '
+                     'the mesh is the TSDF it builds to track against; '
+                     'without it there is no volume to extract and '
+                     'pressing space will not make one')
+        else:
+            log.info('no reconstruction yet -- it is built when you freeze '
+                     '(space) and again when the run ends')
         return False
 
     def _draw(self):
@@ -1060,8 +1540,10 @@ class LiveView:
         if self._last is None:
             return
         idx, cls, loader, rgb = self._last
+        colours, lit = self._paint(idx, cls, loader, rgb)
         self._swap(self._frame_geometry(
-            idx, self._paint(idx, cls, loader, rgb), loader, self.recon))
+            idx, colours, loader, self.recon,
+            getattr(self, '_tsdf', None), lit))
         self._draw()
 
     def _cycle(self, _vis):

@@ -383,10 +383,48 @@ def parse_args():
                    help='--accumulate: rebuild the room mesh every N '
                         'frames. The room changes by a few voxels a frame '
                         'and the window stays responsive in between.')
+    p.add_argument('--surface_smooth', type=int, default=2, metavar='N',
+                   help="m's middle layer draws the same voxels as one "
+                        'SURFACE rather than as cubes; this is how many '
+                        'Laplacian passes smooth it. A flat wall is its '
+                        'own neighbourhood average and does not move, so '
+                        'this only rounds corners and specks -- 0 leaves '
+                        'the lattice as it comes out.')
+    p.add_argument('--surface_pull', type=float, default=1.5, metavar='V',
+                   help="m's middle layer shrinks the surface back onto "
+                        'what the depth MEASURED wherever it stands in '
+                        'front of it -- the completion comes out about a '
+                        'voxel proud and the frame\'s TSDF says by how '
+                        'much. This caps that step, in voxels; only the '
+                        'front (tsdf > 0) ever moves, and 0 turns it off.')
+    p.add_argument('--no_match_sensor', dest='match_sensor',
+                   action='store_false',
+                   help="the room's voxel layers normally also cover every "
+                        "voxel the SENSOR's own mesh passes through, so "
+                        'that m re-describes the room instead of changing '
+                        'its extent. The two disagree at a window, where '
+                        'the TSDF raises a sheet out of a few specular '
+                        "returns and the room's hit/pass vote says the "
+                        'depth went through. This leaves the room on its '
+                        'own evidence.')
+    p.add_argument('--no_sensor_colour', '--no_sensor_color',
+                   dest='sensor_colour', action='store_false',
+                   help="m's surface layer normally takes its colour from "
+                        "the SENSOR's own mesh, so flipping to the sensor "
+                        'layer changes the geometry and not the room\'s '
+                        'appearance: the nearest point on that mesh within '
+                        'two voxels, and for a voxel no photograph ever '
+                        'coloured -- whose only other answer is a dimmed '
+                        'class tint -- however far it has to reach. The '
+                        'surface is split once to carry it. This keeps the '
+                        "room's own colour everywhere. In verdict and "
+                        'class the colour is the answer and none of this '
+                        'happens either way.')
     p.add_argument('--sensor_first', action='store_true',
                    help="--display: open on the SENSOR's own surface "
                         'rather than on what the model made of it, and '
-                        'let m reveal the model. With --accumulate that '
+                        'let m cycle on to the model. With --accumulate '
+                        'that '
                         'is the whole sweep as one mesh; without it, the '
                         "frame's own surface, rebuilt per frame. Either "
                         'way the mesh stops where the depth stopped, so '
@@ -631,7 +669,11 @@ def main():
                             panel_width=args.panel_width,
                             overlap=not args.sync_display)
             view.can_reconstruct = True
-            view.show_mesh = args.sensor_first
+            view.layer = 'sensor' if args.sensor_first else 'voxels'
+            view.surface_smooth = args.surface_smooth
+            view.surface_pull = args.surface_pull
+            view.match_sensor = args.match_sensor
+            view.sensor_colour = args.sensor_colour
             # without --accumulate the surface is rebuilt per frame, so m
             # may be pressed before one exists -- the next frame makes it
             view.live_recon = not args.accumulate
@@ -921,7 +963,7 @@ def main():
                                                  '%s.ply' % frame.name))
             if view is not None:
                 hz = 1.0 / max(1e-6, time.time() - t0)
-                if (args.accumulate and view.show_mesh
+                if (args.accumulate and view.layer == 'sensor'
                         and n % max(1, args.mesh_every) == 0):
                     # On the same cadence as the room, not every frame.
                     # Extracting is 3-7 ms, so time was never the reason
@@ -931,12 +973,16 @@ def main():
                     # what tipped it over. See Tracker._extract.
                     _reconstruct(view, tracker, None)
                 if not args.accumulate:
-                    # Rebuilt per frame while m is up, and CLEARED when it
-                    # is not: a surface is one frame's, so keeping the last
-                    # one around would make `m` pressed later show the
-                    # scene the camera has since left.
+                    # Rebuilt per frame in the two layers that need it,
+                    # and CLEARED otherwise: a surface is one frame's, so
+                    # keeping the last one around would make `m` pressed
+                    # later show the scene the camera has since left.
+                    # The middle layer needs it for its COLOUR, not to
+                    # draw -- without one it falls back to the model's,
+                    # which is the 8 cm blur this is here to avoid.
                     view.recon = (frame_surface(loader, frame.rgb)
-                                  if view.show_mesh else None)
+                                  if view.layer in ('sensor', 'surface')
+                                  else None)
                 if args.accumulate:
                     alive = view.update_world(
                         world, frame.depth, frame.rgb, name=frame.name,
@@ -945,7 +991,8 @@ def main():
                              if tracker.lost else None)
                 else:
                     alive = view.update(pred_label, mask, loader, frame.rgb,
-                                        name=frame.name, fps=hz)
+                                        name=frame.name, fps=hz,
+                                        tsdf=sample['tsdf'])
                 if not alive:
                     log.info('display window closed; stopping')
                     n += 1
@@ -961,7 +1008,7 @@ def main():
                     log.info('frozen at %s -- press space in the window to '
                              'carry on%s, or close it to stop here',
                              frame.name,
-                             ", m for the sensor's own surface")
+                             ', m to cycle cubes / surface / sensor')
                     if world is not None:
                         _reconstruct(view, tracker,
                                      'frozen at %s' % frame.name)
@@ -1044,25 +1091,25 @@ def main():
                      'world.ply)', out)
         if (view is not None and args.hold and not view.closed
                 and not _STOP and n):
-            view.show_mesh = recon is not None
+            view.layer = 'sensor' if recon is not None else 'voxels'
             view.frozen = True
             # the opening framing is a frame's, which a whole sweep has
             # long outgrown -- so the last thing anyone looks at is the
             # whole room rather than the middle of it
             view.fit()
             log.info('the sweep is done. The window is showing %s -- press '
-                     'm to flip between it and the room, c to change what '
-                     'the room is coloured by, and close the window to '
-                     'finish.',
+                     'm to cycle cubes / surface / sensor, c to change '
+                     'what the room is coloured by, and close the window '
+                     'to finish.',
                      "the SENSOR's reconstruction" if recon is not None
-                     else 'the room')
+                     else 'the room as cubes')
             view.update_world(world, frame.depth, frame.rgb,
                               name=frame.name, force=True,
-                              note='DONE -- m flips sensor / model')
+                              note='DONE -- m: cubes / surface / sensor')
             while not view.closed and not _STOP:
+                note = 'DONE -- m: cubes / surface / sensor'
                 if not view.hold_step(world, frame.depth, frame.rgb,
-                                      name=frame.name,
-                                      note='DONE -- m flips sensor / model'):
+                                      name=frame.name, note=note):
                     break
                 time.sleep(0.03)
 
