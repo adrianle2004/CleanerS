@@ -1,4 +1,4 @@
-# VOXEL_SURFACE_MESH.md — the occupancy grid as one surface
+# VOXEL_TO_SURFACE_MESH.md — the occupancy grid as one surface
 
 `m`'s middle layer. The room is held as 8 cm voxels and drawn as cubes,
 which is honest about the resolution and unreadable as a room: a wall is a
@@ -15,10 +15,17 @@ placement rule, pure numpy, no renderer) and `live_view.py`'s
 layer means to someone looking at the window, see
 [VIEWERS.md](VIEWERS.md#live_viewpy).
 
-This page is how the layer works. For why it is built this way — what was
-there before, the two measured causes of a dark soft-focus layer, what each
-performance pass bought, and what was tried and thrown away — see
-[VOXEL_TO_SURFACE_WORK.md](VOXEL_TO_SURFACE_WORK.md).
+**Two parts.** [Part I](#part-i--how-it-works) is how the layer works,
+written from the code as it stands — read it before editing
+`voxel_surface.py`. [Part II](#part-ii--how-it-was-decided) is how it was
+decided, written from the commits as it happened: what was there before,
+the two measured causes of a layer that came out dark and soft-focus, the
+bugs found on the way, and seven things tried and thrown away. Part I
+owns the numbers; Part II argues and links to them.
+
+---
+
+# Part I — how it works
 
 ## 1. What the layer has to do
 
@@ -538,3 +545,211 @@ continuous, the TSDF pulls it onto what was measured, and the sensor's
 mesh supplies the fine appearance. `owner` and the `photographed` flag
 are what connect them without letting the completion quietly dress up as
 a measurement.
+
+---
+
+# Part II — how it was decided
+
+Part I is the layer as it stands. This part is why it stands that way:
+two of its orderings are load-bearing for reasons no reader could
+recover from the code, three of its numbers are what is left of a version
+that was nearly twice as expensive, and several of its lines exist
+because something else was tried first.
+
+It landed in two commits — `e118620`, the mesh in pure numpy, and
+`adf1b1d`, wiring it in and giving it the sensor's colour — plus
+`3282ae8` to re-measure the two sweeps afterwards.
+
+## Where it started
+
+`m` was a **boolean**: `self.show_mesh`, toggling between the model's
+8 cm cubes and the sensor's own reconstruction. Two states, nothing in
+between.
+
+The cubes are honest about the resolution and unreadable as a room. The
+sensor's mesh is legible and has holes exactly where the model is
+supposed to be useful. So the window could show you the thing with the
+holes or the thing you could not read, and nothing that was both.
+
+What was wanted was the **same occupancy** as one continuous surface —
+and the hard constraint was that it must not become a way of smuggling
+the model's guesses in as measurements. The completion and the
+measurement had to stay separable by **colour**, not by geometry. That
+constraint is why `owner` matters more here than the meshing rule does.
+
+## Step 1 — the mesh, on its own (`e118620`)
+
+411 lines of `voxel_surface.py`, 490 lines of tests, and **nothing in
+`live_view.py`**. The placement rule is the whole reason the layer is
+worth anything, so it was built and pinned before anything could draw
+it — pure numpy, no renderer, no file paths, testable on a 5×5×5 grid
+with no open3d and no torch installed.
+
+The one real decision was Surface Nets rather than marching cubes, and
+it is a fact about our field rather than a preference —
+[§2.4](#24-why-not-marching-cubes) has the argument. The property the
+layer had to have is [§2.5](#25-the-property-the-whole-layer-rests-on),
+and `test_a_flat_face_lands_on_the_cube_face` is that sentence as an
+assertion.
+
+Four more functions went in with it, because they are the same
+arithmetic over the same arrays and none of them needs a renderer:
+`pull_to_surface`, `subdivide`, `nearest_colour` and `voxelise`, beside
+`smooth`. `pull_to_surface` was measured on room07's first frame before
+it was trusted — [§4.4](#44-measured-effect).
+
+## Step 2 — wiring it in, and what came out (`adf1b1d`)
+
+`m` became a three-way cycle, `LAYERS = ('voxels', 'surface', 'sensor')`,
+with the middle layer meshed from the model's voxels and coloured from
+them too.
+
+Beside the sensor's own mesh it read as a **dark, soft-focus copy of the
+same room**. Two independent causes, both measured on `room07_world`
+rather than guessed at.
+
+**The floor had never been photographed.** Both of `fill_hidden`'s
+sources were empty for it: the sweep was looking at the walls, so no
+floor voxel had camera colour of its own, and none had a photographed
+sibling of its own class either — which is the only borrow it makes. So
+the whole floor fell through to the palette tint, which reads as unseen
+and is painted green. [§8.2](#82-the-limit-depends-on-provenance) has
+the figure and the rule it forced; the short version is that a tint has
+no evidence to protect, so for those voxels the reach comes off
+entirely.
+
+That needed the provenance to travel, which is why `_world_colours`
+returns `(colours, photographed)` — true for a voxel's own colour and
+for a sibling's, false for the tint, which is the one case where the
+colour is not a photograph of anything. Before this it returned colours
+alone and nothing downstream could tell the difference.
+
+**The colour was sampled at 8 cm and then blurred.** One vertex per
+cell, and the Laplacian pass ran *after* the lookup, so three quarters
+of the sensor's texture was never asked for and what did come back was
+smeared. The fix was to split once before the lookup and smooth nothing
+after it — [§7](#7-subdivide-so-the-colour-can-be-asked-more-than-once-per-cell).
+
+What the two together bought is [§15](#15-reading-the-numbers). The
+sentence that actually settled it is not a number: the window frame, the
+pattern on the bed and the flowers on the sill are legible where they
+were washed out.
+
+## Step 3 — one rule, two modes
+
+The single-frame layer had the same job and could have had its own copy
+of the rule. It does not. `_recolour_from` is the rule itself over one
+mesh, and both `_sensor_recolour` and `_frame_recolour` call it, differing
+only in which mesh they ask and how their grid reaches metres. **Two
+copies would drift, and `m` would change the room's appearance in one
+mode and not the other** — which is the thing the layer exists to avoid.
+
+Two consequences had to be handled, both in
+[§11](#11-both-modes-one-rule): the frame needs a mesh to ask, so one is
+built whenever `m` lands on either of the two layers that want it and on
+the key press itself — because the window is usually frozen when anyone
+presses `m`, and a surface built only in the loop would never appear.
+And the two grids disagree about axis order, which does not crash; it
+returns a colour from the wrong part of the room
+([§9.2](#92-axis-order)).
+
+One thing is deliberately *not* shared: the TSDF shrink is the frame
+layer only, because it needs one frame's field and the accumulated room
+has none — [§4.6](#46-this-is-the-frame-layer-only).
+
+## Step 4 — two bugs found on the way
+
+**`class` mode was taking the sensor's colour.** The gate was
+`world_colour != 'verdict'`, so `verdict` was protected and `class` was
+not: the photograph was being smeared over the one view whose whole
+point is which class the model called each voxel. It had been wrong
+since before this work and nothing had noticed. The rule it should
+always have followed is [§10](#10-where-the-lookup-is-off-on-purpose).
+
+**The run report was claiming the room build was free.** It gated on
+`_overlapping()`, which is a question about *configuration*, and under
+`--accumulate` the answer is always yes and always irrelevant — the room
+is built on the loop, `update()` is never called, so `wait_ms` stays 0
+and the entire room build was reported as hidden behind inference. It
+now counts the frames actually painted on the pool (`self.overlapped`).
+Unrelated to the surface, in the same file, and it is the line anyone
+reads to find out what the room costs.
+
+## Step 5 — paying for it
+
+The first working version was nearly twice as expensive as what shipped.
+Three passes got it back, each measured, and they are tabled in
+[§12](#12-what-it-costs). Two of the three were not only cheaper but
+more correct: capping the query is what a per-point limit means, and
+shrinking before the split samples the colour where the surface ends up
+rather than a voxel proud of it.
+
+The claim that none of it runs during a live sweep unless the layer was
+asked for was **checked rather than assumed**: four 400-frame runs put
+measured fps unchanged, and the spread that did show up followed running
+order, not which layer was on screen — `infer` moved with it.
+
+## Tried and thrown away
+
+| | why not |
+| --- | --- |
+| marching cubes | binary field — same midpoints, same staircase, bigger table, and a dependency this py3.7 environment lacks |
+| `np.add.at` in `smooth` | unbuffered slow path: **40 ms of a 120 ms room**, more than the surface extraction itself. Three `bincount`s, one per component, are the same sum |
+| `np.unique` over the edge array | lexicographic row-by-row sort was most of the cost of splitting a 30 k-triangle surface |
+| smoothing after the colour lookup | it is what made the layer soft-focus in the first place |
+| caching the frame's KD-tree on `id()` | the room's mesh is stable and safe to key that way; a frame's is a new object every frame, and an `id()` an old one has released can be handed straight back to a new one |
+| borrowing colour from the nearest voxel of **any** class | smears the wall onto the bed standing in front of it. Same-class only — which is why the floor had nothing to borrow and needed the unlimited reach instead |
+| a second copy of the colour rule for the frame path | two copies drift, and the layer's whole promise is that `m` does not change the room's appearance |
+| committing the two regenerated sweeps | regenerable from the bag and the checkpoint, and neither git nor HF is the right half for them. `outputs/*_world/` is ignored |
+
+## Verification — the metrics are a control, not a result
+
+This layer is a **visualisation**. It changes nothing the model predicts,
+so if the metrics had moved, something would be wrong. Both sweeps were
+regenerated and re-measured in `3282ae8`:
+
+| | room07 | room08 |
+| --- | --- | --- |
+| `check_world_map` algebra | 7 889 / 7 889 | 5 884 / 5 884 |
+| tracker median / p90 / max | 38.5 / 85.1 / 142.2 mm | 52.5 / 82.4 / 120.8 mm |
+| `evaluate_gt.py` SSC / SC | 39.5 / 72.4 | 35.4 / 59.6 |
+
+`evaluate_gt.py` reproduced both exactly, and the prediction inputs were
+untouched, so the per-capture `gt/EVALUATION.md` files were correctly
+**not** regenerated. DEMO.md's produced-table was updated to the exact
+figures from the new sweeps. Hugging Face needed no push — nothing it
+holds (`scan.bag`, `room*.ply`, the checkpoint) changed.
+
+The suite is at **171 tests**, all passing.
+`tests/test_live_view.py` went from 19 to 52 across this work.
+
+## Still open
+
+- **The two window holes that started this were never reproduced.** The
+  full room07 sweep's surface layer shows the window filled. Whatever
+  was on screen at the time, nothing since has reproduced it, and it is
+  recorded here rather than quietly dropped.
+- **The frame surface is softer than the sensor layer until the sensor
+  layer has been visited.** Before a mesh exists for the frame there is
+  nothing to take the colour from, so the layer falls back to the model's
+  own 8 cm colour. Inherent to the ordering, not a defect — and it costs
+  the colour, never the layer.
+- `smooth` is the largest single cost left inside the room build. The
+  `np.add.at` removal took the obvious 40 ms; what remains is the passes
+  themselves.
+
+---
+
+# Where the pieces are
+
+| | |
+| --- | --- |
+| `voxel_surface.surface_nets` | occupancy → `(verts, tris, owner)` |
+| `voxel_surface.smooth` / `subdivide` / `pull_to_surface` / `nearest_colour` / `voxelise` | the arithmetic, no renderer |
+| `live_view._surface_mesh` | the pipeline: colour out through `owner`, smooth, pull, split, recolour |
+| `live_view._build_world_surface` / `_build_frame_surface` | the room's, and one frame's |
+| `live_view._world_colours` | one colour per voxel, and which of them are photographs |
+| `live_view._recolour_from` | the colour rule, shared |
+| `live_view._sensor_recolour` / `_frame_recolour` | its two callers, and their two transforms |
+| `live_view._sensor_colours` | the voxels only the sensor's mesh covers |
+| `tests/test_voxel_surface.py`, `tests/test_live_view.py` | 45 and 52 |

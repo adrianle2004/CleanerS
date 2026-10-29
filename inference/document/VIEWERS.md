@@ -426,7 +426,7 @@ model's voxels and always has something to show.
 How that middle layer is built — the meshing rule, the half-voxel it is
 registered by, the TSDF shrink, and which colours are photographs of
 something and which are not — is
-[VOXEL_SURFACE_MESH.md](VOXEL_SURFACE_MESH.md).
+[VOXEL_TO_SURFACE_MESH.md](VOXEL_TO_SURFACE_MESH.md).
 
 That per-frame surface is independent by construction, which is the right
 answer in a mode that is not accumulating — no pose, nothing joined to
