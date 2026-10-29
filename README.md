@@ -1,6 +1,6 @@
 # CleanerS 
 
-> **Fork notes:** this fork adds live-camera inference (`inference/`), hand-made ground truth for real rooms (`reconstruction_GT/`) and an Occ-ScanNet evaluation. Datasets, recordings and checkpoints are in a private Hugging Face repo: see [DATA.md](DATA.md). New machine: [SETUP.md](SETUP.md).
+> **Fork notes:** this fork adds live-camera inference (`inference/`), hand-made ground truth for real rooms (`reconstruction_GT/`) and an Occ-ScanNet evaluation. Every command it adds, grouped by task: [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md). Datasets, recordings and checkpoints are in a private Hugging Face repo: see [DATA.md](DATA.md). New machine: [SETUP.md](SETUP.md).
 
 This repository contains the official PyTorch implementation of the following CVPR 2023 paper:
 

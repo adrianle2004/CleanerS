@@ -2,7 +2,9 @@
 
 From nothing to a reproduced NYU score: GitHub for the code, a private Hugging Face
 dataset repo for everything else (datasets, RealSense recordings, checkpoints).
-[DATA.md](DATA.md) says what lives where and why.
+[DATA.md](DATA.md) says what lives where and why, and
+[USEFUL_COMMANDS.md](USEFUL_COMMANDS.md) is every command in the repo once this
+page is done with.
 
 | | |
 | --- | --- |
@@ -148,9 +150,12 @@ python -m inference.run_live --cfg ./cfgs/NYU/voxelSSC.yaml \
 Results from the two rooms already captured:
 [reconstruction_GT/document/FINDINGS.md](reconstruction_GT/document/FINDINGS.md).
 
-Then [reconstruction_GT/document/README.md](reconstruction_GT/document/README.md) is the capture → GT →
-evaluation runbook, and [inference/document/README.md](inference/document/README.md)
-the module reference.
+Then [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md) lists every command this fork
+adds, grouped by what you are trying to do;
+[reconstruction_GT/document/README.md](reconstruction_GT/document/README.md) is
+the capture → GT → evaluation runbook, and
+[inference/document/README.md](inference/document/README.md) the module
+reference.
 
 ## Day-to-day
 
