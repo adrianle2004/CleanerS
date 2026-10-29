@@ -15,6 +15,11 @@ placement rule, pure numpy, no renderer) and `live_view.py`'s
 layer means to someone looking at the window, see
 [VIEWERS.md](VIEWERS.md#live_viewpy).
 
+This page is how the layer works. For why it is built this way — what was
+there before, the two measured causes of a dark soft-focus layer, what each
+performance pass bought, and what was tried and thrown away — see
+[VOXEL_TO_SURFACE_WORK.md](VOXEL_TO_SURFACE_WORK.md).
+
 ## 1. What the layer has to do
 
 The input is a semantic occupancy grid: a voxel is occupied or not, and an
