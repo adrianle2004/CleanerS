@@ -2,6 +2,19 @@
 
 > **Fork notes:** this fork adds live-camera inference (`inference/`), hand-made ground truth for real rooms (`reconstruction_GT/`) and an Occ-ScanNet evaluation. Every command it adds, grouped by task: [USEFUL_COMMANDS.md](USEFUL_COMMANDS.md). Datasets, recordings and checkpoints are in a private Hugging Face repo: see [DATA.md](DATA.md). New machine: [SETUP.md](SETUP.md).
 
+## The fork's demo
+
+One room-sized grid, filled as the camera moves: the model guesses what it
+cannot see, the sweep arrives later, and the display keeps score. The
+run-book is [inference/document/DEMO.md](inference/document/DEMO.md).
+
+![The m key: the same room as cubes, as one continuous surface, and as the sensor's own reconstruction](different_visual_representation.gif)
+
+Above, `m` cycling the same voxels through three geometries at a fixed
+viewpoint — cubes, one surface, and the sensor's own reconstruction.
+[**The full three-minute run**](CleanerS_demo.webm) (30 MB) shows the room
+being built from an empty grid.
+
 This repository contains the official PyTorch implementation of the following CVPR 2023 paper:
 
 Title: **CleanerS: Semantic Scene Completion with Cleaner Self**   [PDF](https://arxiv.org/pdf/2303.09977.pdf)

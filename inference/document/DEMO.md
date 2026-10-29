@@ -8,6 +8,11 @@ The mode is `run_live --accumulate`. Everything it does is documented in
 [VIEWERS.md](VIEWERS.md#the-accumulating-room); this file is the short
 version, plus the results.
 
+**[Watch a full run](../../CleanerS_demo.webm)** — a recorded sweep of
+room07 filling the grid, three minutes, 30 MB. It is the whole of
+[Two minutes, in order](#two-minutes-in-order) actually happening, and
+worth watching before running it yourself.
+
 - [What it shows](#what-it-shows)
 - [Running it](#running-it)
 - [The window](#the-window)
@@ -185,6 +190,11 @@ few seconds of a run, before any colour is trustworthy.
 
 Three layers at one viewpoint, so the only thing that changes when you
 press `m` is the geometry.
+
+![Pressing m: the same room as cubes, as one surface, and as the sensor's own reconstruction](../../different_visual_representation.gif)
+
+The viewpoint never moves in that clip and the colour never changes —
+only the geometry does, which is the whole point of the key.
 
 **1. Cubes.** The room as 8 cm voxels. Honest about the resolution, and a
 staircase where the room has a wall.

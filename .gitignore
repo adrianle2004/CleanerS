@@ -176,3 +176,10 @@ captures/*/meta.json.preicp
 docs/superpowers/
 # Thesis report planning notes: personal, not part of the code
 /report.md
+
+# Screen recordings. The GIF built from a recording is committed (it is what
+# renders in the docs); the multi-megabyte source webm is not, since it can be
+# re-recorded and LFS is unavailable on a fork -- see the comment in
+# CleanerS_demo.webm's commit.
+*.webm
+!CleanerS_demo.webm
