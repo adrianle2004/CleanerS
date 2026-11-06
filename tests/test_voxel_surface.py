@@ -19,9 +19,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inference.voxel_surface import (nearest_colour, pull_to_surface, smooth,
-                                    subdivide,
-                                     surface_nets, voxelise)
+from inference.voxel_surface import (nearest_colour, pull_to_surface,
+                                    smooth, snap_to_nearest, subdivide,
+                                    surface_nets, voxelise)
 
 
 def edge_counts(tris):
@@ -286,6 +286,78 @@ class TestPullToSurface(unittest.TestCase):
         v = np.array([[11.0, 4.0, 4.0]])
         out = pull_to_surface(v, t, grad=[-g for g in np.gradient(t)])
         self.assertGreater(out[0, 0], 11.0)
+
+
+class TestSnapToNearest(unittest.TestCase):
+    """Landing ON the measurement rather than near it.
+
+    The room's grid is 8 cm and the sensor's mesh carries the TSDF's
+    2 cm, so shrinking onto the nearest measured CELL leaves half a
+    voxel behind. This moves a point onto the mesh itself.
+
+    The rule is UNSIGNED, which is the whole reason for `where`: a
+    distance cannot tell the front of a surface from the back, and the
+    mesh is a single sheet with no back at all.
+    """
+
+    def sheet(self):
+        """A plane of reference points at x = 0."""
+        return np.array([[0.0, y, z] for y in (0.0, 1.0) for z in (0.0, 1.0)])
+
+    def test_a_point_lands_on_its_nearest_reference(self):
+        out, moved = snap_to_nearest(np.array([[0.3, 0.0, 0.0]]),
+                                     self.sheet(), 1.0, None)
+        np.testing.assert_allclose(out[0], [0.0, 0.0, 0.0])
+        self.assertTrue(moved[0])
+
+    def test_beyond_the_limit_it_does_not_move(self):
+        """Out of reach means there is no measurement to snap to, not a
+        long jump to a distant one."""
+        p = np.array([[5.0, 0.0, 0.0]])
+        out, moved = snap_to_nearest(p, self.sheet(), 1.0, None)
+        np.testing.assert_allclose(out, p)
+        self.assertFalse(moved[0])
+
+    def test_where_false_holds_it_even_in_reach(self):
+        p = np.array([[0.3, 0.0, 0.0]])
+        out, moved = snap_to_nearest(p, self.sheet(), 1.0, where=[False])
+        np.testing.assert_allclose(out, p)
+        self.assertFalse(moved[0])
+
+    def test_the_limit_may_be_one_per_point(self):
+        p = np.array([[0.3, 0.0, 0.0], [0.3, 1.0, 1.0]])
+        out, moved = snap_to_nearest(p, self.sheet(), [1.0, 0.1], None)
+        self.assertTrue(moved[0])
+        self.assertFalse(moved[1])
+        np.testing.assert_allclose(out[1], p[1])
+
+    def test_an_empty_reference_leaves_everything_alone(self):
+        p = np.array([[0.3, 0.0, 0.0]])
+        out, moved = snap_to_nearest(p, np.zeros((0, 3)), 1.0, None)
+        np.testing.assert_allclose(out, p)
+        self.assertFalse(moved.any())
+
+    def test_no_points_is_not_an_error(self):
+        out, moved = snap_to_nearest(np.zeros((0, 3)), self.sheet(), 1.0,
+                                     None)
+        self.assertEqual(out.shape, (0, 3))
+        self.assertEqual(moved.shape, (0,))
+
+    def test_the_input_is_not_modified(self):
+        p = np.array([[0.3, 0.0, 0.0]])
+        keep = p.copy()
+        snap_to_nearest(p, self.sheet(), 1.0, None)
+        np.testing.assert_allclose(p, keep)
+
+    def test_a_prebuilt_tree_answers_the_same(self):
+        """The room is re-meshed every few frames against one mesh, so
+        the tree outlives the call."""
+        from scipy.spatial import cKDTree
+        ref = self.sheet()
+        p = np.array([[0.3, 0.2, 0.1]])
+        np.testing.assert_allclose(
+            snap_to_nearest(p, ref, 1.0, None, tree=cKDTree(ref))[0],
+            snap_to_nearest(p, ref, 1.0, None)[0])
 
 
 class TestVoxelise(unittest.TestCase):

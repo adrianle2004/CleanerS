@@ -841,8 +841,21 @@ class _VoteWorld(object):
         return self._st
 
 
-class TestTheRoomsShrink(unittest.TestCase):
-    """The room shrinks onto the sweep's own vote, not onto a TSDF.
+class _VoteRoom(unittest.TestCase):
+    """A measured wall at x=2, free space in front of it at x=3 and 4,
+    and unobserved space behind at x=0 and 1."""
+
+    def world(self):
+        st = np.full((6, 4, 4), UNKNOWN, np.uint8)
+        st[2] = OCCUPIED
+        st[3] = FREE
+        st[4] = FREE
+        return _VoteWorld(st)
+
+
+class TestTheRoomsShrinkWithNoMeshYet(_VoteRoom):
+    """Before the sweep has been extracted there is no mesh, so the
+    room shrinks onto its own VOTE -- the nearest measured 8 cm cell.
 
     OCCUPIED is the measurement, FREE is where the camera measured
     THROUGH -- the room's "in front of something" -- and UNKNOWN is no
@@ -851,18 +864,10 @@ class TestTheRoomsShrink(unittest.TestCase):
     argument: everything else would be inventing a measurement.
     """
 
-    def world(self):
-        """A measured wall at x=2, free space in front of it, and
-        unobserved space behind."""
-        st = np.full((6, 4, 4), UNKNOWN, np.uint8)
-        st[2] = OCCUPIED
-        st[3] = FREE
-        st[4] = FREE
-        return _VoteWorld(st)
-
     def view(self, pull=1.5):
         v = LiveView.__new__(LiveView)
         v.surface_pull = pull
+        v.recon = None               # nothing extracted yet
         return v
 
     def test_a_vertex_in_measured_free_space_is_pulled_back(self):
@@ -917,6 +922,94 @@ class TestTheRoomsShrink(unittest.TestCase):
         far = np.array([[-9.0, 2.0, 2.0], [99.0, 2.0, 2.0]])
         out = v._world_pull(w)(far)
         self.assertEqual(out.shape, far.shape)
+
+
+class TestTheRoomsShrinkOntoTheMesh(_VoteRoom):
+    """With the sweep extracted, the room snaps onto the MESH instead.
+
+    The vote can only say which 8 cm cell holds the measurement, so a
+    vertex that lands on it is still half a voxel out. The mesh carries
+    the TSDF's 2 cm and IS the measurement, so a vertex within reach
+    lands on it. The vote is still what says WHICH vertices may move.
+    """
+
+    VOX = 0.08
+
+    def view(self, pull=1.5, mesh_at=None):
+        """A mesh sheet at x = `mesh_at` metres, in world coordinates."""
+        v = LiveView.__new__(LiveView)
+        v.surface_pull = pull
+        pts = [[mesh_at, y * self.VOX, z * self.VOX]
+               for y in range(4) for z in range(4)]
+        v.recon = _Mesh(pts, [[1.0, 1.0, 1.0]] * len(pts))
+        return v
+
+    def world(self):
+        w = _VoteRoom.world(self)
+        w.origin = np.zeros(3)
+        w.vox = self.VOX
+        return w
+
+    def mesh_x(self, w):
+        """Where the sheet sits, as a grid index: a voxel CENTRE is at
+        its integer index, so index 2 is at 2.5 voxels of metres."""
+        return (2 + 0.5) * self.VOX
+
+    def test_a_vertex_lands_exactly_on_the_mesh(self):
+        """Not near it. This is the whole reason the mesh is preferred
+        to the vote: the vote leaves half a voxel."""
+        w = self.world()
+        v = self.view(mesh_at=self.mesh_x(w) + 0.01)
+        out = v._world_pull(w)(np.array([[3.0, 1.0, 1.0]]))
+        want = (self.mesh_x(w) + 0.01) / self.VOX - 0.5
+        self.assertAlmostEqual(out[0][0], want, places=9)
+
+    def test_a_vertex_in_unobserved_space_is_left_alone(self):
+        """The mesh is a single sheet and has no back, so snapping a
+        vertex behind a wall would drag it through to the front."""
+        w = self.world()
+        v = self.view(mesh_at=self.mesh_x(w))
+        before = np.array([[0.0, 1.0, 1.0]])
+        np.testing.assert_allclose(v._world_pull(w)(before), before)
+
+    def test_a_vertex_on_a_measured_cell_may_move(self):
+        """The vote cannot move these at all -- its distance there is
+        already zero -- and they are 3596 of room07's vertices sitting
+        a median 79.6 mm off the mesh."""
+        w = self.world()
+        v = self.view(mesh_at=self.mesh_x(w) + 0.02)
+        before = np.array([[2.0, 1.0, 1.0]])
+        out = v._world_pull(w)(before)
+        self.assertNotAlmostEqual(out[0][0], before[0][0], places=6)
+
+    def test_out_of_reach_is_left_alone(self):
+        """The ladder is the reach: no mesh within it means no
+        measurement to shrink onto, not a long jump to a far one."""
+        w = self.world()
+        v = self.view(pull=0.5, mesh_at=self.mesh_x(w) - 0.5)
+        before = np.array([[3.0, 1.0, 1.0]])
+        np.testing.assert_allclose(v._world_pull(w)(before), before)
+
+    def test_the_ladder_sets_the_reach(self):
+        """y and z land ON mesh vertices here (index k - 0.5 is k
+        voxels of metres), so the gap is exactly 1.5 voxels and the
+        comparison is not on a floating-point knife edge."""
+        w = self.world()
+        before = np.array([[3.0, 1.5, 1.5]])
+        at = (3.0 + 0.5) * self.VOX - 1.5 * self.VOX
+        self.assertTrue(np.allclose(
+            self.view(pull=1.0, mesh_at=at)._world_pull(w)(before), before))
+        self.assertFalse(np.allclose(
+            self.view(pull=3.0, mesh_at=at)._world_pull(w)(before), before))
+
+    def test_a_mesh_with_no_vertices_falls_back_to_the_vote(self):
+        """_mesh_points answers None for an empty mesh, and the room
+        still has its vote."""
+        w = self.world()
+        v = self.view(mesh_at=self.mesh_x(w))
+        v.recon = _Mesh(np.zeros((0, 3)), np.zeros((0, 3)))
+        before = np.array([[3.0, 1.0, 1.0]])
+        self.assertLess(v._world_pull(w)(before)[0][0], before[0][0])
 
 
 if __name__ == '__main__':

@@ -836,37 +836,97 @@ class LiveView:
         return self._lit(to_view(verts), tris, np.clip(vcol / 255.0, 0, 1))
 
     def _world_pull(self, world):
-        """-> a callback shrinking the room onto the sweep's own
-        measurement, or None when the shrink is off.
+        """-> a callback shrinking the room onto what the sweep MEASURED,
+        or None when the shrink is off.
 
-        The room has no frame's TSDF -- it IS the sweep -- but it has the
-        sweep's own hit/pass vote, which is the same evidence in the same
-        three states. OCCUPIED is the measurement. FREE is where the
-        camera measured THROUGH, which is the room's "in front of a
-        measurement" and so the room's `tsdf > 0`. UNKNOWN is where
-        nothing was measured at all, and is the room's version of the
-        TSDF saturating: no evidence, so nothing moves.
+        Two sources, and the better one is preferred:
 
-        The field is then the distance, in voxels, to the nearest
-        measured cell -- hence scale=1.0, where the frame's TSDF needs
-        TSDF_VOXELS to become a distance.
+          the sweep's MESH  2 cm, and it IS the measurement -- a vertex
+                            within reach lands exactly on it
+          the sweep's VOTE  8 cm, the room's own grid; all there is
+                            before the mesh has been extracted
 
-        This is NOT a sub-voxel polish, though it looks like it should
-        be. The room already DROPS every claim whose centre is in free
-        space (_world_claim), but a dropped voxel's neighbour keeps its
-        own face, and that face still stands a whole voxel inside the
-        free cell -- the one-voxel skin _disproved exists to forgive.
-        Measured on room07's sweep: 15.3% of the surface's vertices move,
-        and their median distance to the sensor's own mesh falls from
-        76.0 mm to 35.3 mm with 92.4% of them closer.
+        Both take the SIGN from the vote, and that is the part that has
+        to be right. A vertex standing in UNKNOWN is behind a surface or
+        out where nothing was measured: there is no measurement to shrink
+        onto and moving it would be inventing one. It is also exactly
+        where snapping to the mesh would drag a wall's BACK face through
+        to its front, because the mesh is a single sheet and has no back.
+        Standing in FREE or OCCUPIED means the sweep measured there, and
+        the mesh is where it says the surface is.
+
+        Why the mesh and not the vote. The vote can only say which 8 cm
+        CELL holds the measurement, so a vertex that lands on it is still
+        half a voxel out: measured on room07, 15.3% of vertices move and
+        7.2% of the surface ends within 20 mm of the mesh. Snapping to
+        the mesh instead moves 30.7% and puts 31.2% within 20 mm, and
+        every vertex that moves lands on the measurement rather than
+        near it. The ladder means something across its whole range there
+        too -- 18.8% at one voxel, 30.7% at 1.5, 37.2% at three -- where
+        against the cell grid everything above one voxel drew the same
+        picture.
+
+        The cost is 615 of 34 560 triangles going degenerate, where two
+        surface vertices 8 cm apart snap to one mesh vertex. A zero-area
+        triangle draws nothing; it is the price of landing on the sheet.
+        """
+        if not self.surface_pull:
+            return None
+        st = world.measured_state()
+        points = self._sensor_points()
+        if points[2] is not None:
+            return self._mesh_pull(world, st, points)
+        return self._vote_pull(world, st)
+
+    def _mesh_pull(self, world, st, points):
+        """Snap the room's surface onto the sweep's own mesh.
+
+        The mesh is in world METRES and the surface is in grid indices,
+        so this is _sensor_recolour's conversion in both directions --
+        a voxel CENTRE is at its integer index, hence the half-voxel.
+        """
+        try:
+            from .voxel_surface import snap_to_nearest
+            from .world_map import UNKNOWN
+        except ImportError:
+            from voxel_surface import snap_to_nearest
+            from world_map import UNKNOWN
+        verts_m, _, tree = points
+        blind = st == UNKNOWN
+        hi = np.asarray(st.shape) - 1
+        reach = self.surface_pull * world.vox
+
+        def pull(verts):
+            verts = np.asarray(verts, np.float64)
+            cell = np.clip(np.floor(verts + 0.5).astype(np.int64), 0, hi)
+            out = snap_to_nearest(
+                world.origin + (verts + 0.5) * world.vox, verts_m, reach,
+                where=~blind[cell[:, 0], cell[:, 1], cell[:, 2]],
+                tree=tree)[0]
+            return (out - world.origin) / world.vox - 0.5
+
+        return pull
+
+    def _vote_pull(self, world, st):
+        """Shrink onto the nearest measured CELL, for a sweep with no
+        mesh yet. -> a callback.
+
+        The field is the distance, in voxels, to the nearest OCCUPIED
+        cell -- hence scale=1.0, where a frame's TSDF needs TSDF_VOXELS
+        to become a distance -- and FREE is the room's `tsdf > 0`.
+
+        Not the polish it sounds like: the room already DROPS every claim
+        whose centre is in free space (_world_claim), but a dropped
+        voxel's neighbour keeps its own face, and that face still stands
+        a whole voxel inside the free cell -- the one-voxel skin
+        _disproved exists to forgive. 15.3% of room07's vertices move,
+        median 76.0 mm to 35.3 mm from the mesh, 92.4% of them closer.
 
         Cached on the vote counters, which only grow: the field costs
         87 ms to build and 11 ms more to differentiate over the room's
         1.52 M voxels, the room re-meshes every `mesh_every` frames, and
         a shrink keypress integrates no frame at all.
         """
-        if not self.surface_pull:
-            return None
         try:
             from .voxel_surface import pull_to_surface
             from .world_map import FREE, OCCUPIED
@@ -876,7 +936,6 @@ class LiveView:
         from scipy import ndimage
         key = (int(world.n_hit.sum()), int(world.n_pass.sum()))
         if getattr(self, '_wpull_of', None) != key:
-            st = world.measured_state()
             field = ndimage.distance_transform_edt(st != OCCUPIED)
             self._wpull = (field, np.gradient(field), st == FREE)
             self._wpull_of = key

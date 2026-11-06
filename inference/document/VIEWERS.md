@@ -392,7 +392,7 @@ viewpoint `display_solid` opens with.
 | mouse | orbit, pan, zoom — the viewpoint survives every frame update |
 | `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
 | `+` / `-` | step the zoom by 15%; `0` fits what has been built so far |
-| `[` / `]` | how far the surface layer may be shrunk onto the measured depth: `0` → 0.5 → 1.0 → 1.5 → 2.0 → 3.0 voxels. `[` all the way down is the model's own geometry and the exact registration with the cubes, `]` all the way up is as far as the measurement reaches. Works in both modes, onto different evidence: a frame's own TSDF, or — under `--accumulate` — the sweep's hit/pass vote, where `FREE` is the room's "in front of something" |
+| `[` / `]` | how far the surface layer may be shrunk onto the measured depth: `0` → 0.5 → 1.0 → 1.5 → 2.0 → 3.0 voxels. `[` all the way down is the model's own geometry and the exact registration with the cubes, `]` all the way up is as far as the measurement reaches. Works in both modes: a frame shrinks onto its own TSDF, and the room snaps onto the sweep's own mesh, taking from the hit/pass vote the one thing a distance cannot give it — which side of the surface a vertex is on |
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
 
@@ -436,11 +436,15 @@ a keypress apart. Each press re-meshes, about 150 ms for a frame, so the
 keys act on the press and do not repeat. The value is in the panel
 readout under the depth — the 3D window cannot draw text.
 
-It works on the room too, onto the sweep's own hit/pass vote rather than
-a frame's TSDF: 15.3% of room07's surface vertices move, and their
-median distance to the sensor's own mesh halves, 76.0 mm to 35.3 mm.
-Above one voxel the ladder stops changing anything there, because
-almost nothing is further than that from a cell the sweep measured.
+It works on the room too, and there it lands **on** the measurement: each
+vertex the sweep has evidence about is snapped onto the nearest vertex
+of the sweep's own mesh, which carries 2 cm where the room's grid has
+8. Of the 37.5% of room07's surface vertices standing where the sweep
+measured anything, those within 20 mm of the mesh go from 7.9% with the
+shrink off to 81.9% at the default and 99.2% at the top of the ladder.
+The rest stand in space the sweep never measured through, and stay where
+the model put them — there is nothing there to agree with.
+
 What it spends is the exact registration with the cubes; `[` to 0 buys
 that back, and is the way to show the two layers hold the same voxels.
 

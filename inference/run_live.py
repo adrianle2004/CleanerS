@@ -398,7 +398,10 @@ def parse_args():
                         '0 turns it off. Only what stands in front of a '
                         'measurement ever moves, which a frame reads off '
                         "its own TSDF and the room off the sweep's "
-                        'hit/pass vote. `[` and `]` move it in the '
+                        'hit/pass vote -- and the room then snaps onto '
+                        "the sweep's own mesh, so it lands ON what was "
+                        'measured rather than near it. `[` and `]` move '
+                        'it in the '
                         'window, so the correction can be read against '
                         'its own absence without a second run.')
     p.add_argument('--no_match_sensor', dest='match_sensor',

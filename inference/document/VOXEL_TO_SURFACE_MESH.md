@@ -170,10 +170,10 @@ surface extraction itself.
 Both layers shrink, onto **different evidence**. A frame has its own
 TSDF, a signed distance whose sign is the whole gate
 ([§4.1](#41-why)–[§4.5](#45-it-runs-after-the-smoothing-and-before-the-split)).
-The accumulated room has no frame, so it shrinks onto the sweep's own
-hit/pass vote instead ([§4.7](#47-the-rooms-field-the-sweeps-own-vote)).
-The step, the clamp and the key are the same for both; only the field
-differs.
+The accumulated room has no frame, so it snaps onto the sweep's own mesh
+and takes the sign from the sweep's hit/pass vote ([§4.7](#47-the-room-onto-the-mesh-with-the-vote-for-a-sign)).
+The key and the ladder are the same for both; what each can reach for,
+and how exactly it lands, is not.
 
 ### 4.1 Why
 
@@ -249,59 +249,81 @@ open3d 0.17's legacy Visualizer draws no text.
 Under `--accumulate` the keys do the same thing to the room, against
 the field in §4.7. One value, one ladder, two fields.
 
-### 4.7 The room's field: the sweep's own vote
+### 4.7 The room: onto the mesh, with the vote for a sign
 
-The room has no frame's TSDF — it *is* the sweep. It has the sweep's
-hit/pass vote, which is the same evidence in the same three states, and
-`_world_pull` reads the sign straight off it:
+The room has no frame's TSDF — it *is* the sweep. It has two things
+instead, and `_world_pull` uses both, because each supplies what the
+other cannot.
+
+**The vote gives the sign.** The sweep's hit/pass grid is the same
+evidence in the same three states:
 
 | state | means | so |
 | --- | --- | --- |
-| `OCCUPIED` | the sweep measured a surface here | this is the measurement; nothing to move it onto |
-| `FREE` | the camera measured **through** here | the room's `tsdf > 0`: the vertex is in front of something, and moves |
-| `UNKNOWN` | nothing was measured | the room's version of the TSDF saturating: no evidence, so nothing moves |
+| `OCCUPIED` | the sweep measured a surface here | the vertex is on the measurement, and may be moved onto it exactly |
+| `FREE` | the camera measured **through** here | the room's `tsdf > 0`: in front of something, and moves |
+| `UNKNOWN` | nothing was measured | no evidence. Nothing moves, and this is the guard that matters — see below |
 
-The field is then `distance_transform_edt(st != OCCUPIED)` — the
-distance, in voxels, to the nearest measured cell — which is why it is
-passed with `scale=1.0` where a frame's TSDF needs `TSDF_VOXELS` to
-become a distance. The gate is a mask rather than the sign, because an
-unsigned distance has no sign to read, and that is what
-`pull_to_surface`'s `where` is for: it restricts **on top of** `t > 0`,
-so a mask can never pull geometry onto a measurement the field does not
-have.
+**The mesh gives the target.** `_mesh_pull` snaps each movable vertex
+onto its nearest vertex of the sweep's own mesh, within
+`surface_pull` voxels (`snap_to_nearest`). The mesh carries the TSDF's
+2 cm and *is* the measurement, so a vertex that moves lands **on** it
+rather than near it.
 
-**It is not the sub-voxel polish it sounds like.** The room already
-*drops* every claim whose centre is in free space
-(`_world_claim`, and `_build_world`'s docstring argues it: leaving them
-in "puts matter in mid-air and thickens every wall by the voxel in
-front of it"). But a dropped voxel's surviving neighbour keeps its own
-face, and that face still stands a whole voxel inside the free cell —
-the one-voxel skin `_disproved` exists to forgive. Measured on room07's
-sweep:
+That second half is what the vote alone cannot do. The vote resolves
+8 cm cells, so a vertex that lands on the nearest measured cell is
+still half a voxel out, and a vertex already standing *in* a measured
+cell cannot move at all — the distance there is zero — even though
+it is a median 79.6 mm off the mesh. On room07 that is 3 596 vertices
+the cell rule can never touch.
 
-| | |
-| --- | --- |
-| vertices that move | **15.3%** (2 610 of 17 070) |
-| median distance to the sensor's own mesh | **76.0 mm → 35.3 mm** |
-| of the moved, how many end closer | **92.4%** |
-| the ladder above 1.0 | changes nothing — 99.6% of free-standing vertices are within 1.5 voxels of a measured cell, so the cap stops binding |
+Measured on room07's sweep. 6 394 of the surface's 17 070 vertices
+(37.5%) stand where the sweep measured something, so those are the ones
+that may legitimately move; of them, with the shrink off, 7.9% are
+within 20 mm of the mesh at a median 79.8 mm:
 
-The field costs 87 ms to build over the room's 1.52 M voxels and 11 ms
-more to differentiate, so both are cached on the vote counters, which
-only grow; a shrink keypress integrates no frame, so it re-meshes
-against the cached field in 1–2 ms. `--surface_pull 0` builds no
-field at all.
+| cap | vertices moved | of the reachable, within 20 mm of the mesh |
+| ---: | ---: | ---: |
+| off | 0 | 7.9% |
+| 0.5 | 8.0% | 21.3% |
+| 1.0 | 18.8% | **50.2%** |
+| 1.5 | 30.7% | **81.9%** |
+| 2.0 | 36.1% | 96.4% |
+| 3.0 | 37.2% | **99.2%** |
 
-**What this trades.** The meshing lands on the cube faces exactly
-([§2.5](#25-the-property-the-whole-layer-rests-on)) and the shrink
-then moves it off them, by up to `surface_pull`, onto what the sweep
-measured. So with the shrink on, `m` re-describes *what* is in the room
-without changing it, but does move it. `[` down to 0 gives the exact
-registration back, which is the way to see that the two layers are the
-same voxels.
+The whole ladder earns its rungs here, which it did not against the
+cell grid — there everything above one voxel drew the same picture.
+The query costs 25 ms over the cached tree. The other 62.5% of vertices
+stand in unobserved space and stay exactly where the model put them,
+which is the point: there is no measurement there to agree with.
 
-Neither field is temporal alignment: a frame's is one frame's
-correction, and the room's is a static read of the vote as it stands.
+**The guard.** `snap_to_nearest` is **unsigned**, and that is dangerous
+without the mask. The sensor's mesh is a single sheet with no back, so
+the nearest point to a vertex on a wall's *back* face is on its front
+— snapping it would pull the wall through itself and collapse it.
+`where` is what stops that, and `UNKNOWN` is exactly the state a
+wall's back is in. The vote is not an optimisation here; it is the
+correctness argument.
+
+**Before the mesh exists** — early in a sweep, before it has been
+extracted — there is no mesh to snap to, and `_vote_pull` shrinks onto
+the nearest measured cell with `pull_to_surface` instead: the distance
+transform to the nearest `OCCUPIED` cell, in voxels, hence `scale=1.0`
+where a frame's TSDF needs `TSDF_VOXELS`. It puts 17.9% of the
+reachable surface within 20 mm against the mesh rule's 81.9%, which is
+the gap the mesh closes. That field costs 87 ms to build plus 11 ms to
+differentiate over 1.52 M voxels, so both are cached on the vote
+counters, which only grow.
+
+**What it trades.** 615 of 34 560 triangles go degenerate, where two
+surface vertices 8 cm apart snap to the same mesh vertex; a zero-area
+triangle draws nothing. And the meshing's exact registration with the
+cubes ([§2.5](#25-the-property-the-whole-layer-rests-on)) is given
+up on purpose — `[` down to 0 hands it back in one press, which is the
+way to see that the two layers hold the same voxels.
+
+Neither rule is temporal alignment: a frame's is one frame's
+correction, and the room's is a static read of the sweep as it stands.
 
 ---
 
@@ -792,24 +814,50 @@ every claim whose centre is in measured-free space, which is a stronger
 correction than moving one, so the expectation was a sub-voxel polish
 at best. Measuring it said otherwise: a dropped voxel's surviving
 neighbour keeps its own face, and that face still stands a whole voxel
-inside the free cell. **15.3% of the room surface's vertices move, and
-their median distance to the sensor's own mesh falls from 76.0 mm to
-35.3 mm with 92.4% of them closer** — the same order as the frame
-layer's 22.3% and 69 → 23 mm. [§4.7](#47-the-rooms-field-the-sweeps-own-vote)
-has the rest.
+inside the free cell. 15.3% of the room surface's vertices moved, and
+their median distance to the sensor's own mesh fell from 76.0 mm to
+35.3 mm.
 
-Two things fell out of the measurement that guesswork would have missed.
-The ladder **saturates above 1.0**, because 99.6% of free-standing
-vertices are within 1.5 voxels of a measured cell, so every rung above
-one voxel draws the same picture. And the field is expensive enough to
-matter — 87 ms plus 11 ms for its gradient over 1.52 M voxels — so
-both are cached on the vote counters, which only grow; a keypress
-integrates no frame and re-meshes against the cached field in 1–2 ms.
+### Step 6b — and then it was still sitting on the prediction
 
-What it costs is the exact registration with the cubes, which the
-meshing rule works so hard for and the shrink then deliberately gives
-up. `[` down to 0 hands it back in one press, which is also the only
-honest way to show that the two layers are the same voxels.
+That version shipped, and looking at it was enough: the surface was
+closer to the measurement and still visibly **on the completion**.
+Measuring the complaint found two causes, and the bigger one was not
+the one the code had been built around.
+
+**Resolution.** The vote resolves 8 cm cells, so landing on the nearest
+measured cell still leaves half a voxel. Only 7.2% of the surface ended
+within 20 mm of the mesh.
+
+**Coverage, which was worse.** 45.0% of the surface stood within two
+voxels of the sensor's mesh and could not move at all — and 3 596 of
+those vertices were standing *in measured cells*, where a
+distance-to-measured field is zero by construction. The rule could not
+touch the very voxels the sweep had measured, which are exactly where
+the mesh exists to be agreed with.
+
+So the target changed from the measured *cell* to the measured
+*surface*: `snap_to_nearest` puts a vertex on its nearest vertex of the
+sweep's own mesh, 2 cm instead of 8, and the vote is kept for the one
+thing it is actually needed for — the **sign**. Of the 37.5% of
+vertices standing where the sweep measured anything, those within 20 mm
+of the mesh go from 7.9% to **81.9%** at the default cap and **99.2%**
+at the top of the ladder, against 17.9% for the cell rule. The ladder
+earns every rung, where before it had saturated above one voxel.
+
+This is also the reason the earlier flat rejection of "pull onto the
+sensor's mesh" was too broad. The objection was sound — the mesh is a
+single sheet with no back, so a nearest-point pull would drag a wall
+through itself — but it rules out the *distance*, not the *target*.
+With the sign taken from the vote and the snap taken from the mesh,
+each source does the half it can do. The table below records the
+rejection as what it should have been: no sign, not no mesh.
+
+What it costs is 615 of 34 560 triangles going degenerate, and the
+exact registration with the cubes that the meshing rule works so hard
+for. `[` down to 0 hands the registration back in one press, which is
+also the only honest way to show that the two layers are the same
+voxels.
 
 ## Tried and thrown away
 
@@ -822,7 +870,8 @@ honest way to show that the two layers are the same voxels.
 | caching the frame's KD-tree on `id()` | the room's mesh is stable and safe to key that way; a frame's is a new object every frame, and an `id()` an old one has released can be handed straight back to a new one |
 | borrowing colour from the nearest voxel of **any** class | smears the wall onto the bed standing in front of it. Same-class only — which is why the floor had nothing to borrow and needed the unlimited reach instead |
 | a second copy of the colour rule for the frame path | two copies drift, and the layer's whole promise is that `m` does not change the room's appearance |
-| a nearest-point pull onto the sensor's mesh, for the room | unsigned. The sensor's mesh is a single sheet, so the nearest point to a vertex on a wall's *back* is on its front — it would collapse every wall to zero thickness and drag occluded completions forward onto surfaces they are behind. The vote gives a sign; a distance alone does not |
+| a nearest-point pull onto the sensor's mesh with **no sign** | the mesh is a single sheet with no back, so the nearest point to a vertex on a wall's back face is on its front — it would pull every wall through itself. Snapping to the mesh is right and is what the room does; doing it on distance alone is not. The sweep's vote supplies the sign (§4.7) |
+| shrinking the room onto the nearest measured CELL | it was the first answer and it shipped, then measured badly: 8 cm cells leave half a voxel, a vertex already in a measured cell cannot move at all, and every rung of the ladder above one voxel drew the same picture. Kept only as the fallback for a sweep with no mesh yet |
 | committing the two regenerated sweeps | regenerable from the bag and the checkpoint, and neither git nor HF is the right half for them. `outputs/*_world/` is ignored |
 
 ## Verification — the metrics are a control, not a result

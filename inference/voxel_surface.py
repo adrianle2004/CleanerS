@@ -395,6 +395,50 @@ def pull_to_surface(verts, tsdf, scale=TSDF_VOXELS, max_step=1.5,
     return verts
 
 
+def snap_to_nearest(points, ref_points, max_dist, where=None, tree=None):
+    """Move each point onto its nearest reference point. -> (out, moved)
+
+    The geometric twin of `nearest_colour`, and it shares its reasons: a
+    point with no reference within `max_dist` is left exactly where it
+    was, the limit may be one number or one per point, and `tree` is a
+    cKDTree built earlier -- the room is re-meshed every few frames
+    against the same mesh.
+
+    `where` (N,) is which points are ALLOWED to move. It is not an
+    optimisation: this rule is unsigned, and a distance alone cannot
+    tell the front of a surface from the back. The sensor's mesh is a
+    single sheet, so the nearest point to a vertex on a wall's back is
+    on its front -- snapping it would collapse the wall. The caller
+    passes the evidence that says which side the point is on; see
+    live_view._mesh_pull, which takes it from the sweep's own vote.
+
+    This is what makes the shrink land ON the measurement rather than
+    near it. The room's grid is 8 cm and the mesh carries the TSDF's
+    2 cm, so shrinking onto the nearest measured CELL leaves half a
+    voxel; snapping to the mesh leaves the mesh's own spacing.
+    """
+    points = np.asarray(points, np.float64).reshape(-1, 3)
+    out = np.array(points, dtype=np.float64, copy=True)
+    moved = np.zeros(len(points), bool)
+    ref_points = np.asarray(ref_points, np.float64).reshape(-1, 3)
+    if not len(points) or not len(ref_points):
+        return out, moved
+    if tree is None:
+        from scipy.spatial import cKDTree
+        tree = cKDTree(ref_points)
+    cap = float(np.max(max_dist))
+    try:
+        d, i = tree.query(points, distance_upper_bound=cap, workers=-1)
+    except TypeError:                 # scipy older than 1.6 has no workers
+        d, i = tree.query(points, distance_upper_bound=cap)
+    moved = (i < len(ref_points)) & (d <= max_dist)
+    if where is not None:
+        moved = moved & np.asarray(where, bool).reshape(-1)
+    if moved.any():
+        out[moved] = ref_points[i[moved]]
+    return out, moved
+
+
 def smooth(verts, tris, passes=2, rate=0.5):
     """Laplacian smoothing: each vertex steps `rate` of the way towards the
     mean of its neighbours, `passes` times.
