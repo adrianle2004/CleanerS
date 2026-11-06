@@ -333,13 +333,29 @@ def voxelise(points, shape, values=None):
     return cov, out.reshape(shape + (3,))
 
 
-def pull_to_surface(verts, tsdf, scale=TSDF_VOXELS, max_step=1.5):
+def pull_to_surface(verts, tsdf, scale=TSDF_VOXELS, max_step=1.5,
+                    where=None, grad=None):
     """Shrink the surface onto the measurement, on the camera's side only.
 
     verts are FRACTIONAL grid indices in `tsdf`'s own axis order. Each one
     in front of a measured surface (tsdf > 0) is stepped back along the
     TSDF's gradient by the distance the TSDF says it is out, which lands
     it on the zero crossing -- the surface the depth actually measured.
+
+    `where` (N,) restricts which vertices may move, ON TOP of tsdf > 0.
+    It is for a field whose SIGN is not the evidence. A frame's TSDF is
+    signed and the sign is the whole gate. The accumulated room has no
+    frame and no such field; it has the sweep's own hit/pass vote, and
+    the field built from that is an UNSIGNED distance to the nearest
+    measured voxel -- so there the gate is a mask saying the vertex
+    stands in a cell the camera measured THROUGH. Same arithmetic, same
+    clamp, different evidence. See live_view._world_pull.
+
+    `grad` is np.gradient(tsdf) from earlier, for a field that outlives
+    the call. A frame's is 130 k voxels and not worth keeping; the
+    room's is 1.52 M, costs 11 ms of the 98 the field costs, and only
+    changes when a frame is integrated -- which pressing the shrink
+    keys does not do.
 
     The model's completion comes out about a voxel proud of the
     measurement, and this is the one place in the pipeline that already
@@ -361,11 +377,14 @@ def pull_to_surface(verts, tsdf, scale=TSDF_VOXELS, max_step=1.5):
     co = verts.T
     t = ndimage.map_coordinates(tsdf, co, order=1, mode='nearest')
     front = t > 0
+    if where is not None:
+        front = front & np.asarray(where, bool).reshape(-1)
     if not front.any():
         return verts
 
     g = np.stack([ndimage.map_coordinates(d, co, order=1, mode='nearest')
-                  for d in np.gradient(tsdf)], axis=1)
+                  for d in (np.gradient(tsdf) if grad is None else grad)],
+                 axis=1)
     n = np.linalg.norm(g, axis=1)
     # a constant TSDF has no direction to move in -- nothing was measured
     move = front & (n > 1e-9)

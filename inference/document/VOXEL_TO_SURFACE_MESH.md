@@ -35,7 +35,8 @@ has to be
 
 - geometrically continuous rather than a pile of cubes;
 - registered with the cubes, so pressing `m` **re-describes** the room
-  instead of moving it;
+  instead of moving it — up to the shrink, which then moves it onto
+  the measurement on purpose, and gives the registration back at `0`;
 - shrunk onto the measured depth wherever a measurement exists to shrink
   onto, and left alone where none does;
 - coloured from real sensor observations wherever there are any; and
@@ -166,6 +167,14 @@ surface extraction itself.
 
 ## 4. Shrinking the surface onto the measurement
 
+Both layers shrink, onto **different evidence**. A frame has its own
+TSDF, a signed distance whose sign is the whole gate
+([§4.1](#41-why)–[§4.5](#45-it-runs-after-the-smoothing-and-before-the-split)).
+The accumulated room has no frame, so it shrinks onto the sweep's own
+hit/pass vote instead ([§4.7](#47-the-rooms-field-the-sweeps-own-vote)).
+The step, the clamp and the key are the same for both; only the field
+differs.
+
 ### 4.1 Why
 
 The completion comes out about a voxel **proud** of the measured surface.
@@ -237,18 +246,62 @@ are bound to the press edge and do not auto-repeat; the zoom pair
 deliberately does. The value is shown in the panel readout, because
 open3d 0.17's legacy Visualizer draws no text.
 
-Under `--accumulate` the keys refuse and log why, rather than moving a
-number that cannot move anything — which is [§4.7](#47-this-is-the-frame-layer-only).
+Under `--accumulate` the keys do the same thing to the room, against
+the field in §4.7. One value, one ladder, two fields.
 
-### 4.7 **This is the frame layer only**
+### 4.7 The room's field: the sweep's own vote
 
-`_build_frame_surface` passes a `pull`; `_build_world_surface` does not.
-The shrink needs *one* frame's TSDF, taken from the camera that measured
-it — the accumulated room has no such field, and the sweep's own mesh
-(the third layer) is already the measurement. So §4 describes the
-single-frame path. Everything else on this page applies to both.
+The room has no frame's TSDF — it *is* the sweep. It has the sweep's
+hit/pass vote, which is the same evidence in the same three states, and
+`_world_pull` reads the sign straight off it:
 
-It is a single-frame correction, not temporal alignment.
+| state | means | so |
+| --- | --- | --- |
+| `OCCUPIED` | the sweep measured a surface here | this is the measurement; nothing to move it onto |
+| `FREE` | the camera measured **through** here | the room's `tsdf > 0`: the vertex is in front of something, and moves |
+| `UNKNOWN` | nothing was measured | the room's version of the TSDF saturating: no evidence, so nothing moves |
+
+The field is then `distance_transform_edt(st != OCCUPIED)` — the
+distance, in voxels, to the nearest measured cell — which is why it is
+passed with `scale=1.0` where a frame's TSDF needs `TSDF_VOXELS` to
+become a distance. The gate is a mask rather than the sign, because an
+unsigned distance has no sign to read, and that is what
+`pull_to_surface`'s `where` is for: it restricts **on top of** `t > 0`,
+so a mask can never pull geometry onto a measurement the field does not
+have.
+
+**It is not the sub-voxel polish it sounds like.** The room already
+*drops* every claim whose centre is in free space
+(`_world_claim`, and `_build_world`'s docstring argues it: leaving them
+in "puts matter in mid-air and thickens every wall by the voxel in
+front of it"). But a dropped voxel's surviving neighbour keeps its own
+face, and that face still stands a whole voxel inside the free cell —
+the one-voxel skin `_disproved` exists to forgive. Measured on room07's
+sweep:
+
+| | |
+| --- | --- |
+| vertices that move | **15.3%** (2 610 of 17 070) |
+| median distance to the sensor's own mesh | **76.0 mm → 35.3 mm** |
+| of the moved, how many end closer | **92.4%** |
+| the ladder above 1.0 | changes nothing — 99.6% of free-standing vertices are within 1.5 voxels of a measured cell, so the cap stops binding |
+
+The field costs 87 ms to build over the room's 1.52 M voxels and 11 ms
+more to differentiate, so both are cached on the vote counters, which
+only grow; a shrink keypress integrates no frame, so it re-meshes
+against the cached field in 1–2 ms. `--surface_pull 0` builds no
+field at all.
+
+**What this trades.** The meshing lands on the cube faces exactly
+([§2.5](#25-the-property-the-whole-layer-rests-on)) and the shrink
+then moves it off them, by up to `surface_pull`, onto what the sweep
+measured. So with the shrink on, `m` re-describes *what* is in the room
+without changing it, but does move it. `[` down to 0 gives the exact
+registration back, which is the way to see that the two layers are the
+same voxels.
+
+Neither field is temporal alignment: a frame's is one frame's
+correction, and the room's is a static read of the vote as it stands.
 
 ---
 
@@ -552,7 +605,9 @@ are for.
    came with.
 5. **Smooth colour and geometry together.** A flat face stays in its
    plane; corners and specks round off.
-6. **Shrink onto the TSDF** — frame layer only, front only, clamped.
+6. **Shrink onto the measurement** — front only, clamped, and only
+   where there is a measurement to shrink onto: a frame's own TSDF, or
+   the room's read of the sweep's hit/pass vote.
 7. **Subdivide.** Edge midpoints, parents recorded; the surface does not
    move, only where it can be asked.
 8. **Look up the sensor's colour.** Two voxels for anything
@@ -676,9 +731,9 @@ And the two grids disagree about axis order, which does not crash; it
 returns a colour from the wrong part of the room
 ([§9.2](#92-axis-order)).
 
-One thing is deliberately *not* shared: the TSDF shrink is the frame
-layer only, because it needs one frame's field and the accumulated room
-has none — [§4.6](#47-this-is-the-frame-layer-only).
+The shrink was the one thing *not* shared at first, because it needs a
+signed field and only a frame has one. That is
+[Step 6](#step-6--the-shrink-in-the-room-too) below.
 
 ## Step 4 — two bugs found on the way
 
@@ -712,6 +767,50 @@ asked for was **checked rather than assumed**: four 400-frame runs put
 measured fps unchanged, and the spread that did show up followed running
 order, not which layer was on screen — `infer` moved with it.
 
+## Step 6 — the shrink in the room too
+
+The shrink started as the frame layer's alone, because
+`pull_to_surface`'s correctness rests entirely on the **sign**: move
+only what stands in front of a measurement, because moving anything
+else is inventing one. A frame's TSDF carries that sign. The room has
+no frame.
+
+The first answer looked like "so it cannot be done", and it was wrong
+twice over.
+
+**Wrong about the sign.** The room has the sweep's own hit/pass vote,
+which is the same evidence in the same three states — `FREE` is
+precisely "the camera measured through here", which is what `tsdf > 0`
+means. So the field is a distance transform to the nearest `OCCUPIED`
+cell and the gate is a mask instead of a sign, which is what
+`pull_to_surface` grew a `where` argument for. It restricts on top of
+`t > 0` rather than replacing it, so no caller can use a mask to pull
+geometry onto a measurement the field does not have.
+
+**Wrong about there being nothing to do.** The room already *drops*
+every claim whose centre is in measured-free space, which is a stronger
+correction than moving one, so the expectation was a sub-voxel polish
+at best. Measuring it said otherwise: a dropped voxel's surviving
+neighbour keeps its own face, and that face still stands a whole voxel
+inside the free cell. **15.3% of the room surface's vertices move, and
+their median distance to the sensor's own mesh falls from 76.0 mm to
+35.3 mm with 92.4% of them closer** — the same order as the frame
+layer's 22.3% and 69 → 23 mm. [§4.7](#47-the-rooms-field-the-sweeps-own-vote)
+has the rest.
+
+Two things fell out of the measurement that guesswork would have missed.
+The ladder **saturates above 1.0**, because 99.6% of free-standing
+vertices are within 1.5 voxels of a measured cell, so every rung above
+one voxel draws the same picture. And the field is expensive enough to
+matter — 87 ms plus 11 ms for its gradient over 1.52 M voxels — so
+both are cached on the vote counters, which only grow; a keypress
+integrates no frame and re-meshes against the cached field in 1–2 ms.
+
+What it costs is the exact registration with the cubes, which the
+meshing rule works so hard for and the shrink then deliberately gives
+up. `[` down to 0 hands it back in one press, which is also the only
+honest way to show that the two layers are the same voxels.
+
 ## Tried and thrown away
 
 | | why not |
@@ -723,6 +822,7 @@ order, not which layer was on screen — `infer` moved with it.
 | caching the frame's KD-tree on `id()` | the room's mesh is stable and safe to key that way; a frame's is a new object every frame, and an `id()` an old one has released can be handed straight back to a new one |
 | borrowing colour from the nearest voxel of **any** class | smears the wall onto the bed standing in front of it. Same-class only — which is why the floor had nothing to borrow and needed the unlimited reach instead |
 | a second copy of the colour rule for the frame path | two copies drift, and the layer's whole promise is that `m` does not change the room's appearance |
+| a nearest-point pull onto the sensor's mesh, for the room | unsigned. The sensor's mesh is a single sheet, so the nearest point to a vertex on a wall's *back* is on its front — it would collapse every wall to zero thickness and drag occluded completions forward onto surfaces they are behind. The vote gives a sign; a distance alone does not |
 | committing the two regenerated sweeps | regenerable from the bag and the checkpoint, and neither git nor HF is the right half for them. `outputs/*_world/` is ignored |
 
 ## Verification — the metrics are a control, not a result

@@ -242,6 +242,51 @@ class TestPullToSurface(unittest.TestCase):
         out = pull_to_surface(np.zeros((0, 3)), self.wall())
         self.assertEqual(out.shape, (0, 3))
 
+    # ---- `where`: for a field whose sign is not the evidence ----
+    # The accumulated room has no frame and no signed field. It has the
+    # sweep's hit/pass vote, and the field built from that is an
+    # UNSIGNED distance to the nearest measured voxel -- so there the
+    # gate is a mask. See live_view._world_pull.
+
+    def test_where_can_hold_a_vertex_the_sign_would_move(self):
+        t = self.wall()
+        v = np.array([[11.0, 4.0, 4.0], [12.0, 4.0, 4.0]])
+        out = pull_to_surface(v, t, where=[True, False])
+        self.assertAlmostEqual(out[0, 0], 10.0, places=5)
+        np.testing.assert_allclose(out[1], v[1])
+
+    def test_where_cannot_move_a_vertex_the_sign_would_not(self):
+        """It RESTRICTS, on top of tsdf > 0. A mask that says yes behind
+        the surface must not override the field -- otherwise one caller
+        could pull geometry onto a measurement that is not there."""
+        t = self.wall()
+        v = np.array([[8.0, 4.0, 4.0]])
+        np.testing.assert_allclose(
+            pull_to_surface(v, t, where=[True]), v)
+
+    def test_where_all_false_changes_nothing(self):
+        t = self.wall()
+        v = np.array([[11.0, 4.0, 4.0]])
+        np.testing.assert_allclose(
+            pull_to_surface(v, t, where=[False]), v)
+
+    # ---- `grad`: a field that outlives the call ----
+
+    def test_a_given_gradient_matches_the_one_it_would_compute(self):
+        t = self.wall()
+        v = np.array([[11.0, 4.0, 4.0], [11.5, 2.0, 6.0]])
+        np.testing.assert_allclose(pull_to_surface(v, t, grad=np.gradient(t)),
+                                   pull_to_surface(v, t))
+
+    def test_the_given_gradient_is_the_one_used(self):
+        """Handing in the negated gradient must push the other way --
+        otherwise the argument is being quietly ignored and the room is
+        paying 11 ms a re-mesh for nothing."""
+        t = self.wall()
+        v = np.array([[11.0, 4.0, 4.0]])
+        out = pull_to_surface(v, t, grad=[-g for g in np.gradient(t)])
+        self.assertGreater(out[0, 0], 11.0)
+
 
 class TestVoxelise(unittest.TestCase):
     """Putting the sensor's own mesh onto the room's grid.

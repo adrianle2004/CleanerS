@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from inference.live_view import (GRID, SHRINK_STEPS, VOX_UNIT_LOW,
                                  LiveView, view_points)
-from inference.world_map import WorldMap
+from inference.world_map import FREE, OCCUPIED, UNKNOWN, WorldMap
 
 
 class TestViewPoints(unittest.TestCase):
@@ -770,15 +770,16 @@ class TestTheShrinkKeys(unittest.TestCase):
         self.assertEqual(v.surface_pull, SHRINK_STEPS[-1])
         self.assertEqual(v.repainted, [])
 
-    def test_the_room_refuses_and_does_not_move(self):
-        """--accumulate has no single frame's TSDF, so the room's
-        surface is never pulled. Changing the number there would be a
-        key that reports a change and changes nothing."""
+    def test_the_room_steps_too(self):
+        """One value, both modes. The room shrinks onto the sweep's own
+        hit/pass vote where a frame shrinks onto its TSDF -- different
+        evidence, same step, so the key means one thing."""
         v = self.view(1.5, room=True)
         v._shrink_more(None)
+        self.assertEqual(v.surface_pull, 2.0)
         v._shrink_less(None)
         self.assertEqual(v.surface_pull, 1.5)
-        self.assertEqual(v.repainted, [])
+        self.assertEqual(len(v.repainted), 2)
 
     def test_every_rung_is_reachable_in_order(self):
         v = self.view(SHRINK_STEPS[0])
@@ -809,19 +810,113 @@ class TestTheShrinkKeys(unittest.TestCase):
         v = self.view(1.5, layer='voxels')
         self.assertEqual(v._panel_status(None), [])
         v = self.view(1.5, layer='surface', room=True)
-        self.assertEqual(v._panel_status(None), [])
+        self.assertEqual(len(v._panel_status(None)), 1)
 
     def test_the_panel_bar_keeps_the_rooms_own_readout(self):
-        """--accumulate's status lines go through the same function."""
+        """--accumulate's status lines go through the same function, and
+        the shrink is appended rather than replacing them."""
         v = self.view(1.5, layer='surface', room=True)
         rows = [('a', (1, 2, 3)), ('b', (4, 5, 6))]
-        self.assertEqual(v._panel_status(rows), rows)
+        got = v._panel_status(rows)
+        self.assertEqual(got[:2], rows)
+        self.assertIn('shrink', got[2][0])
 
     def test_the_short_form_fits_the_panel(self):
         """420 px at 0.42 scale is about 46 characters."""
         for pull in SHRINK_STEPS:
             v = self.view(pull, layer='surface')
             self.assertLessEqual(len(v._panel_status(None)[0][0]), 46)
+
+
+class _VoteWorld(object):
+    """Only the parts _world_pull reads off a WorldMap."""
+
+    def __init__(self, st):
+        self._st = np.asarray(st, np.uint8)
+        self.shape = self._st.shape
+        self.n_hit = np.zeros(self._st.size, np.uint16)
+        self.n_pass = np.zeros(self._st.size, np.uint16)
+
+    def measured_state(self):
+        return self._st
+
+
+class TestTheRoomsShrink(unittest.TestCase):
+    """The room shrinks onto the sweep's own vote, not onto a TSDF.
+
+    OCCUPIED is the measurement, FREE is where the camera measured
+    THROUGH -- the room's "in front of something" -- and UNKNOWN is no
+    evidence at all, which is the room's version of the TSDF saturating.
+    A vertex may only move out of FREE, which is the whole correctness
+    argument: everything else would be inventing a measurement.
+    """
+
+    def world(self):
+        """A measured wall at x=2, free space in front of it, and
+        unobserved space behind."""
+        st = np.full((6, 4, 4), UNKNOWN, np.uint8)
+        st[2] = OCCUPIED
+        st[3] = FREE
+        st[4] = FREE
+        return _VoteWorld(st)
+
+    def view(self, pull=1.5):
+        v = LiveView.__new__(LiveView)
+        v.surface_pull = pull
+        return v
+
+    def test_a_vertex_in_measured_free_space_is_pulled_back(self):
+        v, w = self.view(), self.world()
+        pull = v._world_pull(w)
+        before = np.array([[3.0, 2.0, 2.0]])
+        after = pull(before)
+        self.assertLess(after[0][0], before[0][0])
+
+    def test_a_vertex_in_unobserved_space_is_left_alone(self):
+        """Nothing was measured there, so there is nothing to shrink
+        onto and moving it would be inventing a measurement."""
+        v, w = self.view(), self.world()
+        before = np.array([[0.0, 2.0, 2.0]])
+        np.testing.assert_allclose(v._world_pull(w)(before), before)
+
+    def test_the_step_is_capped_by_the_ladder(self):
+        v, w = self.view(0.5), self.world()
+        before = np.array([[4.0, 2.0, 2.0]])
+        step = np.linalg.norm(v._world_pull(w)(before) - before)
+        self.assertLessEqual(step, 0.5 + 1e-9)
+
+    def test_the_shrink_off_builds_no_field_at_all(self):
+        """0 is off, and off must not pay 87 ms for a field nobody
+        asked for."""
+        v = self.view(0.0)
+        self.assertIsNone(v._world_pull(self.world()))
+
+    def test_the_field_is_cached_on_the_vote(self):
+        """It costs 87 ms to build and 11 ms to differentiate over the
+        room's 1.52 M voxels, and a shrink keypress integrates no
+        frame. Proven by moving the state WITHOUT the counters: a
+        rebuild would see it, the cache must not."""
+        v, w = self.view(), self.world()
+        v._world_pull(w)
+        w._st[:] = OCCUPIED              # no counter moved
+        before = np.array([[3.0, 2.0, 2.0]])
+        self.assertLess(v._world_pull(w)(before)[0][0], before[0][0])
+
+    def test_a_new_measurement_rebuilds_it(self):
+        v, w = self.view(), self.world()
+        v._world_pull(w)
+        w._st[:] = UNKNOWN
+        w.n_hit[0] += 1                  # a frame was integrated
+        before = np.array([[3.0, 2.0, 2.0]])
+        np.testing.assert_allclose(v._world_pull(w)(before), before)
+
+    def test_a_vertex_outside_the_grid_does_not_wrap(self):
+        """floor(v + 0.5) off the end would index backwards and read
+        some other corner of the room's vote."""
+        v, w = self.view(), self.world()
+        far = np.array([[-9.0, 2.0, 2.0], [99.0, 2.0, 2.0]])
+        out = v._world_pull(w)(far)
+        self.assertEqual(out.shape, far.shape)
 
 
 if __name__ == '__main__':

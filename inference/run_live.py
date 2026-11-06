@@ -394,12 +394,13 @@ def parse_args():
                    help="m's middle layer shrinks the surface back onto "
                         'what the depth MEASURED wherever it stands in '
                         'front of it -- the completion comes out about a '
-                        'voxel proud and the frame\'s TSDF says by how '
-                        'much. This caps that step, in voxels; only the '
-                        'front (tsdf > 0) ever moves, and 0 turns it off. '
-                        '`[` and `]` move it in the window, so the '
-                        'correction can be read against its own absence '
-                        'without a second run.')
+                        'voxel proud. This caps that step, in voxels, and '
+                        '0 turns it off. Only what stands in front of a '
+                        'measurement ever moves, which a frame reads off '
+                        "its own TSDF and the room off the sweep's "
+                        'hit/pass vote. `[` and `]` move it in the '
+                        'window, so the correction can be read against '
+                        'its own absence without a second run.')
     p.add_argument('--no_match_sensor', dest='match_sensor',
                    action='store_false',
                    help="the room's voxel layers normally also cover every "
@@ -1011,9 +1012,8 @@ def main():
                     log.info('frozen at %s -- press space in the window to '
                              'carry on%s, or close it to stop here',
                              frame.name,
-                             ', m to cycle cubes / surface / sensor'
-                             + ('' if world is not None else
-                                ', [ and ] to change the shrink'))
+                             ', m to cycle cubes / surface / sensor, '
+                             '[ and ] to change the shrink')
                     if world is not None:
                         _reconstruct(view, tracker,
                                      'frozen at %s' % frame.name)
@@ -1104,8 +1104,9 @@ def main():
             view.fit()
             log.info('the sweep is done. The window is showing %s -- press '
                      'm to cycle cubes / surface / sensor, c to change '
-                     'what the room is coloured by, and close the window '
-                     'to finish.',
+                     'what the room is coloured by, [ and ] to change how '
+                     'far the surface is shrunk onto what the sweep '
+                     'measured, and close the window to finish.',
                      "the SENSOR's reconstruction" if recon is not None
                      else 'the room as cubes')
             view.update_world(world, frame.depth, frame.rgb,

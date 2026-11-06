@@ -835,13 +835,79 @@ class LiveView:
             vcol = recolour(verts, vcol, vunlit)
         return self._lit(to_view(verts), tris, np.clip(vcol / 255.0, 0, 1))
 
+    def _world_pull(self, world):
+        """-> a callback shrinking the room onto the sweep's own
+        measurement, or None when the shrink is off.
+
+        The room has no frame's TSDF -- it IS the sweep -- but it has the
+        sweep's own hit/pass vote, which is the same evidence in the same
+        three states. OCCUPIED is the measurement. FREE is where the
+        camera measured THROUGH, which is the room's "in front of a
+        measurement" and so the room's `tsdf > 0`. UNKNOWN is where
+        nothing was measured at all, and is the room's version of the
+        TSDF saturating: no evidence, so nothing moves.
+
+        The field is then the distance, in voxels, to the nearest
+        measured cell -- hence scale=1.0, where the frame's TSDF needs
+        TSDF_VOXELS to become a distance.
+
+        This is NOT a sub-voxel polish, though it looks like it should
+        be. The room already DROPS every claim whose centre is in free
+        space (_world_claim), but a dropped voxel's neighbour keeps its
+        own face, and that face still stands a whole voxel inside the
+        free cell -- the one-voxel skin _disproved exists to forgive.
+        Measured on room07's sweep: 15.3% of the surface's vertices move,
+        and their median distance to the sensor's own mesh falls from
+        76.0 mm to 35.3 mm with 92.4% of them closer.
+
+        Cached on the vote counters, which only grow: the field costs
+        87 ms to build and 11 ms more to differentiate over the room's
+        1.52 M voxels, the room re-meshes every `mesh_every` frames, and
+        a shrink keypress integrates no frame at all.
+        """
+        if not self.surface_pull:
+            return None
+        try:
+            from .voxel_surface import pull_to_surface
+            from .world_map import FREE, OCCUPIED
+        except ImportError:
+            from voxel_surface import pull_to_surface
+            from world_map import FREE, OCCUPIED
+        from scipy import ndimage
+        key = (int(world.n_hit.sum()), int(world.n_pass.sum()))
+        if getattr(self, '_wpull_of', None) != key:
+            st = world.measured_state()
+            field = ndimage.distance_transform_edt(st != OCCUPIED)
+            self._wpull = (field, np.gradient(field), st == FREE)
+            self._wpull_of = key
+        field, grad, free = self._wpull
+        hi = np.asarray(field.shape) - 1
+
+        def pull(verts):
+            # a voxel spans index +/- 0.5, so the cell a vertex stands in
+            # is the nearest integer index -- floor(v + 0.5), not floor(v)
+            cell = np.clip(np.floor(np.asarray(verts) + 0.5).astype(
+                np.int64), 0, hi)
+            return pull_to_surface(
+                verts, field, scale=1.0, max_step=self.surface_pull,
+                where=free[cell[:, 0], cell[:, 1], cell[:, 2]], grad=grad)
+
+        return pull
+
     def _build_world_surface(self, world, v):
         """The ROOM's occupancy as one surface. -> a mesh, or None.
 
         Exactly the voxels _build_world draws as cubes, including its
         rule that a claim the sensor has measured through is dropped
         outside `verdict` mode -- so `m` re-describes the room without
-        changing what is in it.
+        changing WHAT is in it.
+
+        It does move it, though, by as much as `surface_pull`: the
+        meshing lands on the cube faces exactly (see voxel_surface's
+        header) and _world_pull then shrinks that onto what the sweep
+        measured. `[` to 0 turns the shrink off and gives the exact
+        registration back, which is the way to see that the two layers
+        are the same voxels.
         """
         occ, srgb, sonly = self._world_occupancy(world, v)
         rows = np.argwhere(occ)
@@ -854,6 +920,7 @@ class LiveView:
             # the mesh's own colour, which is as photographed as it gets
             lit = lit | sonly[rows[:, 0], rows[:, 1], rows[:, 2]]
         return self._surface_mesh(occ, rows, colours, self._to_view,
+                                  pull=self._world_pull(world),
                                   recolour=self._sensor_recolour(world),
                                   unlit=~lit)
 
@@ -1296,7 +1363,7 @@ class LiveView:
         to have watched the terminal.
         """
         lines = list(status or [])
-        if self.layer == 'surface' and self._wpivot is None:
+        if self.layer == 'surface':
             lines.append(('shrink %s   [ ] to change'
                           % self._shrink_said(self.surface_pull, short=True),
                           (170, 200, 230)))
@@ -1543,16 +1610,11 @@ class LiveView:
         snaps onto the ladder on the first press rather than drifting to
         1.37.
 
-        Refused under --accumulate. The shrink wants ONE frame's TSDF
-        and the room has no such field, so the room's surface is never
-        pulled -- see _build_world_surface. Moving a number that cannot
-        move anything on screen is worse than saying why not.
+        One value, both modes, two fields: a frame shrinks onto its own
+        TSDF (_build_frame_surface) and the room onto the sweep's
+        hit/pass vote (_world_pull). The evidence differs and the step
+        does not, which is why the key means one thing.
         """
-        if self._wpivot is not None:
-            log.info('the shrink is the per-frame surface: it needs one '
-                     "frame's TSDF, and the room has no such field. Run "
-                     'without --accumulate to use [ and ]')
-            return False
         cur = float(self.surface_pull or 0.0)
         if d > 0:
             nxt = next((v for v in SHRINK_STEPS if v > cur + 1e-9),
