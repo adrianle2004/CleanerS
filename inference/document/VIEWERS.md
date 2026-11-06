@@ -392,6 +392,7 @@ viewpoint `display_solid` opens with.
 | mouse | orbit, pan, zoom — the viewpoint survives every frame update |
 | `c` | cycle `class` → `zbuffer` → `all`, repainting the frame on screen |
 | `+` / `-` | step the zoom by 15%; `0` fits what has been built so far |
+| `[` / `]` | how far the surface layer may be shrunk onto the measured depth: `0` → 0.5 → 1.0 → 1.5 → 2.0 → 3.0 voxels. `[` all the way down is the model's own geometry, `]` all the way up is the TSDF unclipped. Only without `--accumulate` — the room has no single frame to shrink onto, and the keys say so rather than moving a number that changes nothing |
 | `s` | screenshot into `--out_dir` |
 | close the window | stops the run |
 
@@ -427,6 +428,13 @@ How that middle layer is built — the meshing rule, the half-voxel it is
 registered by, the TSDF shrink, and which colours are photographs of
 something and which are not — is
 [VOXEL_TO_SURFACE_MESH.md](VOXEL_TO_SURFACE_MESH.md).
+
+The shrink is on `[` and `]`, which is where it earns its keep: the two
+ends of the ladder are the same completion with and without the one
+correction this layer makes to the model's geometry, at one viewpoint,
+a keypress apart. Each press re-meshes the frame, about 150 ms, so the
+keys act on the press and do not repeat. The value is in the panel
+readout under the depth — the 3D window cannot draw text.
 
 That per-frame surface is independent by construction, which is the right
 answer in a mode that is not accumulating — no pose, nothing joined to

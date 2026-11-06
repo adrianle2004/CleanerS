@@ -19,7 +19,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from inference.live_view import GRID, VOX_UNIT_LOW, LiveView, view_points
+from inference.live_view import (GRID, SHRINK_STEPS, VOX_UNIT_LOW,
+                                 LiveView, view_points)
 from inference.world_map import WorldMap
 
 
@@ -690,6 +691,137 @@ class TestSurfaceMeshOrder(unittest.TestCase):
         v._surface_mesh(occ, rows, np.zeros((len(rows), 3), np.int32),
                         lambda p: p, pull=pull, recolour=recolour)
         self.assertGreater(seen['z'], 5.0)
+
+
+class TestTheShrinkKeys(unittest.TestCase):
+    """`[` and `]` move the shrink along SHRINK_STEPS.
+
+    The shrink is the one correction this layer makes to the model's
+    geometry, and the two ends of the ladder are its before and after.
+    On a key they can be read against each other; as a flag they are two
+    runs nobody holds in their head.
+    """
+
+    def view(self, pull=1.5, layer='surface', room=False):
+        v = LiveView.__new__(LiveView)
+        v.surface_pull = pull
+        v.layer = layer
+        v._wpivot = 7 if room else None
+        v.repainted = []
+        v._repaint = lambda: v.repainted.append(1)
+        return v
+
+    def test_it_steps_down_the_ladder(self):
+        v = self.view(1.5)
+        v._shrink_less(None)
+        self.assertEqual(v.surface_pull, 1.0)
+
+    def test_it_steps_up_the_ladder(self):
+        v = self.view(1.5)
+        v._shrink_more(None)
+        self.assertEqual(v.surface_pull, 2.0)
+
+    def test_down_all_the_way_turns_it_off(self):
+        """0 is a value on the ladder, not a floor it stops short of:
+        the shrink off is the model's own geometry, which is half of
+        what the key is for."""
+        v = self.view(SHRINK_STEPS[-1])
+        for _ in range(len(SHRINK_STEPS) * 2):
+            v._shrink_less(None)
+        self.assertEqual(v.surface_pull, 0.0)
+
+    def test_it_stops_at_the_top(self):
+        """3.0 is TSDF_VOXELS -- the whole distance the field can
+        express. Past it the step is clipped anyway, so there is nothing
+        above to offer."""
+        v = self.view(0.0)
+        for _ in range(len(SHRINK_STEPS) * 2):
+            v._shrink_more(None)
+        self.assertEqual(v.surface_pull, SHRINK_STEPS[-1])
+
+    def test_an_off_ladder_value_snaps_onto_it(self):
+        """--surface_pull 0.8 is legal and the key must not be stuck
+        beside the ladder, nor drift to 0.8 +/- a step."""
+        v = self.view(0.8)
+        v._shrink_more(None)
+        self.assertEqual(v.surface_pull, 1.0)
+        v = self.view(0.8)
+        v._shrink_less(None)
+        self.assertEqual(v.surface_pull, 0.5)
+
+    def test_the_surface_layer_is_redrawn(self):
+        v = self.view(1.5, layer='surface')
+        v._shrink_more(None)
+        self.assertEqual(len(v.repainted), 1)
+
+    def test_the_other_layers_change_the_value_without_redrawing(self):
+        """Only the surface is shrunk. The value still has to move, so
+        it can be set before m arrives there."""
+        v = self.view(1.5, layer='voxels')
+        v._shrink_more(None)
+        self.assertEqual(v.surface_pull, 2.0)
+        self.assertEqual(v.repainted, [])
+
+    def test_a_press_at_the_end_redraws_nothing(self):
+        """Nothing moved, so there is nothing to re-mesh -- and a
+        re-mesh is ~150 ms."""
+        v = self.view(SHRINK_STEPS[-1])
+        v._shrink_more(None)
+        self.assertEqual(v.surface_pull, SHRINK_STEPS[-1])
+        self.assertEqual(v.repainted, [])
+
+    def test_the_room_refuses_and_does_not_move(self):
+        """--accumulate has no single frame's TSDF, so the room's
+        surface is never pulled. Changing the number there would be a
+        key that reports a change and changes nothing."""
+        v = self.view(1.5, room=True)
+        v._shrink_more(None)
+        v._shrink_less(None)
+        self.assertEqual(v.surface_pull, 1.5)
+        self.assertEqual(v.repainted, [])
+
+    def test_every_rung_is_reachable_in_order(self):
+        v = self.view(SHRINK_STEPS[0])
+        seen = [v.surface_pull]
+        for _ in range(len(SHRINK_STEPS) - 1):
+            v._shrink_more(None)
+            seen.append(v.surface_pull)
+        self.assertEqual(tuple(seen), SHRINK_STEPS)
+
+    def test_the_handlers_answer_false(self):
+        """open3d reads the return value as 'redraw needed', and the
+        repaint is done here rather than by the renderer."""
+        v = self.view(1.5)
+        self.assertFalse(v._shrink_more(None))
+        self.assertFalse(v._shrink_less(None))
+
+    def test_it_says_the_distance_in_millimetres(self):
+        """A voxel is 8 cm and nobody reads a room in voxels."""
+        said = LiveView._shrink_said(1.5)
+        self.assertIn('120 mm', said)
+        self.assertIn('OFF', LiveView._shrink_said(0.0))
+
+    def test_the_panel_bar_shows_it_on_the_surface_layer_only(self):
+        v = self.view(1.5, layer='surface')
+        self.assertEqual(len(v._panel_status(None)), 1)
+        self.assertIn('120 mm', v._panel_status(None)[0][0])
+        self.assertEqual(len(v._panel_status(None)[0][1]), 3)
+        v = self.view(1.5, layer='voxels')
+        self.assertEqual(v._panel_status(None), [])
+        v = self.view(1.5, layer='surface', room=True)
+        self.assertEqual(v._panel_status(None), [])
+
+    def test_the_panel_bar_keeps_the_rooms_own_readout(self):
+        """--accumulate's status lines go through the same function."""
+        v = self.view(1.5, layer='surface', room=True)
+        rows = [('a', (1, 2, 3)), ('b', (4, 5, 6))]
+        self.assertEqual(v._panel_status(rows), rows)
+
+    def test_the_short_form_fits_the_panel(self):
+        """420 px at 0.42 scale is about 46 characters."""
+        for pull in SHRINK_STEPS:
+            v = self.view(pull, layer='surface')
+            self.assertLessEqual(len(v._panel_status(None)[0][0]), 46)
 
 
 if __name__ == '__main__':

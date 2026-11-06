@@ -396,7 +396,10 @@ def parse_args():
                         'front of it -- the completion comes out about a '
                         'voxel proud and the frame\'s TSDF says by how '
                         'much. This caps that step, in voxels; only the '
-                        'front (tsdf > 0) ever moves, and 0 turns it off.')
+                        'front (tsdf > 0) ever moves, and 0 turns it off. '
+                        '`[` and `]` move it in the window, so the '
+                        'correction can be read against its own absence '
+                        'without a second run.')
     p.add_argument('--no_match_sensor', dest='match_sensor',
                    action='store_false',
                    help="the room's voxel layers normally also cover every "
@@ -1008,7 +1011,9 @@ def main():
                     log.info('frozen at %s -- press space in the window to '
                              'carry on%s, or close it to stop here',
                              frame.name,
-                             ', m to cycle cubes / surface / sensor')
+                             ', m to cycle cubes / surface / sensor'
+                             + ('' if world is not None else
+                                ', [ and ] to change the shrink'))
                     if world is not None:
                         _reconstruct(view, tracker,
                                      'frozen at %s' % frame.name)

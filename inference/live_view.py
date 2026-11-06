@@ -161,6 +161,16 @@ MODES = ('class', 'zbuffer', 'all')
 # cycle skips it rather than refusing -- see _cycle_layer.
 LAYERS = ('voxels', 'surface', 'sensor')
 
+# What `[` and `]` step the surface layer's shrink through, in voxels --
+# see _step_shrink and voxel_surface.pull_to_surface. A LADDER rather
+# than scaling the value like the zoom keys do: every value the key can
+# reach is one that can be said out loud, an off-ladder --surface_pull
+# snaps onto it on the first press, and the two ends mean something.
+# 0 is the shrink off, the completion drawn where the model put it; 3.0
+# is TSDF_VOXELS, the whole 0.24 m the field can express, so there the
+# step is never clipped and what is on screen is the raw field.
+SHRINK_STEPS = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0)
+
 
 def view_points(p_world, origin, vox, pivot):
     """World METRES -> the viewer's index frame, for the accumulating room.
@@ -381,11 +391,16 @@ class LiveView:
         # to land a repeat and toggle twice. The zoom keys deliberately
         # stay on the plain callback: there, holding the key down to go
         # on zooming is the whole point.
-        for key in 'CMS0':
+        # The brackets are here and not on the plain callback with the
+        # zoom pair: a repeat costs a whole re-mesh and recolour of the
+        # frame, ~150 ms, so a held key would queue rebuilds faster than
+        # they finish. One step per press.
+        for key in 'CMS0[]':
             self.vis.register_key_action_callback(
                 ord(key), self._press_only(
                     {'C': self._cycle, 'M': self._cycle_layer,
-                     'S': self._screenshot, '0': self._zoom_reset}[key]))
+                     'S': self._screenshot, '0': self._zoom_reset,
+                     '[': self._shrink_less, ']': self._shrink_more}[key]))
         for key in (' ', 'F'):
             self.vis.register_key_action_callback(
                 ord(key), self._press_only(self._freeze))
@@ -1263,13 +1278,29 @@ class LiveView:
         # The 3D window is open3d's LEGACY Visualizer: no material API and
         # no text. The panels are cv2, so the accumulate readout lives here
         # -- which is also why --no_panels turns the readout off with them.
-        for line, colour in (status or []):
+        for line, colour in self._panel_status(status):
             bar = np.zeros((20, w, 3), np.uint8)
             cv2.putText(bar, line, (6, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
                         colour, 1, cv2.LINE_AA)
             out.append(bar)
         cv2.imshow(self.panel_window, np.vstack(out))
         cv2.waitKey(1)                   # pumps the window; it draws nothing
+
+    def _panel_status(self, status):
+        """The readout bars under the panels. -> [(line, colour)]
+
+        open3d 0.17's legacy Visualizer can draw no text, so anything a
+        key changes is legible here or only in the log. The layer and
+        the colour are their own evidence on screen; the shrink is a
+        NUMBER, and without this the only way to know which one is on is
+        to have watched the terminal.
+        """
+        lines = list(status or [])
+        if self.layer == 'surface' and self._wpivot is None:
+            lines.append(('shrink %s   [ ] to change'
+                          % self._shrink_said(self.surface_pull, short=True),
+                          (170, 200, 230)))
+        return lines
 
     def report(self):
         if not self.frames:
@@ -1489,6 +1520,68 @@ class LiveView:
         log.info('display zoom=%.2f', self.zoom)
         self._repaint()
         return False
+
+    def _shrink_less(self, _vis):
+        return self._step_shrink(-1)
+
+    def _shrink_more(self, _vis):
+        return self._step_shrink(+1)
+
+    def _step_shrink(self, d):
+        """`[` and `]`: how far the surface may be shrunk onto the depth.
+
+        self.surface_pull is the cap, in voxels, on the step
+        pull_to_surface is allowed to take -- so `[` down to 0 draws the
+        completion exactly where the model put it, and `]` up to 3.0
+        lets the TSDF move a vertex as far as it claims. Having it on a
+        key is the point: the two ends are the before and after of the
+        one correction this layer makes to the model's geometry, and
+        reading them against each other is a thing to DO, not a pair of
+        runs to remember.
+
+        Stepped along SHRINK_STEPS, so an off-ladder --surface_pull
+        snaps onto the ladder on the first press rather than drifting to
+        1.37.
+
+        Refused under --accumulate. The shrink wants ONE frame's TSDF
+        and the room has no such field, so the room's surface is never
+        pulled -- see _build_world_surface. Moving a number that cannot
+        move anything on screen is worse than saying why not.
+        """
+        if self._wpivot is not None:
+            log.info('the shrink is the per-frame surface: it needs one '
+                     "frame's TSDF, and the room has no such field. Run "
+                     'without --accumulate to use [ and ]')
+            return False
+        cur = float(self.surface_pull or 0.0)
+        if d > 0:
+            nxt = next((v for v in SHRINK_STEPS if v > cur + 1e-9),
+                       SHRINK_STEPS[-1])
+        else:
+            nxt = next((v for v in reversed(SHRINK_STEPS)
+                        if v < cur - 1e-9), SHRINK_STEPS[0])
+        if nxt == cur:
+            log.info('shrink already %s', self._shrink_said(cur))
+            return False
+        self.surface_pull = nxt
+        log.info('shrink %s', self._shrink_said(nxt))
+        # Only the surface layer is shrunk, so only it needs redrawing.
+        # The value still moves on the other two, and takes effect when
+        # m arrives there -- which is how anyone sets it before looking.
+        if self.layer == 'surface':
+            self._repaint()
+        return False
+
+    @staticmethod
+    def _shrink_said(v, short=False):
+        """The shrink in words. `short` is the 420 px panel bar."""
+        if not v:
+            return ('OFF -- model geometry' if short else
+                    'OFF -- the completion is drawn where the model put it')
+        if short:
+            return '<= %.3g vox (%.0f mm)' % (v, 1000.0 * v * VOX_UNIT_LOW)
+        return ('at most %.3g voxels (%.0f mm) back onto what the depth '
+                'measured' % (v, 1000.0 * v * VOX_UNIT_LOW))
 
     def _zoom_in(self, _vis):
         return self._set_zoom(self.zoom * 1.15)

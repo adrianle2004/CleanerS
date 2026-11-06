@@ -217,7 +217,30 @@ split, because the shrink is then done once per cell instead of four
 times, and because the colour is then sampled where the surface ends up
 rather than a voxel proud of it.
 
-### 4.6 **This is the frame layer only**
+### 4.6 Changing the cap while it is on screen
+
+`[` and `]` step `surface_pull` along `SHRINK_STEPS` =
+`(0.0, 0.5, 1.0, 1.5, 2.0, 3.0)` and re-mesh the frame, so the
+correction can be read against its own absence at one viewpoint rather
+than across two runs. A ladder and not a scale factor like the zoom
+keys: every value the key reaches is a round one, and an off-ladder
+`--surface_pull 0.8` snaps onto it on the first press.
+
+The two ends are chosen rather than arbitrary. `0` is the shrink off,
+which draws the completion exactly where the model put it. `3.0` is
+`TSDF_VOXELS` — the whole 0.24 m the field can express — so
+there `np.clip` never bites and what is on screen is the raw field,
+saturation and all.
+
+Each press costs a whole re-mesh and recolour, about 150 ms, so the keys
+are bound to the press edge and do not auto-repeat; the zoom pair
+deliberately does. The value is shown in the panel readout, because
+open3d 0.17's legacy Visualizer draws no text.
+
+Under `--accumulate` the keys refuse and log why, rather than moving a
+number that cannot move anything — which is [§4.7](#47-this-is-the-frame-layer-only).
+
+### 4.7 **This is the frame layer only**
 
 `_build_frame_surface` passes a `pull`; `_build_world_surface` does not.
 The shrink needs *one* frame's TSDF, taken from the camera that measured
@@ -469,7 +492,7 @@ running order, not which layer was on screen.
 | flag | default | what it does |
 | --- | --- | --- |
 | `--surface_smooth N` | 2 | Laplacian passes (§3). 0 leaves the lattice as it comes out |
-| `--surface_pull V` | 1.5 | caps the TSDF step in voxels (§4). 0 turns the shrink off |
+| `--surface_pull V` | 1.5 | caps the TSDF step in voxels (§4). 0 turns the shrink off. `[` and `]` move it in the window, along `SHRINK_STEPS` |
 | `--no_sensor_colour` | on | keeps the room's own colour everywhere; turns §8 off |
 | `--no_match_sensor` | on | leaves the room's voxel layers on the room's own evidence instead of also covering what the sensor's mesh passes through |
 | `--sensor_first` | off | opens on the sensor's mesh and lets `m` cycle on to the model |
@@ -655,7 +678,7 @@ returns a colour from the wrong part of the room
 
 One thing is deliberately *not* shared: the TSDF shrink is the frame
 layer only, because it needs one frame's field and the accumulated room
-has none — [§4.6](#46-this-is-the-frame-layer-only).
+has none — [§4.6](#47-this-is-the-frame-layer-only).
 
 ## Step 4 — two bugs found on the way
 
