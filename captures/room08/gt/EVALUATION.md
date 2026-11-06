@@ -1,6 +1,6 @@
 # Evaluation — room08 (camera view only)
 
-Generated 2026-10-08 by `reconstruction_GT/evaluate_gt.py` from `outputs/room08/prediction`, against the ground truth in `captures/room08/gt`. 5 frames.
+Generated 2026-11-06 by `reconstruction_GT/evaluate_gt.py` from `outputs/room08/prediction`, against the ground truth in `captures/room08/gt`. 5 frames.
 
 Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/document/EVALUATION.md`: **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over the classes present; **SC** the same set restricted to `mapping == 307200` — the voxels no depth pixel reached — scored occupied-vs-empty.
 
@@ -8,22 +8,22 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 
 | class | TP | FP | FN | precision | recall | IoU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `empty` *(not in mIoU)* | 3376 | 3525 | 232 | 48.9% | 93.6% | 47.3% |
-| `ceiling` | 310 | 142 | 39 | 68.6% | 88.8% | 63.1% |
+| `empty` *(not in mIoU)* | 3395 | 3503 | 213 | 49.2% | 94.1% | 47.7% |
+| `ceiling` | 312 | 151 | 37 | 67.4% | 89.4% | 62.4% |
 | `floor` | 287 | 435 | 0 | 39.8% | 100.0% | 39.8% |
-| `wall` | 2671 | 547 | 1162 | 83.0% | 69.7% | 61.0% |
-| `window` | 757 | 147 | 1020 | 83.7% | 42.6% | 39.3% |
-| `bed` | 2082 | 404 | 2432 | 83.7% | 46.1% | 42.3% |
-| `sofa` | 0 | 462 | 0 | 0.0% | 0.0% | 0.0% |
-| `table` | 0 | 83 | 0 | 0.0% | 0.0% | 0.0% |
+| `wall` | 2647 | 563 | 1186 | 82.5% | 69.1% | 60.2% |
+| `window` | 771 | 148 | 1006 | 83.9% | 43.4% | 40.1% |
+| `bed` | 2070 | 404 | 2444 | 83.7% | 45.9% | 42.1% |
+| `sofa` | 0 | 478 | 0 | 0.0% | 0.0% | 0.0% |
+| `table` | 0 | 81 | 0 | 0.0% | 0.0% | 0.0% |
 | `tvs` | 0 | 0 | 256 | 0.0% | 0.0% | 0.0% |
-| `furn` | 173 | 421 | 555 | 29.1% | 23.8% | 15.1% |
-| `objs` | 290 | 266 | 736 | 52.2% | 28.3% | 22.4% |
+| `furn` | 161 | 431 | 567 | 27.2% | 22.1% | 13.9% |
+| `objs` | 292 | 249 | 734 | 54.0% | 28.5% | 22.9% |
 
-**SSC mIoU (8 classes present): 35.4**
+**SSC mIoU (8 classes present): 35.2**
   Absent from this ground truth, so not averaged: `chair`, `sofa`, `table`.
 
-**SC IoU: 59.6**  |  precision 96.0  recall 61.2  |  12687 voxels, 72% of them occupied
+**SC IoU: 60.0**  |  precision 96.3  recall 61.4  |  12687 voxels, 72% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
@@ -52,12 +52,12 @@ The total above pools every frame, which weights every voxel equally -- and the 
 | frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `live_000000` | 6746 | 5707 | 82% | 58.6 | -23.1 | 33.3 | 6 |
-| `live_000180` | 3285 | 2190 | 57% | 82.6 | **+25.5** | 35.7 | 6 |
-| `live_000235` | 1522 | 1194 | 96% | 41.4 | -54.2 | 25.9 | 6 |
-| `live_000240` | 1483 | 1161 | 98% | 54.6 | -43.2 | 34.0 | 6 |
-| `live_000580` | 3342 | 2435 | 37% | 61.6 | **+25.1** | 29.0 | 6 |
+| `live_000180` | 3285 | 2190 | 57% | 81.8 | **+24.7** | 34.6 | 6 |
+| `live_000235` | 1522 | 1194 | 96% | 43.6 | -52.0 | 28.5 | 6 |
+| `live_000240` | 1483 | 1161 | 98% | 55.2 | -42.6 | 34.0 | 6 |
+| `live_000580` | 3342 | 2435 | 37% | 62.9 | **+26.4** | 28.1 | 6 |
 
-Measuring completion here (positive margin): `live_000180` (+25.5), `live_000580` (+25.1). Those are the only frames whose SC is worth quoting; NYU's own margins run +12.6 to +23.2 by band, for scale.
+Measuring completion here (positive margin): `live_000580` (+26.4), `live_000180` (+24.7). Those are the only frames whose SC is worth quoting; NYU's own margins run +12.6 to +23.2 by band, for scale.
 
 **What the occupancy figure is, and is not.** It counts only voxels INSIDE the annotated room: everything beyond the shell is 255 and enters neither side of the fraction. So it does not say the room is full -- it says how much of the hidden volume within these walls is furniture and wall interior, which rises as the room gets smaller, because a camera standing in a small room sees nearly all of its free space. It is a measurement of the ANNOTATION, and the shell is the lever: on room07, growing the shell 0.3 m each way moves it from 97.6% to 68.1%, and 0.6 m to 43.0%, without touching a single piece of furniture (wall thickness barely matters: 4 cm vs 2 cm gives 97.6% vs 97.5%). Growing the shell is not a legitimate fix -- those voxels are outside the room, and calling them empty would assert free space where there is a wall. The honest shell sits at the walls, and this number is its consequence.
 

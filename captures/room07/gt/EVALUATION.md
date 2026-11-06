@@ -1,6 +1,6 @@
 # Evaluation — room07 (camera view only)
 
-Generated 2026-10-08 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
+Generated 2026-11-06 by `reconstruction_GT/evaluate_gt.py` from `outputs/room07/prediction`, against the ground truth in `captures/room07/gt`. 5 frames.
 
 Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/document/EVALUATION.md`: **SSC** over voxels where `label_weight > 0` and `label != 255`, mIoU averaged over the classes present; **SC** the same set restricted to `mapping == 307200` — the voxels no depth pixel reached — scored occupied-vs-empty.
 
@@ -8,22 +8,22 @@ Protocol is `examples/segmentation/test_NYU.py:206-211`, the same as `inference/
 
 | class | TP | FP | FN | precision | recall | IoU |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `empty` *(not in mIoU)* | 333 | 3545 | 22 | 8.6% | 93.8% | 8.5% |
+| `empty` *(not in mIoU)* | 333 | 3644 | 22 | 8.4% | 93.8% | 8.3% |
 | `ceiling` | 4 | 22 | 4 | 15.4% | 50.0% | 13.3% |
 | `floor` | 202 | 1318 | 0 | 13.3% | 100.0% | 13.3% |
-| `wall` | 2713 | 384 | 2080 | 87.6% | 56.6% | 52.4% |
+| `wall` | 2712 | 389 | 2081 | 87.5% | 56.6% | 52.3% |
 | `window` | 528 | 72 | 12 | 88.0% | 97.8% | 86.3% |
 | `chair` | 76 | 3 | 50 | 96.2% | 60.3% | 58.9% |
-| `bed` | 4588 | 1189 | 4140 | 79.4% | 52.6% | 46.3% |
-| `sofa` | 0 | 979 | 0 | 0.0% | 0.0% | 0.0% |
-| `table` | 161 | 233 | 94 | 40.9% | 63.1% | 33.0% |
-| `furn` | 0 | 620 | 0 | 0.0% | 0.0% | 0.0% |
-| `objs` | 317 | 134 | 2097 | 70.3% | 13.1% | 12.4% |
+| `bed` | 4342 | 1195 | 4386 | 78.4% | 49.7% | 43.8% |
+| `sofa` | 0 | 1158 | 0 | 0.0% | 0.0% | 0.0% |
+| `table` | 161 | 229 | 94 | 41.3% | 63.1% | 33.3% |
+| `furn` | 0 | 616 | 0 | 0.0% | 0.0% | 0.0% |
+| `objs` | 293 | 124 | 2121 | 70.3% | 12.1% | 11.5% |
 
-**SSC mIoU (8 classes present): 39.5**
+**SSC mIoU (8 classes present): 39.1**
   Absent from this ground truth, so not averaged: `sofa`, `tvs`, `furn`.
 
-**SC IoU: 72.4**  |  precision 99.8  recall 72.5  |  13257 voxels, 97% of them occupied
+**SC IoU: 71.6**  |  precision 99.8  recall 71.8  |  13257 voxels, 97% of them occupied
 
 NYU test for reference: SSC 47.7, SC 75.0 (`--nyu` reproduces both).
 
@@ -52,10 +52,10 @@ The total above pools every frame, which weights every voxel equally -- and the 
 | frame | scored voxels | SC set | occupied | SC | margin | SSC | classes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `live_000000` | 5944 | 4412 | 98% | 87.1 | -10.4 | 50.3 | 7 |
-| `live_000320` | 4054 | 3419 | 96% | 53.4 | -43.0 | 15.2 | 5 |
-| `live_000325` | 4069 | 3444 | 96% | 55.5 | -40.8 | 16.9 | 5 |
-| `live_000530` | 1632 | 956 | 100% | 100.0 | +0.0 | 40.5 | 4 |
-| `live_000535` | 1722 | 1026 | 100% | 100.0 | +0.0 | 43.0 | 4 |
+| `live_000320` | 4054 | 3419 | 96% | 52.5 | -44.0 | 14.4 | 5 |
+| `live_000325` | 4069 | 3444 | 96% | 53.5 | -42.9 | 15.8 | 5 |
+| `live_000530` | 1632 | 956 | 100% | 100.0 | +0.0 | 39.7 | 4 |
+| `live_000535` | 1722 | 1026 | 100% | 100.0 | +0.0 | 42.1 | 4 |
 
 No frame here has a positive margin, so no viewpoint in this capture measures completion. Quote SSC.
 

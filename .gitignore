@@ -183,3 +183,10 @@ docs/superpowers/
 # CleanerS_demo.webm's commit.
 *.webm
 !CleanerS_demo.webm
+
+# Thesis drafts: personal, like report.md, and this is a public fork
+/thesis/
+
+# Open3D viewer screenshots, written to the repo root on "s"
+ScreenCamera_*.json
+ScreenCapture_*.png
