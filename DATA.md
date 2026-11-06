@@ -53,8 +53,10 @@ rate-limits per-file API calls, and 35k loose files went up at 10 a minute.
 Not stored anywhere, regenerate them: `outputs/scannet*/` (`inference/run_scannet.py`),
 `custom_visual_pred/`, `visual_pred/` (`examples/segmentation/test_NYU.py`).
 
-After `pull`, rebuild the CUDA extension if `import DataProcess` fails on the new
-machine (`data/utils/setup_datautil.py`, `data/utils/CMakeLists.txt`).
+After `pull`, rebuild the CUDA extension if `import DataProcess` fails on the
+new machine. Its sources are in the workspace `data/` folder beside this repo,
+not inside it: `<workspace>/data/utils/setup_datautil.py` and
+`<workspace>/data/utils/CMakeLists.txt`.
 
 ## Keeping git and HF in step
 

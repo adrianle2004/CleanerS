@@ -92,7 +92,7 @@ After preparing, `your_SSC_Dataset` folder should look like:
 - **on Segformer-B2**
 
 1. Download the pretrained Segformer-B2, [mit_b2.pth](https://drive.google.com/drive/folders/1b7bwrInTW4VLEm27YawHOAMSMikga2Ia);
-2. (optional) Download the [teacher model]() and put it into `./teacher/Teacher_ckpt.pth`;
+2. (optional) Download the teacher model and put it into `checkpoint/Teacher_ckpt.pth`;
 3. Run `run.sh` for training the CleanerS (if you skip the step 2, it will train both teacher and student models).
 
 - **on ResNet50**
